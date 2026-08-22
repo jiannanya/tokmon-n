@@ -1,0 +1,17 @@
+id: org.tokmon.lens.ignis
+display_name: Ignis / 光圈调焦环
+version: 0.1.0
+abi: { major: 1, minor: 0 }
+runtime: { kind: in_process }
+trust: t1
+stateless: true
+observes:
+  - { kind: config.light-path-observed, schema: "*" }
+  - { kind: "lens.candidate-*", schema: "*" }
+  - { kind: "mount.*", schema: "*" }
+  - { kind: "lens.afterglow-*", schema: "*" }
+view_channels: [diagnostic.light-path, ui.lenses]
+refracts:
+  - { kind: lens.verify, schema: tokmon.lens.verify.v1 }
+  - { kind: lens.reconcile, schema: tokmon.lens.reconcile.v1 }
+light_permissions: [photon.emit, artifact.read, log.write]

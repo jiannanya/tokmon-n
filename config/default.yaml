@@ -1,0 +1,11 @@
+logging:
+  level: info
+engine:
+  photon_window: 4096
+  max_beats: 32
+security:
+  require_signatures: false
+ui:
+  stream_batch_ms: 16
+  max_terminal_buffer_bytes: 8388608
+

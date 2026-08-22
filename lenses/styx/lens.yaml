@@ -1,0 +1,19 @@
+id: org.tokmon.lens.styx
+display_name: Styx / 执行隔离暗室
+version: 0.1.0
+abi: { major: 1, minor: 0 }
+runtime: { kind: in_process }
+trust: t1
+stateless: true
+observes:
+  - { kind: act.admitted, schema: "*" }
+  - { kind: "sandbox.*", schema: "*" }
+  - { kind: "process.*", schema: "*" }
+  - { kind: "worker.*", schema: "*" }
+view_channels: [act.sandbox, ui.terminal]
+refracts:
+  - { kind: process.exec, schema: tokmon.process.exec.v1 }
+  - { kind: process.cancel, schema: tokmon.process.cancel.v1 }
+  - { kind: worker.launch, schema: tokmon.worker.launch.v1 }
+  - { kind: wasm.invoke, schema: tokmon.wasm.invoke.v1 }
+light_permissions: [photon.emit, io.process, log.write]

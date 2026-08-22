@@ -1,0 +1,22 @@
+version: 1
+lenses:
+  - { id: org.tokmon.lens.ignis, artifact: builtin:ignis, enabled: true, runtime: in_process }
+  - { id: org.tokmon.lens.lemon, artifact: builtin:lemon, enabled: true, runtime: in_process }
+  - { id: org.tokmon.lens.iris, artifact: builtin:iris, enabled: true, runtime: in_process }
+  - { id: org.tokmon.lens.rhea, artifact: builtin:rhea, enabled: true, runtime: in_process }
+  - { id: org.tokmon.lens.janus, artifact: builtin:janus, enabled: true, runtime: in_process }
+  - { id: org.tokmon.lens.clotho, artifact: builtin:clotho, enabled: true, runtime: in_process }
+  - { id: org.tokmon.lens.aya, artifact: builtin:aya, enabled: true, runtime: in_process }
+  - { id: org.tokmon.lens.textus, artifact: builtin:textus, enabled: true, runtime: in_process }
+  - { id: org.tokmon.lens.enso, artifact: builtin:enso, enabled: true, runtime: in_process }
+  - { id: org.tokmon.lens.techor, artifact: builtin:techor, enabled: true, runtime: in_process }
+  - { id: org.tokmon.lens.styx, artifact: builtin:styx, enabled: true, runtime: in_process }
+  - { id: org.tokmon.lens.fallen, artifact: builtin:fallen, enabled: true, runtime: in_process }
+  - { id: org.tokmon.lens.cista, artifact: builtin:cista, enabled: true, runtime: in_process }
+  - { id: org.tokmon.lens.chora, artifact: builtin:chora, enabled: true, runtime: in_process }
+  - { id: org.tokmon.lens.tracket, artifact: builtin:tracket, enabled: true, runtime: in_process }
+  - { id: org.tokmon.lens.nota, artifact: builtin:nota, enabled: true, runtime: in_process }
+  - { id: org.tokmon.lens.cove, artifact: builtin:cove, enabled: true, runtime: in_process }
+  - { id: org.tokmon.lens.snow, artifact: builtin:snow, enabled: true, runtime: in_process }
+  - { id: org.tokmon.lens.termon, artifact: builtin:termon, enabled: true, runtime: desktop }
+

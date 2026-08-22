@@ -1,0 +1,16 @@
+id: org.tokmon.lens.cista
+display_name: Cista / Secret 遮光秘盒
+version: 0.1.0
+abi: { major: 1, minor: 0 }
+runtime: { kind: in_process }
+trust: t1
+stateless: true
+observes:
+  - { kind: secret.ref-observed, schema: "*" }
+  - { kind: "secret.*", schema: "*" }
+  - { kind: "redaction.*", schema: "*" }
+view_channels: [act.secrets, diagnostic.redaction]
+refracts:
+  - { kind: secret.bind, schema: tokmon.secret.bind.v1 }
+  - { kind: redaction.apply, schema: tokmon.redaction.apply.v1 }
+light_permissions: [photon.emit, secret.bind, log.write]

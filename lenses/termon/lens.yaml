@@ -1,0 +1,13 @@
+id: org.tokmon.lens.termon
+display_name: Termon / Slint 全息显像屏
+version: 0.1.0
+abi: { major: 1, minor: 0 }
+runtime: { kind: desktop }
+trust: t1
+stateless: true
+observes:
+  - { kind: "*", schema: "*" }
+view_channels: [ui.conversation, ui.trajectory, ui.code, ui.terminal, ui.approval, ui.lenses]
+refracts:
+  - { kind: ui.intent, schema: tokmon.ui.intent.v1 }
+light_permissions: [photon.emit, snow.intent, log.write]

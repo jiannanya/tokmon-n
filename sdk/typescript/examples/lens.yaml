@@ -1,0 +1,17 @@
+id: org.tokmon.lens.adder-node
+display_name: Node.js Adder Lens
+version: 0.1.0
+abi: { major: 1, minor: 0 }
+runtime:
+  kind: node
+  version: 25.8.1
+  entry: adder.mjs
+  module: esm
+trust: t2
+stateless: true
+observes:
+  - { kind: user.input, schema: "*" }
+view_channels: [model.tools]
+refracts:
+  - { kind: tool.add, schema: tokmon.math.add.v1 }
+light_permissions: [photon.emit, log.write]

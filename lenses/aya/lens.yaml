@@ -1,0 +1,19 @@
+id: org.tokmon.lens.aya
+display_name: Aya / 子运行分形复眼镜
+version: 0.1.0
+abi: { major: 1, minor: 0 }
+runtime: { kind: in_process }
+trust: t1
+stateless: true
+observes:
+  - { kind: child.requested, schema: "*" }
+  - { kind: child.started, schema: "*" }
+  - { kind: child.progress, schema: "*" }
+  - { kind: child.completed, schema: "*" }
+  - { kind: child.joined, schema: "*" }
+view_channels: [child.runs, ui.child-runs]
+refracts:
+  - { kind: child.spawn, schema: tokmon.child.spawn.v1 }
+  - { kind: child.join, schema: tokmon.child.join.v1 }
+  - { kind: child.cancel, schema: tokmon.child.cancel.v1 }
+light_permissions: [photon.emit, log.write]

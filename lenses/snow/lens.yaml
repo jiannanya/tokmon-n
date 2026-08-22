@@ -1,0 +1,17 @@
+id: org.tokmon.lens.snow
+display_name: Snow / 本地协议纯白投影幕
+version: 0.1.0
+abi: { major: 1, minor: 0 }
+runtime: { kind: in_process }
+trust: t1
+stateless: true
+observes:
+  - { kind: ui.intent, schema: "*" }
+  - { kind: "snow.*", schema: "*" }
+  - { kind: system.started, schema: "*" }
+view_channels: [snow.protocol, cli.output, diagnostic.connection]
+refracts:
+  - { kind: snow.intent, schema: tokmon.snow.intent.v1 }
+  - { kind: snow.cancel, schema: tokmon.snow.cancel.v1 }
+  - { kind: snow.reconnect, schema: tokmon.snow.reconnect.v1 }
+light_permissions: [photon.emit, log.write]

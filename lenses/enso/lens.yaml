@@ -1,0 +1,19 @@
+id: org.tokmon.lens.enso
+display_name: Enso / 上下文全息定影镜
+version: 0.1.0
+abi: { major: 1, minor: 0 }
+runtime: { kind: in_process }
+trust: t1
+stateless: true
+observes:
+  - { kind: instruction.observed, schema: "*" }
+  - { kind: skill.mounted, schema: "*" }
+  - { kind: "memory.*", schema: "*" }
+  - { kind: "rag.document-*", schema: "*" }
+  - { kind: "rag.index-*", schema: "*" }
+view_channels: [model.context, ui.context-sources]
+refracts:
+  - { kind: context.retrieve, schema: tokmon.context.retrieve.v1 }
+  - { kind: memory.propose, schema: tokmon.memory.propose.v1 }
+  - { kind: rag.reindex, schema: tokmon.rag.reindex.v1 }
+light_permissions: [photon.emit, log.write]

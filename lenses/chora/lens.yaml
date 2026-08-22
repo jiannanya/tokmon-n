@@ -1,0 +1,16 @@
+id: org.tokmon.lens.chora
+display_name: Chora / 不可改写光感底片
+version: 0.1.0
+abi: { major: 1, minor: 0 }
+runtime: { kind: in_process }
+trust: t1
+stateless: true
+observes:
+  - { kind: "*", schema: "*" }
+view_channels: [fact.storage, diagnostic.capacity]
+refracts:
+  - { kind: photon.export, schema: tokmon.photon.export.v1 }
+  - { kind: blob.put, schema: tokmon.blob.put.v1 }
+  - { kind: checkpoint.build, schema: tokmon.checkpoint.build.v1 }
+  - { kind: archive.seal, schema: tokmon.archive.seal.v1 }
+light_permissions: [photon.emit, blob.write, artifact.write, log.write]

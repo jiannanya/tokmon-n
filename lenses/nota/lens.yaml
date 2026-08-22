@@ -1,0 +1,19 @@
+id: org.tokmon.lens.nota
+display_name: Nota / 可观测性光谱分析仪
+version: 0.1.0
+abi: { major: 1, minor: 0 }
+runtime: { kind: in_process }
+trust: t1
+stateless: true
+observes:
+  - { kind: "act.*", schema: "*" }
+  - { kind: "lens.*", schema: "*" }
+  - { kind: "worker.*", schema: "*" }
+  - { kind: "waveguide.*", schema: "*" }
+  - { kind: "system.*", schema: "*" }
+view_channels: [diagnostic.metrics, diagnostic.health, ui.diagnostics]
+refracts:
+  - { kind: telemetry.export, schema: tokmon.telemetry.export.v1 }
+  - { kind: profile.capture, schema: tokmon.profile.capture.v1 }
+  - { kind: diagnostic.bundle, schema: tokmon.diagnostic.bundle.v1 }
+light_permissions: [photon.emit, log.write]

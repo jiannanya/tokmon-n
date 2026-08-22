@@ -1,0 +1,18 @@
+id: org.tokmon.lens.clotho
+display_name: Clotho / 显式工作流光栅
+version: 0.1.0
+abi: { major: 1, minor: 0 }
+runtime: { kind: in_process }
+trust: t1
+stateless: true
+observes:
+  - { kind: workflow.defined, schema: "*" }
+  - { kind: workflow.started, schema: "*" }
+  - { kind: "workflow.step-*", schema: "*" }
+  - { kind: "workflow.join-*", schema: "*" }
+view_channels: [workflow.graph, workflow.status]
+refracts:
+  - { kind: workflow.step, schema: tokmon.workflow.step.v1 }
+  - { kind: workflow.retry, schema: tokmon.workflow.retry.v1 }
+  - { kind: workflow.cancel, schema: tokmon.workflow.cancel.v1 }
+light_permissions: [photon.emit, log.write]

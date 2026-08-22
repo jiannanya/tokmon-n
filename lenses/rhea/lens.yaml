@@ -1,0 +1,15 @@
+id: org.tokmon.lens.rhea
+display_name: Rhea / 模型网关神谕聚焦镜
+version: 0.1.0
+abi: { major: 1, minor: 0 }
+runtime: { kind: in_process }
+trust: t1
+stateless: true
+observes:
+  - { kind: "model.provider-*", schema: "*" }
+  - { kind: model.usage, schema: "*" }
+  - { kind: config.selected, schema: "*" }
+view_channels: [model.catalog, diagnostic.model]
+refracts:
+  - { kind: model.call, schema: tokmon.model.call.v1 }
+light_permissions: [photon.emit, io.http, secret.bind, log.write]

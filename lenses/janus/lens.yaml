@@ -1,0 +1,19 @@
+id: org.tokmon.lens.janus
+display_name: Janus / 默认 Agent 双面反射镜
+version: 0.1.0
+abi: { major: 1, minor: 0 }
+runtime: { kind: in_process }
+trust: t1
+stateless: true
+observes:
+  - { kind: user.input, schema: "*" }
+  - { kind: assistant.message, schema: "*" }
+  - { kind: model.tool-call, schema: "*" }
+  - { kind: tool.result, schema: "*" }
+  - { kind: "act.*", schema: "*" }
+  - { kind: "ray.*", schema: "*" }
+view_channels: [ray.status, model.intent]
+refracts:
+  - { kind: ray.cancel, schema: tokmon.ray.cancel.v1 }
+  - { kind: ray.steer, schema: tokmon.ray.steer.v1 }
+light_permissions: [photon.emit, log.write]

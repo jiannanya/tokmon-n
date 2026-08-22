@@ -1,0 +1,24 @@
+id: org.tokmon.lens.cove
+display_name: Cove / Workspace 实景物镜
+version: 0.1.0
+abi: { major: 1, minor: 0 }
+runtime: { kind: in_process }
+trust: t1
+stateless: true
+observes:
+  - { kind: "workspace.*", schema: "*" }
+  - { kind: "fs.*", schema: "*" }
+  - { kind: "git.*", schema: "*" }
+  - { kind: "artifact.*", schema: "*" }
+view_channels: [workspace.tree, workspace.diff, workspace.git, ui.artifact]
+refracts:
+  - { kind: fs.read, schema: tokmon.fs.read.v1 }
+  - { kind: fs.write, schema: tokmon.fs.write.v1 }
+  - { kind: fs.move, schema: tokmon.fs.move.v1 }
+  - { kind: fs.delete, schema: tokmon.fs.delete.v1 }
+  - { kind: git.stage, schema: tokmon.git.stage.v1 }
+  - { kind: git.commit, schema: tokmon.git.commit.v1 }
+  - { kind: git.branch, schema: tokmon.git.branch.v1 }
+  - { kind: git.merge, schema: tokmon.git.merge.v1 }
+  - { kind: artifact.create, schema: tokmon.artifact.create.v1 }
+light_permissions: [photon.emit, io.workspace, artifact.write, log.write]

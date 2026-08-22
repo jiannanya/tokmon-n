@@ -1,0 +1,10 @@
+/build/
+/.deps/
+/.tokmon/
+/.cache/
+*.user
+*.log
+__pycache__/
+node_modules/
+dist/
+

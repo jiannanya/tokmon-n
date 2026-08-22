@@ -1,0 +1,18 @@
+id: org.tokmon.lens.textus
+display_name: Textus / ModelSurface 光谱滤波镜
+version: 0.1.0
+abi: { major: 1, minor: 0 }
+runtime: { kind: in_process }
+trust: t1
+stateless: true
+observes:
+  - { kind: user.input, schema: "*" }
+  - { kind: assistant.message, schema: "*" }
+  - { kind: tool.result, schema: "*" }
+  - { kind: summary.created, schema: "*" }
+  - { kind: model.budget, schema: "*" }
+view_channels: [model.messages, model.context, diagnostic.context-budget]
+refracts:
+  - { kind: text.compact, schema: tokmon.text.compact.v1 }
+  - { kind: text.summarize, schema: tokmon.text.summarize.v1 }
+light_permissions: [photon.emit, log.write]
