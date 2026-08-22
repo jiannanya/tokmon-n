@@ -5,7 +5,8 @@
 > 文档状态：Architecture Baseline / Implementation Guide 3.0  
 > 设计基线：2026-08-22  
 > 目标目录：`tokmon-n/`  
-> 实现语言：ISO C++20  
+> 宿主实现语言：ISO C++20  
+> 动态 Lens 开发语言：C++20、JavaScript/TypeScript（Node.js）、Python（CPython）与 WASM  
 > 桌面显像：[`Slint`](https://github.com/slint-ui/slint)  
 > 唯一闭环：**Fact → Lens → Act → new Fact**
 
@@ -323,7 +324,8 @@ tokmond
 tokmon-lens-worker
 ├─ one trust group per process
 ├─ restricted OpticalHost bridge
-└─ crash isolation for dynamic native lenses
+├─ native / Node.js / CPython runtime adapter
+└─ crash isolation for dynamic lenses
 
 tokmon-desktop
 ├─ Termon controller
@@ -346,10 +348,10 @@ tokmon-desktop
 
 ### 4.5 启动闭环
 
-Nyxia 不把十九个业务透镜静态编进内核。签名保护的 `bootstrap.lock.json` 只描述启动所需的 artifact：Ignis、Lemon、Chora、Tracket、Cista、Fallen、Snow。
+Nyxia 不把十九个业务透镜静态编进内核。签名保护的 `bootstrap.lock.yaml` 只描述启动所需的 artifact：Ignis、Lemon、Chora、Tracket、Cista、Fallen、Snow。
 
 ```text
-launcher verifies tokmond + bootstrap.lock
+launcher verifies tokmond + bootstrap.lock.yaml
 → Nyxia starts with empty LightPath
 → load and verify bootstrap lens artifacts
 → open Chora append gate
@@ -511,7 +513,8 @@ Nyxia 静态链接进 `tokmond`。它只包含：
 6. 有界 Lemon 光纤与 cursor wakeup；
 7. Photon append gate、Act gate 的不可绕过连接；
 8. 动态代码的 worker/WASM 边界；
-9. 停止、崩溃和诊断所需的最小状态。
+9. 停止、崩溃和诊断所需的最小状态；
+10. 以 `tl::expected` 为唯一可恢复错误返回模型，以 `spdlog` 为统一日志出口。
 
 Nyxia 不包含 provider 策略、Prompt、tool catalog、memory、workflow、workspace、存储业务、审批规则或 UI 页面。
 
@@ -623,6 +626,11 @@ Nyxia 不在活动 daemon 内换代，因为它持有 LightPath 发布点、动�
 解释文档中的 `view/refract` 是唯一 Lens 形状。工程版本保留这一形状，同时用结构化 Act 和只追加 emitter 替代裸字符串与可变容器：
 
 ```cpp
+#include <tl/expected.hpp>
+
+template<class T>
+using Result = tl::expected<T, Error>;
+
 class ILens {
 public:
     virtual ~ILens() = default;
@@ -738,26 +746,111 @@ typedef struct TokmonLensApiV1 {
 TOKMON_LENS_EXPORT TokmonLensApiV1 tokmon_lens_entry_v1(void);
 ```
 
-边界传 canonical CBOR frame；异常、STL 容器、allocator 所有权、coroutine frame 和 C++ RTTI 不跨 ABI。
+边界传 canonical CBOR frame；`tl::expected` 在 adapter 中编码成返回码和结构化错误 frame。C++ 异常、STL 容器、allocator 所有权、coroutine frame 和 RTTI 不跨 ABI。
 
-### 7.6 Native、worker 与 WASM
+### 7.6 支持的 Lens 运行形态
 
 | 形态 | 适用 | 默认信任 | 换代方式 |
 | --- | --- | --- | --- |
 | in-process C++ | 官方且签名的热路径 Lens | 高 | R1 generation swap |
 | worker C ABI | 第三方 native Lens | 中/低 | 进程 handoff |
+| Node.js worker | JavaScript Lens、编译后的 TypeScript Lens、npm 生态 | 中/低 | 进程 handoff |
+| CPython worker | Python Lens、PyPI 生态、数据/RAG/自动化 | 中/低 | 进程 handoff |
 | WASM | 纯计算、转换、策略 Lens | 低 | instance swap |
 | desktop process | Termon/Slint | UI trust | launcher handoff |
 
-来源未知的 native code 不能因“实现了 ILens”就进入 daemon 地址空间。
+来源未知的 native code 不能因“实现了 ILens”就进入 daemon 地址空间。Node.js 与 CPython 永远不嵌入或链接进 `tokmond`；它们只存在于受 Styx 限制、按需启动的独立 worker 进程。
 
-### 7.7 错误与取消
+TypeScript 是开发语言，不是生产解释路径：构建阶段必须编译为 Node.js 可执行的 ESM JavaScript，artifact 只执行 `.mjs/.js`。JavaScript 可直接提供 ESM。Python artifact 使用锁定的 CPython 版本和 module entry。
 
+生产模式不解析系统 `PATH` 上碰巧安装的 `node`/`python`，而从 `.tokmon/runtimes/` 选择 hash 已验证的 exact runtime。开发模式可以显式选择本机 runtime 做快速迭代，但该结果标为 non-reproducible，不能直接进入已签名 active LightPath。
+
+### 7.7 Lens Worker Protocol v1
+
+`tokmond` 中的 `WorkerLensProxy` 实现 C++ `ILens`，把 `view/refract` 映射到 worker RPC。Node.js、CPython 和低信任 native worker 共享同一协议：
+
+```text
+tokmond / WorkerLensProxy
+        │ canonical CBOR frames
+        ▼
+tokmon-lens-worker --runtime {native|node|cpython}
+        │ language SDK
+        ▼
+user Lens.view / Lens.refract
+```
+
+`tokmon-lens-worker` 是 C++20 sandbox supervisor。对 Node.js/CPython，它先建立 OS 限制、专用 IPC 与私有临时目录，再在同一受控 process tree 中启动 exact runtime 和语言 adapter；supervisor 持有 deadline、heartbeat、stdout/stderr 配额与整棵进程树的最终终止权。
+
+传输使用专用 named pipe/Unix domain socket 或 launcher 创建的匿名 pipe。协议与 stdout/stderr 分离，避免用户输出破坏 frame。
+
+核心 frame：
+
+| 方向 | Frame | 含义 |
+| --- | --- | --- |
+| host → worker | `worker.hello` | protocol、generation、runtime、limits、nonce |
+| worker → host | `worker.ready` | manifest/schema hash、SDK/runtime version |
+| host → worker | `lens.view.request` | request id、epoch、PhotonWindow、允许 channel |
+| worker → host | `lens.view.result` | `SurfaceDelta` 或 `ErrorFrame` |
+| host → worker | `lens.refract.request` | BeamTicket、Act、PhotonWindow、deadline |
+| worker → host | `lens.refract.result` | `RefractionResult` 或 `ErrorFrame` |
+| worker → host | `host.call` | emit PhotonDraft、blob、artifact、secret、I/O 请求 |
+| host → worker | `host.result` | 受控 host 调用结果 |
+| host → worker | `beam.cancel` | stop 指令 |
+| host → worker | `worker.shutdown` | afterglow 结束，准备退出 |
+| worker → host | `worker.stopped` | 已停止接收新调用并释放语言运行时资源 |
+
+协议不传整个历史数据库，只传预算后的 PhotonWindow、cursor 和 blob reference。每个 frame 有：长度上限、嵌套深度、request id、generation、epoch、deadline 和 canonical encoding 校验。
+
+#### 错误映射
+
+C++ 端继续使用 `tl::expected<T, Error>`。其他语言在 SDK 内使用自己的显式 Result：
+
+```typescript
+export type Result<T> =
+  | { ok: true; value: T }
+  | { ok: false; error: LensError };
+```
+
+```python
+@dataclass(frozen=True)
+class Result(Generic[T]):
+    value: T | None = None
+    error: LensError | None = None
+```
+
+跨 worker 边界统一编码为 `ErrorFrame`；JavaScript rejected Promise、CPython 未捕获异常和进程崩溃都由 worker 最外层转换为 `lens.crashed`，不能穿过协议边界。
+
+#### Host API
+
+Node.js/CPython Lens 不能直接访问 daemon 对象，只能请求：
+
+```text
+photon.emit
+blob.read
+artifact.write
+act.request
+secret.bind
+io.http
+io.process
+io.workspace
+log.write
+```
+
+`lens.yaml` 没有声明的调用在 host 侧拒绝。需要触碰现实的请求仍进入 Techor → Fallen → Cista → Styx 固定管线，语言 worker 不能自行绕开。
+
+### 7.8 错误与取消
+
+- C++ 宿主与 native Lens 的可预期失败统一返回 `tl::expected<T, Error>`；项目别名为 `Result<T>`；
 - `view` 错误产生诊断 contribution；关键 Surface 无法建立时该拍失败；
 - `refract` 返回 `Result<RefractionResult>`，错误必须映射为结构化 Photon；
 - stop 通过 `BeamTicket.stop` 传递；
 - deadline、输出大小、CPU 和子进程限制由 RefractionBeam 强制；
-- 抛出到 C ABI 的异常一律转成 `lens.crashed`，worker 随后隔离退出。
+- C++ 核心路径和 C++ Lens 业务代码不用异常表达校验、I/O、解析或拒绝；
+- 第三方库若抛出异常，只能在最外层 adapter 捕获并转换为 `Error`；越过 C ABI 的异常视为 `lens.crashed`，worker 随后隔离退出。
+- Node.js worker 使用 `AbortSignal` 映射 `beam.cancel`；CPython worker 使用 SDK cancellation event/`asyncio` task cancellation；
+- 两种运行时的内存、CPU、进程树、文件、网络、输出和 deadline 由 Styx/OS 边界强制，语言运行时参数只能作为附加限制；
+- cooperative cancel 到期后由宿主终止整个 worker 进程树；
+- worker 心跳只用于故障检测，不是 Photon；worker exit/crash 的观察结果必须追加结构化 Photon。
 
 ---
 
@@ -770,7 +863,7 @@ TOKMON_LENS_EXPORT TokmonLensApiV1 tokmon_lens_entry_v1(void);
 ```text
 calculator-lens/
 ├─ CMakeLists.txt
-├─ lens.toml
+├─ lens.yaml
 ├─ schemas/
 │  ├─ calculate.args.schema.json
 │  └─ calculate.result.schema.json
@@ -778,29 +871,33 @@ calculator-lens/
    └─ calculator_lens.cpp
 ```
 
-### 8.2 `lens.toml`
+### 8.2 `lens.yaml`
 
-```toml
-id = "org.tokmon.lens.calculator"
-version = "1.0.0"
-abi = 1
-optical_order = 720
-view_channels = ["model.tools"]
-act_patterns = ["tool.calculate@tokmon.math.calculate.v1"]
-light_permissions = ["photon.emit:tool.result", "photon.emit:tool.error"]
-isolation = "worker"
+```yaml
+id: org.tokmon.lens.calculator
+version: 1.0.0
+abi: 1
+optical_order: 720
+view_channels:
+  - model.tools
+act_patterns:
+  - tool.calculate@tokmon.math.calculate.v1
+light_permissions:
+  - photon.emit:tool.result
+  - photon.emit:tool.error
+isolation: worker
 ```
 
 ### 8.3 完整 Lens
 
 ```cpp
 #include <tokmon/lens/sdk.hpp>
+#include <tl/expected.hpp>
 
 #include <charconv>
-#include <cmath>
-#include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace calculator {
 
@@ -808,59 +905,106 @@ struct CalculateArgs {
     std::string expression;
 };
 
+enum class ParseErrorCode {
+    NumberExpected,
+    MissingRightParenthesis,
+    DivisionByZero,
+    UnexpectedToken
+};
+
+struct ParseError {
+    ParseErrorCode code;
+    std::size_t offset;
+    std::string message;
+};
+
+using ParseResult = tl::expected<double, ParseError>;
+
 class Parser final {
 public:
     explicit Parser(std::string_view text) : text_(text) {}
 
-    double parse() {
-        const double value = expression();
+    ParseResult parse() {
+        auto value = expression();
+        if (!value) return tl::make_unexpected(std::move(value.error()));
         spaces();
         if (pos_ != text_.size()) {
-            throw std::runtime_error("unexpected token");
+            return fail(ParseErrorCode::UnexpectedToken, "unexpected token");
         }
-        return value;
+        return *value;
     }
 
 private:
-    double expression() {
-        double lhs = term();
+    ParseResult expression() {
+        auto lhs = term();
+        if (!lhs) return tl::make_unexpected(std::move(lhs.error()));
+        double value = *lhs;
+
         for (;;) {
             spaces();
-            if (take('+')) lhs += term();
-            else if (take('-')) lhs -= term();
-            else return lhs;
+            if (take('+')) {
+                auto rhs = term();
+                if (!rhs) return tl::make_unexpected(std::move(rhs.error()));
+                value += *rhs;
+            } else if (take('-')) {
+                auto rhs = term();
+                if (!rhs) return tl::make_unexpected(std::move(rhs.error()));
+                value -= *rhs;
+            } else {
+                return value;
+            }
         }
     }
 
-    double term() {
-        double lhs = factor();
+    ParseResult term() {
+        auto lhs = factor();
+        if (!lhs) return tl::make_unexpected(std::move(lhs.error()));
+        double value = *lhs;
+
         for (;;) {
             spaces();
-            if (take('*')) lhs *= factor();
-            else if (take('/')) {
-                const double rhs = factor();
-                if (rhs == 0.0) throw std::runtime_error("division by zero");
-                lhs /= rhs;
-            } else return lhs;
+            if (take('*')) {
+                auto rhs = factor();
+                if (!rhs) return tl::make_unexpected(std::move(rhs.error()));
+                value *= *rhs;
+            } else if (take('/')) {
+                auto rhs = factor();
+                if (!rhs) return tl::make_unexpected(std::move(rhs.error()));
+                if (*rhs == 0.0) {
+                    return fail(ParseErrorCode::DivisionByZero, "division by zero");
+                }
+                value /= *rhs;
+            } else {
+                return value;
+            }
         }
     }
 
-    double factor() {
+    ParseResult factor() {
         spaces();
         if (take('(')) {
-            const double value = expression();
+            auto value = expression();
+            if (!value) return tl::make_unexpected(std::move(value.error()));
             spaces();
-            if (!take(')')) throw std::runtime_error("missing ')'");
-            return value;
+            if (!take(')')) {
+                return fail(ParseErrorCode::MissingRightParenthesis, "missing ')'");
+            }
+            return *value;
         }
 
         const char* first = text_.data() + pos_;
         const char* last = text_.data() + text_.size();
         double value{};
         const auto parsed = std::from_chars(first, last, value);
-        if (parsed.ec != std::errc{}) throw std::runtime_error("number expected");
+        if (parsed.ec != std::errc{}) {
+            return fail(ParseErrorCode::NumberExpected, "number expected");
+        }
         pos_ = static_cast<std::size_t>(parsed.ptr - text_.data());
         return value;
+    }
+
+    ParseResult fail(ParseErrorCode code, std::string message) const {
+        return tl::make_unexpected(ParseError{code, pos_, std::move(message)});
     }
 
     void spaces() {
@@ -907,16 +1051,16 @@ public:
             co_return tokmon::RefractionResult::pass();
         }
 
-        try {
-            const double result = Parser{matched->expression}.parse();
-            co_await beam.emitter().emit(tokmon::PhotonDraft::tool_result(
-                act, "calculate", tokmon::encode_number(result)));
-            co_return tokmon::RefractionResult::completed();
-        } catch (const std::exception& error) {
+        auto parsed = Parser{matched->expression}.parse();
+        if (!parsed) {
             co_await beam.emitter().emit(tokmon::PhotonDraft::tool_error(
-                act, "calculate", error.what()));
+                act, "calculate", parsed.error().message));
             co_return tokmon::RefractionResult::failed("invalid_expression");
         }
+
+        co_await beam.emitter().emit(tokmon::PhotonDraft::tool_result(
+            act, "calculate", tokmon::encode_number(*parsed)));
+        co_return tokmon::RefractionResult::completed();
     }
 
 private:
@@ -940,12 +1084,13 @@ cmake_minimum_required(VERSION 3.25)
 project(calculator_lens LANGUAGES CXX)
 
 find_package(tokmon-lens-sdk CONFIG REQUIRED)
+find_package(tl-expected CONFIG REQUIRED)
 
 add_library(calculator_lens SHARED src/calculator_lens.cpp)
 target_compile_features(calculator_lens PRIVATE cxx_std_20)
-target_link_libraries(calculator_lens PRIVATE Tokmon::LensSDK)
+target_link_libraries(calculator_lens PRIVATE Tokmon::LensSDK tl::expected)
 
-tokmon_embed_lens_manifest(calculator_lens lens.toml)
+tokmon_embed_lens_manifest(calculator_lens lens.yaml)
 tokmon_generate_lens_codecs(calculator_lens schemas)
 tokmon_sign_lens_artifact(calculator_lens)
 ```
@@ -984,6 +1129,240 @@ CalculatorLens 不知道 Rhea、Techor、Chora 或 Termon 的 C++ 类型：
 
 这条路径是线性的，复杂度随镜片数量增长，不形成两两连接。
 
+### 8.7 TypeScript / JavaScript Lens
+
+TypeScript 和 JavaScript 共用 `@tokmon/lens-sdk` 与 Node.js worker。TypeScript 在构建阶段编译为 ESM；JavaScript 直接编写 ESM。两者可以使用 npm 依赖，只要依赖被锁定、打包、审计并符合 worker 的 OS 权限。以下示例执行真实加法并追加结果 Photon：
+
+```typescript
+import {
+  actPattern,
+  defineLens,
+  ok,
+  type Act,
+  type PhotonWindow,
+  type RefractionBeam,
+  type Result,
+  type SurfaceBuilder,
+} from "@tokmon/lens-sdk";
+
+type AddArgs = {
+  left: number;
+  right: number;
+};
+
+const add = actPattern<AddArgs>(
+  "tool.add",
+  "tokmon.math.add.v1",
+);
+
+export default defineLens({
+  id: "org.tokmon.lens.adder-ts",
+
+  view(
+    _photons: PhotonWindow,
+    surface: SurfaceBuilder,
+  ): Result<void> {
+    surface.model.addTool({
+      name: "add",
+      description: "计算两个数字之和",
+      argumentsSchema: "tokmon.math.add.v1",
+    });
+    return ok(undefined);
+  },
+
+  async refract(
+    _photons: PhotonWindow,
+    act: Act,
+    beam: RefractionBeam,
+  ) {
+    const matched = add.match(act);
+    if (!matched.ok) return ok({ status: "pass" });
+
+    const result = matched.value.left + matched.value.right;
+    const emitted = await beam.emitter.toolResult(act, "add", { result });
+    if (!emitted.ok) return emitted;
+    return ok({ status: "completed" });
+  },
+});
+```
+
+JavaScript 版本使用相同 API，只移除 TypeScript 类型标注。生产 artifact 不执行 `.ts`，也不在用户机器上启动 TypeScript 编译器。
+
+```yaml
+id: org.tokmon.lens.adder-ts
+version: 1.0.0
+abi: 1
+runtime:
+  kind: node
+  version: "<exact-version-from-lens-lock>"
+  entry: dist/index.mjs
+  module: esm
+view_channels:
+  - model.tools
+act_patterns:
+  - tool.add@tokmon.math.add.v1
+light_permissions:
+  - photon.emit:tool.result
+isolation: worker
+```
+
+```text
+adder-ts/
+├─ lens.yaml
+├─ schema.bundle.cbor
+├─ dist/index.mjs
+├─ package.json
+├─ package-lock.json
+├─ dependency-bundle/
+├─ sbom.spdx.json
+├─ checksums.txt
+└─ signature.sig
+```
+
+构建使用 lockfile 和关闭任意 install script 的受控环境。运行时禁止 `npm install`、网络拉包和动态改变 dependency graph；Node.js runtime、SDK、入口文件和依赖 hash 全部写入 `lens-lock.yaml`。
+
+- 纯 JavaScript 依赖优先 bundle 到 `dist/`；
+- 必须保留 module resolution 的依赖打包成只读 `dependency-bundle/`；
+- 使用 native addon/N-API 的 artifact 必须按 OS、architecture、Node ABI 分包；
+- install script 默认禁止，确需运行时只能在构建隔离环境执行，产物随后重新 hash、生成 SBOM 并签名；
+- Node.js worker 不继承用户 shell 的 `NODE_PATH`、startup preload 或任意环境变量。
+
+### 8.8 CPython Lens
+
+Python 使用 `tokmon-lens-sdk` 与独立 CPython worker，可以复用 PyPI、纯 Python wheel 和平台匹配的 CPython 扩展 wheel。示例保持相同 `view/refract` 语义：
+
+```python
+from dataclasses import dataclass
+
+from tokmon_lens_sdk import (
+    Act,
+    ActPattern,
+    Lens,
+    PhotonWindow,
+    RefractionBeam,
+    Result,
+    SurfaceBuilder,
+    completed,
+    ok,
+    passed,
+)
+
+
+@dataclass(frozen=True)
+class AddArgs:
+    left: float
+    right: float
+
+
+class AdderLens(Lens):
+    id = "org.tokmon.lens.adder-python"
+    add = ActPattern[AddArgs]("tool.add", "tokmon.math.add.v1")
+
+    def view(
+        self,
+        _photons: PhotonWindow,
+        surface: SurfaceBuilder,
+    ) -> Result[None]:
+        surface.model.add_tool(
+            name="add",
+            description="计算两个数字之和",
+            arguments_schema="tokmon.math.add.v1",
+        )
+        return ok(None)
+
+    async def refract(
+        self,
+        _photons: PhotonWindow,
+        act: Act,
+        beam: RefractionBeam,
+    ) -> Result:
+        matched = self.add.match(act)
+        if not matched.ok:
+            return ok(passed())
+
+        result = matched.value.left + matched.value.right
+        emitted = await beam.emitter.tool_result(
+            act=act,
+            tool_name="add",
+            payload={"result": result},
+        )
+        if not emitted.ok:
+            return emitted
+        return ok(completed())
+```
+
+```yaml
+id: org.tokmon.lens.adder-python
+version: 1.0.0
+abi: 1
+runtime:
+  kind: cpython
+  version: "<exact-version-from-lens-lock>"
+  entry: tokmon_adder:AdderLens
+view_channels:
+  - model.tools
+act_patterns:
+  - tool.add@tokmon.math.add.v1
+light_permissions:
+  - photon.emit:tool.result
+isolation: worker
+```
+
+```text
+adder-python/
+├─ lens.yaml
+├─ schema.bundle.cbor
+├─ src/tokmon_adder/
+├─ requirements.lock
+├─ wheels/
+├─ sbom.spdx.json
+├─ checksums.txt
+└─ signature.sig
+```
+
+CPython runtime 规则：
+
+- CPython major/minor/patch、platform、architecture 和 extension ABI 必须精确锁定；
+- 每个 artifact hash 使用独立、不可变的 virtual environment 或预组装 runtime image；
+- 依赖由带 sha256 的 lockfile 固定，并从签名 wheel bundle 离线安装；装镜期间禁止访问公共 package index；
+- 禁止共享可写 `site-packages`；
+- CPython C extension 必须位于平台专用 artifact，经过符号、许可证和漏洞扫描；
+- GIL 只影响当前 worker，需要并行时启动多个 worker，不在 daemon 中创建子解释器；
+- module global 不是规范状态，worker 重启后必须能从 PhotonWindow 重建结果。
+
+### 8.9 npm/PyPI 包导入边界
+
+采用完整 Node.js/CPython 的目的就是保留模块与包生态。Lens 可以正常使用静态 `import`、受控 dynamic import、Python package import、纯语言包和平台匹配的 native dependency；限制的是依赖何时进入系统以及它能触碰哪些现实边界，而不是禁止导包。
+
+```text
+developer declares dependencies
+→ isolated build resolves exact graph
+→ lock every transitive version + source + hash
+→ bundle JS packages / collect Python wheels
+→ scan licenses, vulnerabilities and native code
+→ generate SBOM + dependency-tree hash
+→ sign Lens artifact
+→ dark lane materializes immutable environment offline
+→ worker imports only from that environment
+```
+
+Node.js module search root 仅包含 runtime built-in modules、`@tokmon/lens-sdk`、Lens payload 与只读 `dependency-bundle/`。不读取全局 npm 包、用户 `node_modules`、`NODE_PATH` 或联网模块；dynamic import 的最终文件也必须属于已签名内容。
+
+CPython `sys.path` 仅包含锁定 stdlib、`tokmon-lens-sdk`、Lens `src/` 与该 artifact 的只读 `site-packages`。禁用 user-site、editable install、任意 `.pth` 注入和运行时 package-index 访问。
+
+诸如 lodash、zod、parser、NumPy、pandas 等本地计算依赖可以直接使用。任何包若尝试网络、workspace 写入、进程启动、Secret 获取或 Photon 提交，仍必须改接 SDK 的 `io.*`/`act.request`/`photon.emit`；worker 的直接网络与任意宿主路径访问在 OS 层被拒绝。包生态不是第二条 Act 管线。
+
+### 8.10 跨语言一致性
+
+- C++、JavaScript/TypeScript、Python 使用同一 manifest/schema/Photon/Act/Surface 语义；
+- 非 C++ SDK 不得出现另一套事件总线、状态存储或直接 Lens lookup；
+- `view` 默认不得进行网络、文件写入或长时间阻塞；
+- `refract` 的所有 host 调用受 BeamTicket、deadline、budget 和 permission 控制；
+- SDK 的 `host.log` 发送结构化日志 frame，由 C++ host 脱敏后写入 `spdlog`；
+- stdout/stderr 作为有界诊断流捕获，不作为 worker 协议，也不形成 committed Photon，除非某个 Act 明确要求记录；
+- JavaScript/Python 可贡献通用 UiSurface 数据和内置卡片 schema，但不能在运行时注入任意 Slint 代码；
+- 相同 golden ray 必须可以分别驱动 C++、Node.js 和 CPython 的等价测试 Lens。
+
 ---
 
 ## 9. 动态装卸与运行时替换
@@ -994,7 +1373,7 @@ CalculatorLens 不知道 Rhea、Techor、Chora 或 Termon 的 C++ 类型：
 | --- | --- | --- |
 | R0 | 只换配置或不可执行数据 | schema 文案、theme、静态 instruction |
 | R1 | 同进程新 generation 接管新光束 | 官方签名 C++ Lens |
-| R2 | worker/进程 handoff | 第三方 native Lens、Termon |
+| R2 | worker/进程 handoff | 第三方 native、Node.js、CPython Lens 与 Termon |
 | R3 | 宿主完整交接 | Nyxia 更新 |
 
 除 Nyxia 外的十九个命名透镜至少达到 R1；Termon 固定使用 R2；低信任 native code 固定使用 R2。
@@ -1003,18 +1382,101 @@ CalculatorLens 不知道 Rhea、Techor、Chora 或 Termon 的 C++ 类型：
 
 ```text
 artifact/
-├─ lens.toml
+├─ lens.yaml
 ├─ schema.bundle.cbor
-├─ code/<platform>/<arch>/lens binary
+├─ payload/
+│  ├─ native/<platform>/<arch>/lens binary       # native 形态
+│  ├─ node/dist + dependency-bundle              # Node.js 形态
+│  ├─ cpython/src + wheel bundle + lockfile       # CPython 形态
+│  └─ wasm/module.wasm                            # WASM 形态
 ├─ assets/
 ├─ sbom.spdx.json
 ├─ checksums.txt
 └─ signature.sig
 ```
 
-artifact 以内容哈希寻址。签名覆盖 manifest、schema、binary、assets、SBOM 和 checksum。
+每个 artifact 只包含 manifest 指定的一个 runtime payload。artifact 以内容哈希寻址；签名覆盖 manifest、schema、runtime payload、dependency lock、assets、SBOM 和 checksum。
 
-### 9.3 Dark lane
+Node.js/CPython artifact 必须同时锁定：
+
+- runtime kind 和精确 runtime version；
+- OS、architecture；
+- Node ABI 或 CPython extension ABI（存在 native dependency 时）；
+- SDK protocol version；
+- 每个依赖的版本、来源和 sha256；
+- 生成后的 dependency tree hash；
+- SBOM 与许可证结果。
+
+### 9.3 用 `.tokmon/light-path.yaml` 表达期望光路
+
+用户级 `~/.tokmon/light-path.yaml` 定义全局默认光路，项目级 `<workspace>/.tokmon/light-path.yaml` 在其上做项目覆盖。文件描述的是 **desired LightPath**，不是当前正在运行的事实。
+
+```yaml
+api_version: tokmon.dev/v1
+mode: overlay
+
+lenses:
+  - lens_id: org.tokmon.lens.calculator
+    state: mounted
+    version: 1.0.0
+    artifact_sha256: 8a6d7c...f21b
+    optical_order: 720
+    isolation: worker
+
+  - lens_id: org.tokmon.lens.legacy-calculator
+    state: absent
+```
+
+规则：
+
+- `state: mounted` 表示希望装入或保持该精确 generation；
+- `state: absent` 表示希望从后续 LightPath 拔出；
+- active generation 必须解析到 `lens-lock.yaml` 中的精确 artifact hash，运行时不跟随浮动版本；
+- 项目级条目按 `lens_id` 覆盖用户级条目；
+- `optical_order` 冲突按 `(optical_order, lens_id)` 稳定排序，但 ActPattern 冲突必须拒绝；
+- 修改 YAML 只产生候选，不能直接修改 active LightPath。
+
+对应命令：
+
+```text
+tokmon lens install ./calculator-lens --user
+tokmon lens mount org.tokmon.lens.calculator@1.0.0 --project
+tokmon lens replace org.tokmon.lens.calculator ./calculator-lens-v1.1 --project
+tokmon lens unmount org.tokmon.lens.calculator --project
+tokmon lens status --light-path
+```
+
+命令行按照选择的层级原子写入 `light-path.yaml`/`lens-lock.yaml`，然后等待 daemon 返回 committed mount epoch。写文件使用 temporary sibling + fsync + atomic rename，禁止让 watcher 看到半份 YAML。
+
+### 9.4 从 YAML 变化到 Photon
+
+运行中的组合变化必须进入 Fact → Lens → Act 闭环：
+
+```text
+user/project .tokmon/light-path.yaml changes
+→ Cove/control watcher reads complete file
+→ yaml-cpp parse + schema validation
+→ append config.light-path-observed(hash, source, normalized desired path)
+→ Ignis.view compares desired path with active mount epoch
+→ Ignis.refract proposes lens.reconcile Act
+→ Fallen checks trust/permission/isolation differences
+→ candidate artifacts enter dark lane
+→ append lens.candidate-validated or lens.rejected
+→ append mount.epoch-committed
+→ Nyxia atomically publishes new LightPathSnapshot
+```
+
+因此，YAML 是人类可编辑的期望输入；最后 committed mount epoch Photon 才是恢复 active LightPath 的依据。文件被再次编辑、删除或回滚，也只会产生新的观察和新 epoch，不改写旧 Photon。
+
+Watcher 规则：
+
+- 用户级和项目级目录分别监听，统一做 100–300 ms debounce；
+- 以内容 hash 去重，不依赖不稳定的 OS watcher 次数或顺序；
+- rename、truncate、重复通知和编辑器临时文件不能产生半成品配置；
+- YAML parse 失败追加 `config.rejected`，继续使用当前 LightPath；
+- daemon 启动时读取文件并与最后 committed epoch 对比，不能盲目重复换镜。
+
+### 9.5 Dark lane
 
 候选 generation 不直接进入主光路：
 
@@ -1022,6 +1484,8 @@ artifact 以内容哈希寻址。签名覆盖 manifest、schema、binary、asset
 verify artifact and signature
 → create isolated LensMount + MountGuard
 → call manifest and ABI smoke
+→ start selected runtime worker and protocol handshake
+→ verify Node.js/CPython runtime and dependency tree hash
 → replay selected PhotonWindow through view
 → compare SurfaceDelta against policy/golden
 → run synthetic Act patterns in sandbox
@@ -1032,7 +1496,7 @@ verify artifact and signature
 
 Dark lane 的输出不能进入用户主光流，只有验证报告摘要能作为 Photon 提交。
 
-### 9.4 原子换镜
+### 9.6 原子换镜
 
 ```text
 old path epoch E
@@ -1046,7 +1510,48 @@ old path epoch E
 
 提交顺序必须是新 epoch Photon durable 在前，LightPath 发布在后。若进程在两者之间崩溃，重启按最后 committed epoch 完成或回到先前完整 epoch，并追加 recovery Photon。
 
-### 9.5 零新贡献定义
+C++20 发布点只交换一枚不可变 shared pointer：
+
+```cpp
+class ActiveLightPath final {
+public:
+    std::shared_ptr<const LightPathSnapshot> load() const noexcept {
+        return active_.load(std::memory_order_acquire);
+    }
+
+    std::shared_ptr<const LightPathSnapshot> publish(
+        std::shared_ptr<const LightPathSnapshot> candidate) noexcept {
+        return active_.exchange(std::move(candidate), std::memory_order_acq_rel);
+    }
+
+private:
+    std::atomic<std::shared_ptr<const LightPathSnapshot>> active_;
+};
+```
+
+每个 engine step 在开始时 `load()` 一次并持有 shared pointer；每个 BeamTicket 再固定目标 generation。因此交换期间：
+
+- 新 step 只看到完整 E+1；
+- 已开始 step 继续看到完整 E；
+- 不存在一半旧、一半新的 LightPath；
+- 旧动态库只有在没有调用栈、Beam 和 path 引用后才允许卸载。
+
+### 9.7 Afterglow 与安全卸载
+
+原子交换只解决“谁接新光束”，安全卸载还需要：
+
+1. 从新 LightPath 删除旧 mount；
+2. MountGuard 拒绝新 BeamTicket；
+3. 等待旧 generation 已持有的 Beam；
+4. deadline 到达后请求 stop；
+5. worker 形态终止旧进程并关闭 IPC；
+6. in-process 形态等待所有 shared pointer 与调用栈退出，再 `FreeLibrary/dlclose`；
+7. 关闭 watcher/socket/timer/thread/process 等托管对象；
+8. 追加 `lens.afterglow-ended`。
+
+第三方 native Lens 默认使用 worker，是最可靠的热插拔路径。Node.js 与 CPython Lens 则强制使用 worker。换代等价于启动携带新 runtime/dependency environment 的 worker、完成 dark-lane handshake、切换路由、终止旧 worker；不同 runtime version 可以在换代窗口内短暂并存。
+
+### 9.8 零新贡献定义
 
 镜片从 LightPath 移除后：
 
@@ -1060,7 +1565,23 @@ old path epoch E
 
 零新贡献不等于删除历史，也不等于撤回已经发生的现实动作。
 
-### 9.6 Ignis 自身换代
+### 9.9 不同 Lens 的特殊交接
+
+| Lens 类别 | 额外交接规则 |
+| --- | --- |
+| 普通纯计算 Lens | atomic path swap 后等待旧 Beam 结束 |
+| Rhea | 已发出的模型调用留在旧 generation；新调用走新 generation |
+| Lemon | 建立 E↔E+1 bridge，旧 cursor/queue 排空后关闭 |
+| Snow | 新 listener 就绪并接管新连接，旧连接在 deadline 内完成 |
+| Chora | 短 commit barrier，唯一 writer token 从旧 generation 交给新 generation |
+| Termon | launcher 启动新 desktop，同步 cursor 后切换可见窗口 |
+| worker Lens | 新进程 handshake 后原子切 IPC endpoint，旧进程 afterglow |
+| Node.js Lens | 新 runtime/dependency bundle ready 后切 worker endpoint |
+| CPython Lens | 新 immutable environment ready 后切 worker endpoint |
+
+任何交接失败都不发布半成品 LightPath。若故障在 E+1 已发布后才暴露，恢复旧 artifact 必须创建 E+2，而不是修改或撤销 E+1。
+
+### 9.10 Ignis 自身换代
 
 Ignis 的候选由当前 Ignis 准备，但最终 LightPath CAS 由 Nyxia 执行。候选不能批准自身；Fallen 验证签名、来源和 permission 差异。失败时当前 Ignis 仍保留，新 epoch 不发布。
 
@@ -1736,47 +2257,67 @@ Frame payload 使用 canonical CBOR。核心消息：
 
 ### 15.2 配置折叠
 
+Tokmon 自己定义、由人维护的运行配置、信任配置、bootstrap lock 和 Lens manifest 全部使用 YAML。JSON 只保留给外部规范强制的文件，例如 JSON Schema、`CMakePresets.json` 和 SPDX/CycloneDX JSON；这些文件不是 Tokmon 运行配置。
+
 ```text
 built-in defaults
 → signed machine config
-→ user config
-→ workspace config
+→ user config: <user-home>/.tokmon/config.yaml
+→ project config: <workspace>/.tokmon/config.yaml
 → session config Photon
 → command-line override Photon
 ```
 
-配置选择结果追加 `config.selected`，包含来源和 hash；secret 只写 `SecretRef`。
+配置选择结果追加 `config.selected`，包含用户目录、项目目录、每个输入文件的内容 hash 和最终配置 hash；secret 只写 `SecretRef`。
 
-```toml
-[runtime]
-max_active_rays = 8
-max_steps_per_ray = 64
-max_parallel_beams = 16
-afterglow_deadline_ms = 5000
+合并规则：
 
-[photons]
-max_inline_payload_bytes = 65536
-view_window_photons = 10000
-verify_hash_tail = 4096
+- map 递归合并，scalar 由后一级覆盖；
+- LightPath 条目按 `lens_id` 合并，不按数组位置猜测身份；
+- 项目级配置可以收紧风险、网络、文件和 SecretRef 使用范围，不能扩大用户级信任边界；
+- 用户级 `trust.yaml` 是信任根来源，项目目录不能新增根签名者；
+- `<workspace>/.tokmon/local.yaml` 只保存本机覆盖并必须加入 `.gitignore`；
+- YAML 未知字段、重复 key、类型不匹配和非法路径全部返回 `tl::expected` 错误，不静默采用默认值。
 
-[lenses]
-require_signatures = true
-unknown_native_mode = "worker"
+```yaml
+runtime:
+  max_active_rays: 8
+  max_steps_per_ray: 64
+  max_parallel_beams: 16
+  afterglow_deadline_ms: 5000
 
-[ui]
-stream_batch_ms = 16
-max_terminal_buffer_bytes = 8388608
+photons:
+  max_inline_payload_bytes: 65536
+  view_window_photons: 10000
+  verify_hash_tail: 4096
+
+lenses:
+  require_signatures: true
+  unknown_native_mode: worker
+
+ui:
+  stream_batch_ms: 16
+  max_terminal_buffer_bytes: 8388608
 ```
 
-### 15.3 用户目录
+### 15.3 用户级 `.tokmon` 目录
 
-平台根目录遵循系统约定，逻辑布局一致：
+Tokmon 不再把用户配置放入无点前缀的 `tokmon/` 目录。所有平台统一使用用户主目录下的 `.tokmon`：
 
 ```text
-tokmon/
-├─ config/
-│  ├─ tokmon.toml
-│  └─ trust.toml
+Windows: %USERPROFILE%\.tokmon\
+macOS:   $HOME/.tokmon/
+Linux:   $HOME/.tokmon/
+```
+
+逻辑布局：
+
+```text
+.tokmon/
+├─ config.yaml
+├─ trust.yaml
+├─ light-path.yaml
+├─ lens-lock.yaml
 ├─ data/
 │  ├─ photons.sqlite3
 │  ├─ blobs/
@@ -1786,6 +2327,10 @@ tokmon/
 ├─ lenses/
 │  ├─ installed/
 │  └─ quarantine/
+├─ runtimes/
+│  ├─ node/<exact-version>/<platform-arch>/
+│  ├─ cpython/<exact-version>/<platform-arch>/
+│  └─ environments/<artifact-hash>/
 ├─ cache/
 │  ├─ projection/
 │  └─ ui/
@@ -1793,7 +2338,36 @@ tokmon/
 └─ run/
 ```
 
-权限：data/config/lenses 默认仅当前用户；socket/pipe 验证用户身份；secret 存 OS keyring，不存此目录明文。
+`runtimes/` 保存经校验的 Node.js/CPython 精确发行版以及按 artifact hash 物化的不可变依赖环境。兼容 Lens 可以共享只读 runtime，但不共享可写 `node_modules`、`site-packages` 或虚拟环境。runtime 与 environment 都由 Ignis 在 dark lane 中按需准备；`tokmond` 不链接、嵌入或在地址空间内初始化 Node.js/CPython。
+
+权限：整个用户级 `.tokmon` 默认仅当前用户可读写；socket/pipe 验证用户身份；secret 存 OS keyring，不在 YAML 中保存明文。
+
+### 15.4 项目级 `.tokmon` 目录
+
+每个工作区可以有自己的控制目录：
+
+```text
+<workspace>/
+├─ .tokmon/
+│  ├─ config.yaml
+│  ├─ light-path.yaml
+│  ├─ lens-lock.yaml
+│  ├─ policy.yaml
+│  ├─ local.yaml             # 必须 gitignore
+│  ├─ instructions/
+│  └─ skills/
+└─ project files...
+```
+
+- `config.yaml`：项目模型、预算、UI 和工作流默认值；
+- `light-path.yaml`：项目希望装入、禁用或换代的 Lens；
+- `lens-lock.yaml`：精确 artifact hash、schema hash、版本、签名者、语言 runtime 与依赖树 hash；
+- `policy.yaml`：项目级风险收紧规则；
+- `instructions/`、`skills/`：由 Enso 作为数据观察并投影视界；
+- `local.yaml`：开发者本机覆盖，不得提交；
+- 项目目录不保存用户级 Photon DB、全局日志、secret 明文或信任私钥。
+
+从陌生仓库打开项目时，`.tokmon` 只是未经信任的候选配置。它不能自行安装 artifact、下载 Node.js/CPython、执行 `npm install`/`pip install`、增加信任根、扩大 Act 权限或绑定 secret；相关变化必须经过 artifact 验证和 Fallen 审批。
 
 ---
 
@@ -1990,7 +2564,7 @@ struct UiEphemera {
 
 ---
 
-## 17. C++20 工程与构建
+## 17. C++20 宿主工程与多语言 Lens 构建
 
 ### 17.1 工具链
 
@@ -2022,12 +2596,38 @@ CI 开启 warnings-as-errors、ASan/UBSan、TSan 专项、clang-tidy、format、
 | storage | SQLite | Photon、索引、checkpoint |
 | crypto | libsodium/平台 API | hash、signature、secure memory |
 | serialization | canonical CBOR + generated codec | Photon/Act/ABI/protocol |
-| config | toml++ | TOML |
-| logging | spdlog | 本地结构化日志 |
+| C++ error result | tl::expected | 宿主/native Lens 显式错误返回和 `Result<T>` |
+| config | yaml-cpp | YAML 配置与 Lens manifest |
+| C++ logging | spdlog | 宿主进程的唯一结构化日志实现 |
 | testing | Catch2 + RapidCheck | unit/property |
 | compression | zstd | immutable segment/artifact |
 
 具体版本写入 lockfile、SBOM 和 artifact provenance，不在源码中跟随移动版本。
+
+```cmake
+find_package(tl-expected CONFIG REQUIRED)
+find_package(spdlog CONFIG REQUIRED)
+find_package(yaml-cpp CONFIG REQUIRED)
+
+target_link_libraries(tokmon_base
+  PUBLIC
+    tl::expected
+    spdlog::spdlog
+    yaml-cpp::yaml-cpp)
+```
+
+- C++ `Result<T>` 统一定义为 `tl::expected<T, Error>`，禁止 C++ Lens 自建不兼容错误容器；
+- `spdlog` 是 daemon、CLI、C++ worker host、desktop 和 launcher 的唯一日志实现；Node.js/CPython Lens 的日志通过 `log.write` frame 交给 host，再由 `spdlog` 写出；
+- YAML 解析结果先经 schema/字段白名单校验，再转换成不可变运行配置；
+- YAML 未知字段默认报错，禁止因拼写错误静默回退到默认值。
+
+Node.js/CPython 不作为 CMake 链接依赖，而作为受签名与 hash 约束的 Lens runtime：
+
+- Node.js 锁定 exact release、platform、architecture；SDK 发布为 `@tokmon/lens-sdk`，TypeScript 构建只产出可执行 ESM；
+- CPython 锁定 major/minor/patch、platform、architecture 与 extension ABI；SDK 发布为 `tokmon-lens-sdk` wheel；
+- runtime 发行包、SDK、dependency bundle/wheel bundle、lockfile、SBOM、许可证和校验值进入 artifact provenance；
+- CI 构建阶段允许从批准 registry 解析依赖，发布后装镜和运行阶段一律使用离线、只读、已验证内容；
+- runtime 安全更新形成新的 runtime hash 和 mount epoch，不原地修改正在运行的 environment。
 
 ### 17.3 仓库结构
 
@@ -2044,6 +2644,9 @@ tokmon-n/
 │  ├─ tokmon-desktop/
 │  ├─ tokmon-cli/
 │  └─ tokmon-lens-worker/
+│     ├─ native/
+│     ├─ node/
+│     └─ cpython/
 ├─ nyxia/
 │  ├─ engine/
 │  ├─ light_path/
@@ -2054,6 +2657,9 @@ tokmon-n/
 ├─ sdk/
 │  ├─ cpp/
 │  ├─ c/
+│  ├─ typescript/
+│  ├─ python/
+│  ├─ worker-protocol/
 │  ├─ schemas/
 │  ├─ codegen/
 │  └─ testkit/
@@ -2099,6 +2705,9 @@ tokmon-n/
 - C ABI header 单独安装并保持自包含；
 - generated schema code 纳入 deterministic build 检查；
 - worker 与 daemon 之间只使用 protocol target；
+- Node.js/CPython adapter 不链接进 `tokmond`，只存在于 `tokmon-lens-worker` 进程；
+- TypeScript/Python SDK 由同一 schema 与 Worker Protocol 定义生成，并运行跨语言 golden contract；
+- Node dependency bundle 与 Python wheel environment 都是按 artifact hash 生成的不可变产物；
 - test double 作为测试 Lens artifact，不进入生产二进制。
 
 ### 17.5 产物
@@ -2111,6 +2720,9 @@ tokmon-desktop
 tokmon-lens-worker
 libtokmon-lens-sdk
 tokmon-lens-sdk headers/codegen/testkit
+@tokmon/lens-sdk package
+tokmon-lens-sdk Python wheel
+Node.js/CPython worker adapters and verified runtime catalog
 lens artifacts + schema bundles + signatures + SBOM
 platform installers
 ```
@@ -2125,7 +2737,7 @@ platform installers
 | --- | --- | --- | --- |
 | T0 | Nyxia/launcher | 宿主 | 最小光学定律与启动 |
 | T1 | 官方签名 Lens | daemon 或专用进程 | manifest 声明的窄权限 |
-| T2 | 已批准第三方 Lens | worker/WASM | 受限 host bridge |
+| T2 | 已批准第三方 Lens | native/Node.js/CPython worker 或 WASM | 受限 host bridge |
 | T3 | 未验证 artifact | quarantine | 只 inspect/verify，不执行 |
 
 信任等级不由 Lens 自报；由 artifact signature、来源、用户策略和安装记录共同决定。
@@ -2136,6 +2748,8 @@ platform installers
 - Act 只能经 Techor → Fallen → Cista → Styx → target 执行；
 - worker 不能直接打开 Photon DB；
 - worker 不能取得任意文件系统和网络；
+- Node.js/CPython 的语言级限制不作为安全边界，最终边界始终是 Styx、OS sandbox 与受限 OpticalHost；
+- worker 不继承用户 shell 的 preload、模块搜索路径、包管理器配置、代理、credential 或无关环境变量；
 - dynamic artifact 不能改变 manifest 后再继续使用原签名；
 - UI、CLI、MCP 和模型都只能提出 intent，不能伪造 terminal Photon；
 - Code Mode 与 shell 仍受相同 Act gate；
@@ -2149,13 +2763,14 @@ platform installers
 1. 内容 hash；
 2. signature chain 与 trust policy；
 3. manifest/schema/binary 一致性；
-4. ABI major/minor；
-5. platform/arch/toolchain；
+4. C ABI 或 Worker Protocol major/minor；
+5. platform/arch/toolchain、Node.js/CPython exact runtime 与扩展 ABI；
 6. surface channel、ActPattern 与 permission 差异；
 7. SBOM、许可证和已知漏洞；
 8. dark-lane contract test；
-9. worker sandbox 能力；
-10. artifact 是否被 quarantine。
+9. runtime、SDK、lockfile、离线依赖树与其 hash 是否完全一致；
+10. worker sandbox 能力；
+11. artifact 是否被 quarantine。
 
 任何失败追加 `lens.rejected`，不得以 debug flag 静默绕过生产策略。
 
@@ -2179,6 +2794,7 @@ config/Photon/Surface: SecretRef only
 - macOS：sandbox profile、hardened runtime、code signing、Keychain；
 - Linux：namespace、seccomp、cgroup、Landlock（可用时）、Unix credential；
 - WASM：memory/fuel/table limit、显式 host imports；
+- Node.js/CPython：独立进程、只读 artifact/environment、私有临时目录、清洗后的环境变量和专用 IPC；
 - 所有平台都必须把实际 `SandboxStrength` 显示给 Fallen 和 UI。
 
 ### 18.6 供应链
@@ -2190,6 +2806,10 @@ config/Photon/Surface: SecretRef only
 - updater 先下载到 quarantine，验证后原子切换；
 - 安装包支持回到旧二进制，但启动后仍以新的系统 Photon 记录切换；
 - Lens artifact 与主程序采用独立签名和撤信列表；撤信只阻止后续加载，不改写历史。
+- 装镜、启动和热切换阶段禁止访问公共 npm/PyPI registry；Node dependency bundle 与 Python wheel bundle 必须在发布阶段完成锁定、下载、扫描和签名；
+- `package-lock.json`/等价精确 lock 与 Python hash-lock 必须覆盖全部传递依赖，物化后的 dependency tree hash 还要再次核对；
+- Node native addon 与 CPython C extension 按 native code 对待：平台专包、符号/许可证/漏洞扫描、强制 worker，不因来自 npm/PyPI 而提高信任；
+- Node.js/CPython runtime 自身进入漏洞清单与更新策略；安全升级通过新 artifact/runtime hash 和新 mount epoch 发布，旧环境只在 afterglow 窗口存活。
 
 ---
 
@@ -2210,6 +2830,10 @@ struct Error {
     std::vector<DiagnosticField> fields;
 };
 ```
+
+在 C++ 调用链中，`Error` 通过 `tl::expected<T, Error>` 显式传播；语言 worker 的 SDK `Result` 在协议边界转换为同一 `Error`。`spdlog` 只记录诊断副本，不参与错误控制流，也不能成为恢复依据。所有日志在进入 sink 前先经 Cista 脱敏，并附带可用的 photon/ray/act/beam/lens/generation/epoch 字段。
+
+统一日志实现由 C++ `tokmon_logging` 薄封装约束，底层只允许 `spdlog`：launcher/CLI 默认 console sink，daemon/worker supervisor/desktop 使用 rotating file sink，并可由 Nota 增加受控 exporter sink。Node.js/CPython adapter 只发送结构化 `log.write`，不直接选择持久化 sink。异步日志队列必须有界；溢出策略不能阻塞 Photon append writer，warning/error 则同步写入应急 sink。
 
 错误分类：validation、policy、secret、sandbox、I/O、provider、storage、ABI、worker crash、view nondeterminism、budget、cancel 和 outcome unknown。
 
@@ -2285,7 +2909,10 @@ struct Error {
 9. guard 停止后没有后台活动；
 10. 拔镜后新 view 和新 Act 零贡献；
 11. candidate dark-lane 失败不影响 active path；
-12. crash 转换为结构化 Photon。
+12. crash 转换为结构化 Photon；
+13. 用户级与项目级 `light-path.yaml` 合并结果确定；
+14. 项目级配置不能扩大用户级信任边界；
+15. YAML parse/schema 失败保持当前 LightPath。
 
 ### 20.2 属性测试
 
@@ -2302,6 +2929,9 @@ new step uses one immutable path epoch
 denied Act never reaches target refract
 no new Act + no pending Beam implies darkened
 fork/replay never mutates source stream
+project .tokmon cannot add a trust root
+atomic path swap exposes either E or E+1, never a mixture
+old code unload waits for every Beam and path reference
 ```
 
 随机生成 Photon、path、generation、Act、stop、crash 和 queue pressure 序列验证上述性质。
@@ -2352,6 +2982,8 @@ Fixture 包含：
 - LightPath atomic swap 前/后；
 - worker output 半帧；
 - afterglow 中；
+- `.tokmon/light-path.yaml` atomic rename、半写、重复 watcher 通知；
+- 新 worker ready 前和 IPC endpoint 切换后；
 - desktop snapshot 中；
 - updater handoff 中。
 
@@ -2364,6 +2996,15 @@ Fixture 包含：
 - malformed CBOR、超大 frame、异常和 crash fuzz；
 - allocator ownership；
 - worker restart/reconnect；
+- native、Node.js、CPython 对同一 Worker Protocol fixture 产生一致 frame 与错误码；
+- JavaScript rejected Promise、Python exception、进程异常退出都映射为结构化 `ErrorFrame` 和新 Photon；
+- `AbortSignal`、Python cancellation、deadline 和强制 kill 的竞态测试；
+- stdout/stderr 洪泛、半行和伪造 protocol 文本不能破坏专用 IPC；
+- Node.js/CPython exact runtime 不匹配时拒绝装镜；不同 runtime version 的新旧 worker 可在 handoff 窗口并存；
+- TypeScript artifact 不依赖运行时 TypeScript compiler，构建输出是确定性 ESM；
+- npm lock/dependency bundle/tree hash 与 Python hash-lock/wheel bundle/environment hash 验证；
+- Node native addon、CPython C extension 的 platform/architecture/ABI mismatch 拒绝测试；
+- CPython 单 worker GIL 压力与多 worker 水平并行测试；
 - WASM fuel/memory/host import；
 - signature、quarantine、permission difference；
 - dynamic library unload sanitizer test。
@@ -2476,9 +3117,9 @@ old tokmon remains runnable
 
 ### Phase 3：R1/R2 replacement
 
-交付：Ignis、dark lane、mount epoch、afterglow、worker、WASM、Lemon bridge、Chora writer handoff。
+交付：用户级/项目级 `.tokmon` resolver、YAML watcher、Ignis、dark lane、mount epoch、原子 LightPath 发布、afterglow、Worker Protocol、native worker、Node.js/CPython runtime catalog 与 adapter、TypeScript/Python SDK、离线 dependency materializer、WASM、Lemon bridge、Chora writer handoff。
 
-退出：十九个 Lens 的替换路径都能被 contract test 驱动；失败不污染 active path。
+退出：十九个 Lens 的替换路径都能被 contract test 驱动；C++/Node.js/CPython 等价测试 Lens 通过同一 golden ray；失败不污染 active path。
 
 ### Phase 4：Minimal Agent
 
@@ -2530,10 +3171,15 @@ old tokmon remains runnable
 
 - Nyxia 是唯一静态元框架微内核；
 - 其余十九 Lens 都有 R1 或 R2 新代码换代路径；
+- 用户级 `~/.tokmon/light-path.yaml` 与项目级 `<workspace>/.tokmon/light-path.yaml` 可以声明期望组合；
+- YAML 变化先追加 observed Photon，再由 Ignis 提出 reconcile Act；
 - candidate 经过 signature、dark lane 和 contract test；
 - epoch durable 后才发布 LightPath；
+- C++20 原子发布保证并发读者只看到完整 E 或完整 E+1；
 - 拔镜后新 view、新 Act 匹配和新 Beam 归零；
 - afterglow 有 deadline，guard 活动可枚举、可停止；
+- 第三方 native Lens 默认采用 worker 进程 handoff，Node.js/CPython Lens 强制采用 worker endpoint handoff；
+- 新旧 Node.js/CPython runtime 与依赖环境可在换代窗口并存，原子发布后不再把新光束路由给旧 worker；
 - 历史和现实结果不因拔镜改变。
 
 ### Act 与安全
@@ -2541,13 +3187,19 @@ old tokmon remains runnable
 - 所有现实动作走唯一固定管线；
 - approval 绑定 act hash、epoch、generation；
 - secret 明文不进入 Photon/Surface/log/UI/crash bundle；
-- unknown native code 固定 worker/WASM；
+- unknown native code、Node native addon 和 CPython C extension 固定 worker/WASM，不得进入 daemon；
 - sandbox strength 不静默降级；
 - external irreversible 使用幂等、补偿和 outcome unknown 语义。
 
-### C++20 与 Slint
+### C++20、多语言 Lens 与 Slint
 
-- 全工程、示例、依赖配置和 CI 使用 C++20；
+- daemon、launcher、CLI、desktop、native worker 与 C++ SDK 使用 ISO C++20，不使用 C++23；
+- C++ 宿主/native Lens 的可恢复错误使用 `tl::expected<T, Error>`，正常失败路径不依赖异常；JavaScript/Python SDK 把可预期失败编码为协议 `Result`，未捕获异常只在 worker 边界转成 `ErrorFrame`；
+- C++ 进程统一使用 `spdlog`；Node.js/CPython Lens 日志经 `log.write` 交给 host `spdlog`，全部经过脱敏且不作为事实源；
+- TypeScript 构建为 Node.js ESM，JavaScript/TypeScript 可以使用锁定、离线物化的 npm 依赖；
+- Python Lens 使用 exact CPython 与按 artifact hash 隔离的不可变环境，可以使用锁定、离线物化的 PyPI wheel；
+- Node.js/CPython 不嵌入 `tokmond`，语言 runtime、SDK、依赖树与扩展 ABI 均被 lock/hash/SBOM 约束；
+- Tokmon 运行配置、信任配置、bootstrap lock 和 Lens manifest 全部使用 YAML/yaml-cpp；
 - Slint 只存在于 Termon/desktop，并固定精确版本；
 - C++ 句柄、weak handle 和 event-loop 线程规则正确；
 - P0 页面闭合输入、计划、审批、执行、Diff、终端、完成和恢复；
@@ -2590,6 +3242,9 @@ old tokmon remains runnable
 0018-desktop-is-a-rebuildable-surface.md
 0019-cpp20-is-the-language-baseline.md
 0020-checkpoints-are-disposable-acceleration.md
+0021-script-lenses-use-nodejs-and-cpython-workers.md
+0022-language-workers-share-one-lens-worker-protocol.md
+0023-runtime-and-dependency-environments-are-exact-and-immutable.md
 ```
 
 前三条、Nyxia 静态边界、十九 Lens 可换代、`view/refract`、单向光路、只追加 Photon 和唯一 Act 管线属于架构宪法。改变它们等于创建新架构，不是普通实现 ADR。
@@ -2605,6 +3260,10 @@ old tokmon remains runnable
 | Photon 无限增长 | 磁盘与读取压力 | immutable segment、blob、checkpoint、retention access policy |
 | afterglow 卡住 | 代码无法卸载 | deadline、stop、worker termination、diagnostic |
 | in-process native 崩溃 | daemon 崩溃 | 只允许高信任签名代码，其他 worker/WASM |
+| npm/PyPI 依赖供应链污染 | 任意代码执行、数据泄漏 | exact lock、offline bundle、hash、SBOM、签名、quarantine、漏洞/许可证扫描 |
+| Node.js/CPython runtime 漂移 | 同一 Lens 行为或 ABI 不一致 | exact runtime hash、平台专用 artifact、dark-lane contract、按 epoch 换代 |
+| script worker 资源滥用 | CPU/内存/进程/输出耗尽 | Styx/OS quota、deadline、bounded IPC、kill process tree |
+| native addon/C extension ABI 错配 | worker crash 或内存破坏 | 平台/architecture/ABI 精确锁定、worker 隔离、装镜前加载测试 |
 | writer handoff 双写 | seq/hash 破坏 | 单 writer token、commit barrier、crash test |
 | 模型重复调用 | ray 振荡 | natural darkness、dedupe、budget、approval |
 | UI token flood | 主线程卡顿 | batch、ListView、ring、snapshot |
@@ -2623,7 +3282,7 @@ old tokmon remains runnable
 5. 现实动作经过哪条固定 Act 管线？
 6. 拔镜后如何保证后续零新贡献？
 7. 如何回放、崩溃恢复和测试？
-8. 如何在 C++20、C ABI 或 worker 中实现？
+8. 如何在 C++20、C ABI、Node.js/CPython Worker Protocol 或 WASM 中实现？
 
 如果答案需要可变全局对象、横向调用、历史改写或第二事实源，该设计直接拒绝。
 
