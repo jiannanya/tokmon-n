@@ -13,12 +13,19 @@ observes:
 view_channels: [workspace.tree, workspace.diff, workspace.git, ui.artifact]
 refracts:
   - { kind: fs.read, schema: tokmon.fs.read.v1 }
+  - { kind: fs.create, schema: tokmon.fs.create.v1 }
   - { kind: fs.write, schema: tokmon.fs.write.v1 }
   - { kind: fs.move, schema: tokmon.fs.move.v1 }
   - { kind: fs.delete, schema: tokmon.fs.delete.v1 }
+  - { kind: workspace.scan, schema: tokmon.workspace.scan.v1 }
+  - { kind: workspace.watch, schema: tokmon.workspace.watch.v1 }
+  - { kind: git.status, schema: tokmon.git.status.v1 }
   - { kind: git.stage, schema: tokmon.git.stage.v1 }
   - { kind: git.commit, schema: tokmon.git.commit.v1 }
   - { kind: git.branch, schema: tokmon.git.branch.v1 }
   - { kind: git.merge, schema: tokmon.git.merge.v1 }
+  - { kind: git.rebase, schema: tokmon.git.rebase.v1 }
   - { kind: artifact.create, schema: tokmon.artifact.create.v1 }
+  - { kind: artifact.preview, schema: tokmon.artifact.preview.v1 }
+  - { kind: artifact.export, schema: tokmon.artifact.export.v1 }
 light_permissions: [photon.emit, io.workspace, artifact.write, log.write]

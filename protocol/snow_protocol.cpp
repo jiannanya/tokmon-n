@@ -8,8 +8,12 @@ std::string_view to_string(const SnowMessageKind kind) noexcept {
     case SnowMessageKind::snapshot_request: return "snapshot.request";
     case SnowMessageKind::snapshot: return "snapshot";
     case SnowMessageKind::delta: return "delta";
+    case SnowMessageKind::stream: return "stream";
     case SnowMessageKind::intent: return "intent";
     case SnowMessageKind::intent_result: return "intent.result";
+    case SnowMessageKind::cancel: return "cancel";
+    case SnowMessageKind::close: return "close";
+    case SnowMessageKind::closed: return "closed";
     case SnowMessageKind::ping: return "ping";
     case SnowMessageKind::pong: return "pong";
     case SnowMessageKind::error: return "error";
@@ -35,8 +39,12 @@ Result<SnowMessage> snow_message_from_cbor(const cbor::Value& value) {
   else if (text == "snapshot.request") message.kind = SnowMessageKind::snapshot_request;
   else if (text == "snapshot") message.kind = SnowMessageKind::snapshot;
   else if (text == "delta") message.kind = SnowMessageKind::delta;
+  else if (text == "stream") message.kind = SnowMessageKind::stream;
   else if (text == "intent") message.kind = SnowMessageKind::intent;
   else if (text == "intent.result") message.kind = SnowMessageKind::intent_result;
+  else if (text == "cancel") message.kind = SnowMessageKind::cancel;
+  else if (text == "close") message.kind = SnowMessageKind::close;
+  else if (text == "closed") message.kind = SnowMessageKind::closed;
   else if (text == "ping") message.kind = SnowMessageKind::ping;
   else if (text == "pong") message.kind = SnowMessageKind::pong;
   else if (text == "error") message.kind = SnowMessageKind::error;
@@ -51,4 +59,3 @@ Result<SnowMessage> snow_message_from_cbor(const cbor::Value& value) {
 }
 
 }  // namespace tokmon
-

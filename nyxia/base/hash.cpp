@@ -110,5 +110,28 @@ std::string sha256_hex(const std::string_view text) {
   return hex(digest);
 }
 
-}  // namespace tokmon
+std::string hmac_sha256_hex(const std::string_view key,
+                            const std::string_view message) {
+  constexpr std::size_t block_size = 64u;
+  std::array<std::uint8_t, block_size> normalized{};
+  if (key.size() > block_size) {
+    const auto digest = sha256(key);
+    std::copy(digest.begin(), digest.end(), normalized.begin());
+  } else {
+    std::copy(key.begin(), key.end(), normalized.begin());
+  }
+  std::array<std::uint8_t, block_size> inner_pad{};
+  std::array<std::uint8_t, block_size> outer_pad{};
+  for (std::size_t index = 0; index < block_size; ++index) {
+    inner_pad[index] = static_cast<std::uint8_t>(normalized[index] ^ 0x36u);
+    outer_pad[index] = static_cast<std::uint8_t>(normalized[index] ^ 0x5cu);
+  }
+  std::vector<std::uint8_t> inner(inner_pad.begin(), inner_pad.end());
+  inner.insert(inner.end(), message.begin(), message.end());
+  const auto inner_digest = sha256(inner);
+  std::vector<std::uint8_t> outer(outer_pad.begin(), outer_pad.end());
+  outer.insert(outer.end(), inner_digest.begin(), inner_digest.end());
+  return hex(sha256(outer));
+}
 
+}  // namespace tokmon

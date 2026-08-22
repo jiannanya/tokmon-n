@@ -16,6 +16,7 @@ using Sha256 = std::array<std::uint8_t, 32>;
 [[nodiscard]] std::string hex(std::span<const std::uint8_t> bytes);
 [[nodiscard]] std::string sha256_hex(std::span<const std::uint8_t> bytes);
 [[nodiscard]] std::string sha256_hex(std::string_view text);
+[[nodiscard]] std::string hmac_sha256_hex(std::string_view key,
+                                          std::string_view message);
 
 }  // namespace tokmon
-

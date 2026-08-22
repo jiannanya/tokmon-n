@@ -39,6 +39,9 @@ struct ActPattern {
 [[nodiscard]] std::string_view to_string(RiskClass risk) noexcept;
 [[nodiscard]] cbor::Value to_cbor(const Act& act);
 [[nodiscard]] Result<Act> act_from_cbor(const cbor::Value& value);
+[[nodiscard]] std::string act_binding_hash(const Act& act);
+// Stable consumer identity used before an opaque one-shot binding id exists.
+// Only the binding carrier fields are omitted; every effect-bearing field stays bound.
+[[nodiscard]] std::string act_secret_scope_hash(const Act& act);
 
 }  // namespace tokmon
-

@@ -49,6 +49,16 @@ cbor::Value manifest_value(const LensManifest& manifest) {
     refracts.push_back(cbor::object({{"kind", pattern.kind}, {"schema", pattern.schema}}));
   cbor::Value::Array permissions;
   for (const auto& permission : manifest.light_permissions) permissions.emplace_back(permission);
+  cbor::Value::Array dependencies;
+  for (const auto& dependency : manifest.dependencies)
+    dependencies.push_back(cbor::object({{"id", dependency.id},
+                                         {"version", dependency.version}}));
+  cbor::Value::Array conflicts;
+  for (const auto& conflict : manifest.conflicts) conflicts.emplace_back(conflict);
+  cbor::Value::Array before;
+  for (const auto& id : manifest.optical_before) before.emplace_back(id);
+  cbor::Value::Array after;
+  for (const auto& id : manifest.optical_after) after.emplace_back(id);
   return cbor::object({{"id", manifest.id}, {"display_name", manifest.display_name},
       {"version", manifest.version}, {"abi_major", static_cast<std::int64_t>(manifest.abi_major)},
       {"abi_minor", static_cast<std::int64_t>(manifest.abi_minor)},
@@ -58,7 +68,15 @@ cbor::Value manifest_value(const LensManifest& manifest) {
       {"trust", static_cast<std::int64_t>(manifest.trust)},
       {"observes", std::move(observes)}, {"view_channels", std::move(channels)},
       {"refracts", std::move(refracts)}, {"permissions", std::move(permissions)},
-      {"stateless", manifest.stateless}});
+      {"stateless", manifest.stateless}, {"dependencies", std::move(dependencies)},
+      {"conflicts", std::move(conflicts)}, {"optical_before", std::move(before)},
+      {"optical_after", std::move(after)},
+      {"resources", cbor::object({
+          {"memory_mb", static_cast<std::int64_t>(manifest.resources.memory_mb)},
+          {"output_bytes", static_cast<std::int64_t>(manifest.resources.output_bytes)},
+          {"deadline_ms", static_cast<std::int64_t>(manifest.resources.deadline.count())}})},
+      {"replacement", manifest.replacement}, {"schema_bundle", manifest.schema_bundle},
+      {"sbom", manifest.sbom}});
 }
 
 class CollectingHost final : public OpticalHost {

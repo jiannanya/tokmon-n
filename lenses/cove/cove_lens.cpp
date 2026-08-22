@@ -5,6 +5,8 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <map>
+#include <thread>
 
 #include "lenses/common/process_runner.hpp"
 #include "tokmon/hash.hpp"
@@ -51,6 +53,101 @@ Result<std::string> read_all(const std::filesystem::path& path) {
   return std::string((std::istreambuf_iterator<char>(input)), {});
 }
 
+Result<std::string> persist_artifact(const std::filesystem::path& root,
+                                     const std::string_view content) {
+  const auto digest = sha256_hex(content);
+  const auto directory = root / ".tokmon" / "artifacts";
+  std::error_code error;
+  std::filesystem::create_directories(directory, error);
+  if (error) return tl::unexpected(make_error(ErrorCode::io_error,
+                                               "cannot create artifact directory"));
+  const auto path = directory / digest;
+  if (!std::filesystem::exists(path)) {
+    std::ofstream output(path, std::ios::binary);
+    output.write(content.data(), static_cast<std::streamsize>(content.size()));
+    output.flush();
+    if (!output) return tl::unexpected(make_error(ErrorCode::io_error,
+                                                   "cannot persist content artifact"));
+  }
+  return path.generic_string();
+}
+
+struct EntityState {
+  std::string type;
+  std::uintmax_t size{0};
+  std::filesystem::file_time_type modified{};
+  std::string hash;
+};
+
+std::int64_t modified_millis(const std::filesystem::file_time_type value) {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(
+      value.time_since_epoch()).count();
+}
+
+Result<std::map<std::string, EntityState, std::less<>>> scan_tree(
+    const std::filesystem::path& root, const std::size_t max_entries) {
+  std::map<std::string, EntityState, std::less<>> result;
+  std::error_code error;
+  for (std::filesystem::recursive_directory_iterator iterator(root,
+           std::filesystem::directory_options::skip_permission_denied, error), end;
+       iterator != end; iterator.increment(error)) {
+    if (error) { error.clear(); continue; }
+    if (iterator->is_directory() && iterator->path().filename() == ".git") {
+      iterator.disable_recursion_pending(); continue;
+    }
+    if (result.size() >= max_entries)
+      return tl::unexpected(make_error(ErrorCode::invalid_argument,
+                                       "workspace scan entry limit exceeded"));
+    const auto relative = iterator->path().lexically_relative(root).generic_string();
+    if (iterator->is_symlink(error)) {
+      const auto target = std::filesystem::read_symlink(iterator->path(), error);
+      if (!error) result.emplace(relative, EntityState{"symlink", 0,
+          iterator->last_write_time(error), sha256_hex(target.generic_string())});
+      error.clear();
+    } else if (iterator->is_directory(error)) {
+      result.emplace(relative, EntityState{"directory", 0,
+          iterator->last_write_time(error), sha256_hex("directory:" + relative)});
+    } else if (iterator->is_regular_file(error)) {
+      auto content = read_all(iterator->path());
+      if (!content) continue;
+      result.emplace(relative, EntityState{"file", iterator->file_size(error),
+          iterator->last_write_time(error), sha256_hex(*content)});
+    }
+  }
+  return result;
+}
+
+Result<std::map<std::string, std::string, std::less<>>> git_path_states(
+    const std::filesystem::path& root, const std::chrono::milliseconds timeout,
+    const std::stop_token stop) {
+  std::map<std::string, std::string, std::less<>> states;
+  std::error_code error;
+  if (!std::filesystem::is_directory(root / ".git", error) || error) return states;
+  auto status = run_process(ProcessRequest{
+      .argv = {"git", "status", "--porcelain=v1", "-z", "--ignored=matching",
+               "--untracked-files=all"},
+      .cwd = root, .timeout = timeout, .max_output_bytes = 4u * 1024u * 1024u,
+      .stop = stop});
+  if (!status) return tl::unexpected(status.error());
+  if (status->exit_code != 0)
+    return tl::unexpected(make_error(ErrorCode::io_error,
+        "git status failed while building workspace tree: " + status->stderr_text));
+  std::size_t cursor = 0;
+  while (cursor < status->stdout_text.size()) {
+    const auto end = status->stdout_text.find('\0', cursor);
+    const auto record = std::string_view(status->stdout_text).substr(cursor,
+        (end == std::string::npos ? status->stdout_text.size() : end) - cursor);
+    if (record.size() >= 4u && record[2] == ' ') {
+      const auto code = std::string(record.substr(0, 2));
+      states[std::string(record.substr(3))] = code == "??" ? "untracked" :
+          code == "!!" ? "ignored" : code;
+    }
+    if (end == std::string::npos) break;
+    cursor = end + 1u;
+  }
+  return states;
+}
+
 bool valid_git_name(const std::string_view value) {
   return !value.empty() && value != "." && value != ".." &&
       std::all_of(value.begin(), value.end(), [](const unsigned char character) {
@@ -82,11 +179,18 @@ Result<ProcessOutput> run_git(const cbor::Value& parameters,
 CoveLens::CoveLens() : LensBase(make_manifest("cove", "Cove / Workspace 实景物镜",
     {"workspace.tree", "workspace.diff", "workspace.git", "ui.artifact"},
     {{"workspace.*", "*"}, {"fs.*", "*"}, {"git.*", "*"}, {"artifact.*", "*"}},
-    {{"fs.read", "tokmon.fs.read.v1"}, {"fs.write", "tokmon.fs.write.v1"},
+    {{"fs.read", "tokmon.fs.read.v1"}, {"fs.create", "tokmon.fs.create.v1"},
+     {"fs.write", "tokmon.fs.write.v1"},
      {"fs.move", "tokmon.fs.move.v1"}, {"fs.delete", "tokmon.fs.delete.v1"},
+     {"workspace.scan", "tokmon.workspace.scan.v1"},
+     {"workspace.watch", "tokmon.workspace.watch.v1"},
+     {"git.status", "tokmon.git.status.v1"},
      {"git.stage", "tokmon.git.stage.v1"}, {"git.commit", "tokmon.git.commit.v1"},
      {"git.branch", "tokmon.git.branch.v1"}, {"git.merge", "tokmon.git.merge.v1"},
-     {"artifact.create", "tokmon.artifact.create.v1"}},
+     {"git.rebase", "tokmon.git.rebase.v1"},
+     {"artifact.create", "tokmon.artifact.create.v1"},
+     {"artifact.preview", "tokmon.artifact.preview.v1"},
+     {"artifact.export", "tokmon.artifact.export.v1"}},
     {"photon.emit", "io.workspace", "artifact.write", "log.write"})) {}
 
 Result<void> CoveLens::view(const PhotonWindow& photons, SurfaceBuilder& surface) {
@@ -112,6 +216,95 @@ Result<void> CoveLens::view(const PhotonWindow& photons, SurfaceBuilder& surface
 Result<RefractionResult> CoveLens::refract(const PhotonWindow&, const Act& act,
                                             RefractionBeam& beam) {
   if (!accepts(act)) return RefractionResult{.status = RefractionStatus::passed};
+  if (act.kind == "workspace.scan" || act.kind == "workspace.watch") {
+    const auto* root_value = cbor::find(act.parameters, "workspace_root");
+    if (!root_value || root_value->as_string().empty())
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                       "workspace operation requires workspace_root"));
+    std::error_code error;
+    const auto root = std::filesystem::weakly_canonical(
+        std::filesystem::path(root_value->as_string()), error);
+    if (error || !std::filesystem::is_directory(root))
+      return tl::unexpected(make_error(ErrorCode::invalid_argument,
+                                       "workspace_root is not a directory"));
+    const auto max_entries = static_cast<std::size_t>(std::clamp<std::int64_t>(
+        cbor::find(act.parameters, "max_entries")
+            ? cbor::find(act.parameters, "max_entries")->as_integer(100'000) : 100'000,
+        1, 1'000'000));
+    auto snapshot = scan_tree(root, max_entries);
+    if (!snapshot) return tl::unexpected(snapshot.error());
+    auto git_states = git_path_states(root, act.timeout, beam.stop_token());
+    if (!git_states) return tl::unexpected(git_states.error());
+    cbor::Value::Array entities;
+    for (const auto& [path, state] : *snapshot)
+      entities.push_back(cbor::object({{"path", path},
+          {"canonical_path", (root / path).lexically_normal().generic_string()},
+          {"type", state.type}, {"size", static_cast<std::int64_t>(state.size)},
+          {"mtime_ms", modified_millis(state.modified)}, {"sha256", state.hash},
+          {"git_status", git_states->contains(path) ? (*git_states)[path] : "clean"},
+          {"ignored", git_states->contains(path) && (*git_states)[path] == "ignored"}}));
+    if (act.kind == "workspace.scan") {
+      const auto snapshot_hash = sha256_hex(cbor::encode(cbor::Value(entities)));
+      return emit(beam, "workspace.scanned", "tokmon.workspace.scan-result.v1",
+          cbor::object({{"root", root.generic_string()}, {"entities", std::move(entities)},
+            {"count", static_cast<std::int64_t>(snapshot->size())},
+            {"snapshot_hash", snapshot_hash}}));
+    }
+
+    std::vector<PhotonId> emitted;
+    auto started = beam.emit("watcher.started", "tokmon.workspace.watcher.v1",
+        cbor::object({{"root", root.generic_string()},
+                      {"baseline_count", static_cast<std::int64_t>(snapshot->size())}}));
+    if (!started) return tl::unexpected(started.error());
+    emitted.push_back(started->id);
+    const auto duration = std::chrono::milliseconds(std::clamp<std::int64_t>(
+        cbor::find(act.parameters, "duration_ms")
+            ? cbor::find(act.parameters, "duration_ms")->as_integer(1000) : 1000,
+        50, std::min<std::int64_t>(act.timeout.count(), 60'000)));
+    const auto debounce = std::chrono::milliseconds(std::clamp<std::int64_t>(
+        cbor::find(act.parameters, "debounce_ms")
+            ? cbor::find(act.parameters, "debounce_ms")->as_integer(100) : 100, 10, 2000));
+    const auto deadline = std::chrono::steady_clock::now() + duration;
+    while (!beam.stop_requested() && std::chrono::steady_clock::now() < deadline) {
+      std::this_thread::sleep_for(debounce);
+      auto next = scan_tree(root, max_entries);
+      if (!next) return tl::unexpected(next.error());
+      cbor::Value::Array changes;
+      for (const auto& [path, state] : *next) {
+        const auto found = snapshot->find(path);
+        if (found == snapshot->end() || found->second.hash != state.hash)
+          changes.push_back(cbor::object({{"path", path},
+              {"operation", found == snapshot->end() ? "create" : "modify"},
+              {"type", state.type}, {"mtime_ms", modified_millis(state.modified)},
+              {"sha256", state.hash}, {"size", static_cast<std::int64_t>(state.size)}}));
+      }
+      for (const auto& [path, _] : *snapshot)
+        if (!next->contains(path))
+          changes.push_back(cbor::object({{"path", path}, {"operation", "delete"}}));
+      if (changes.size() > 1024u) {
+        auto photon = beam.emit("watcher.overflowed", "tokmon.workspace.watcher.v1",
+            cbor::object({{"change_count", static_cast<std::int64_t>(changes.size())},
+                          {"rescan", true}}));
+        if (!photon) return tl::unexpected(photon.error());
+        emitted.push_back(photon->id);
+      } else if (!changes.empty()) {
+        auto photon = beam.emit("workspace.changes-observed", "tokmon.workspace.changes.v1",
+            cbor::object({{"root", root.generic_string()},
+                          {"changes", std::move(changes)}, {"reobserved", true}}));
+        if (!photon) return tl::unexpected(photon.error());
+        emitted.push_back(photon->id);
+      }
+      snapshot = std::move(next);
+    }
+    auto stopped = beam.emit("watcher.stopped", "tokmon.workspace.watcher.v1",
+        cbor::object({{"cancelled", beam.stop_requested()},
+                      {"final_count", static_cast<std::int64_t>(snapshot->size())}}));
+    if (!stopped) return tl::unexpected(stopped.error());
+    emitted.push_back(stopped->id);
+    return RefractionResult{.status = beam.stop_requested() ? RefractionStatus::rejected
+                                                            : RefractionStatus::completed,
+                             .emitted = std::move(emitted), .detail = "workspace watch ended"};
+  }
   if (act.kind.starts_with("fs.")) {
     auto target = safe_target(act.parameters);
     if (!target) return tl::unexpected(target.error());
@@ -125,18 +318,23 @@ Result<RefractionResult> CoveLens::refract(const PhotonWindow&, const Act& act,
           {"path", target->generic_string()}, {"content", *full_content},
           {"sha256", digest}, {"truncated", truncated}}));
     }
-    if (act.kind == "fs.write") {
+    if (act.kind == "fs.write" || act.kind == "fs.create") {
       const auto* content = cbor::find(act.parameters, "content");
       if (!content || !std::holds_alternative<std::string>(content->data))
         return tl::unexpected(make_error(ErrorCode::schema_mismatch,
                                          "fs.write string content is required"));
+      if (act.kind == "fs.create" && std::filesystem::exists(*target))
+        return tl::unexpected(make_error(ErrorCode::invalid_state,
+                                         "fs.create target already exists"));
+      std::string preimage;
+      std::string current_hash;
+      if (std::filesystem::exists(*target)) {
+        auto current = read_all(*target);
+        if (!current) return tl::unexpected(current.error());
+        preimage = std::move(*current);
+        current_hash = sha256_hex(preimage);
+      }
       if (const auto* precondition = cbor::find(act.parameters, "precondition_sha256")) {
-        std::string current_hash;
-        if (std::filesystem::exists(*target)) {
-          auto current = read_all(*target);
-          if (!current) return tl::unexpected(current.error());
-          current_hash = sha256_hex(*current);
-        }
         if (current_hash != precondition->as_string())
           return tl::unexpected(make_error(ErrorCode::invalid_state,
                                            "workspace precondition hash does not match"));
@@ -152,10 +350,23 @@ Result<RefractionResult> CoveLens::refract(const PhotonWindow&, const Act& act,
                                                     "cannot write workspace file"));
       auto read_back = read_all(*target);
       if (!read_back) return tl::unexpected(read_back.error());
+      const auto root = std::filesystem::weakly_canonical(
+          std::filesystem::path(cbor::find(act.parameters, "workspace_root")->as_string()), error);
+      auto preimage_ref = persist_artifact(root, preimage);
+      auto postimage_ref = persist_artifact(root, *read_back);
+      if (!preimage_ref) return tl::unexpected(preimage_ref.error());
+      if (!postimage_ref) return tl::unexpected(postimage_ref.error());
+      const bool diff_truncated = preimage.size() + read_back->size() > 131'072u;
       return emit(beam, "fs.changed", "tokmon.fs.changed.v1", cbor::object({
-          {"path", target->generic_string()}, {"operation", "write"},
-          {"sha256", sha256_hex(*read_back)},
-          {"bytes", static_cast<std::int64_t>(read_back->size())}}));
+          {"path", target->generic_string()},
+          {"operation", act.kind == "fs.create" ? "create" : "write"},
+          {"preimage_sha256", current_hash}, {"preimage_ref", *preimage_ref},
+          {"postimage_sha256", sha256_hex(*read_back)}, {"postimage_ref", *postimage_ref},
+          {"diff", diff_truncated ? cbor::Value(nullptr) : cbor::object({
+              {"before", preimage}, {"after", *read_back}})},
+          {"diff_truncated", diff_truncated},
+          {"bytes", static_cast<std::int64_t>(read_back->size())},
+          {"write_verified", true}}));
     }
     if (act.kind == "fs.move") {
       auto destination = safe_target(act.parameters, "destination");
@@ -181,37 +392,83 @@ Result<RefractionResult> CoveLens::refract(const PhotonWindow&, const Act& act,
                       !cbor::find(act.parameters, "recursive")->as_bool()))
       return tl::unexpected(make_error(ErrorCode::permission_denied,
                                        "directory deletion requires recursive=true"));
+    std::string preimage_hash;
+    std::string preimage_ref;
+    if (!directory) {
+      auto content = read_all(*target);
+      if (!content) return tl::unexpected(content.error());
+      preimage_hash = sha256_hex(*content);
+      const auto root = std::filesystem::weakly_canonical(
+          std::filesystem::path(cbor::find(act.parameters, "workspace_root")->as_string()), error);
+      auto stored = persist_artifact(root, *content);
+      if (!stored) return tl::unexpected(stored.error());
+      preimage_ref = std::move(*stored);
+    }
     const auto removed = directory ? std::filesystem::remove_all(*target, error)
                                    : (std::filesystem::remove(*target, error) ? 1u : 0u);
     if (error) return tl::unexpected(make_error(ErrorCode::io_error,
                                                  "cannot delete workspace path: " + error.message()));
     return emit(beam, "fs.changed", "tokmon.fs.changed.v1", cbor::object({
         {"path", target->generic_string()}, {"operation", "delete"},
-        {"removed_entries", static_cast<std::int64_t>(removed)}}));
+        {"preimage_sha256", preimage_hash}, {"preimage_ref", preimage_ref},
+        {"removed_entries", static_cast<std::int64_t>(removed)}, {"verified_absent", true}}));
   }
-  if (act.kind == "artifact.create") {
+  if (act.kind.starts_with("artifact.")) {
     const auto* root = cbor::find(act.parameters, "workspace_root");
-    const auto* content = cbor::find(act.parameters, "content");
-    if (!root || !content || !std::holds_alternative<std::string>(content->data))
+    if (!root || root->as_string().empty())
       return tl::unexpected(make_error(ErrorCode::schema_mismatch,
-          "artifact.create requires workspace_root and string content"));
-    const auto value = std::string(content->as_string());
-    const auto digest = sha256_hex(value);
+                                       "artifact operation requires workspace_root"));
     const auto directory = std::filesystem::path(root->as_string()) / ".tokmon" / "artifacts";
     std::error_code error;
     std::filesystem::create_directories(directory, error);
     if (error) return tl::unexpected(make_error(ErrorCode::io_error,
                                                  "cannot create artifact directory"));
-    const auto path = directory / digest;
-    if (!std::filesystem::exists(path)) {
-      std::ofstream output(path, std::ios::binary);
-      output.write(value.data(), static_cast<std::streamsize>(value.size()));
-      if (!output) return tl::unexpected(make_error(ErrorCode::io_error,
-                                                     "cannot write artifact"));
+    if (act.kind == "artifact.create") {
+      const auto* content = cbor::find(act.parameters, "content");
+      if (!content || !std::holds_alternative<std::string>(content->data))
+        return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                         "artifact.create requires string content"));
+      const auto value = std::string(content->as_string());
+      const auto digest = sha256_hex(value);
+      auto path = persist_artifact(std::filesystem::path(root->as_string()), value);
+      if (!path) return tl::unexpected(path.error());
+      return emit(beam, "artifact.created", "tokmon.artifact.created.v1", cbor::object({
+          {"sha256", digest}, {"path", *path},
+          {"bytes", static_cast<std::int64_t>(value.size())},
+          {"provenance_act", act.id}, {"immutable", true}}));
     }
-    return emit(beam, "artifact.created", "tokmon.artifact.created.v1", cbor::object({
-        {"sha256", digest}, {"path", path.generic_string()},
-        {"bytes", static_cast<std::int64_t>(value.size())}}));
+    const auto digest = cbor::find(act.parameters, "sha256");
+    if (!digest || digest->as_string().size() != 64u)
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                       "artifact preview/export requires sha256"));
+    const auto path = directory / std::string(digest->as_string());
+    auto content = read_all(path);
+    if (!content || sha256_hex(*content) != digest->as_string())
+      return tl::unexpected(content ? make_error(ErrorCode::integrity_error,
+          "artifact content hash mismatch") : content.error());
+    if (act.kind == "artifact.preview") {
+      const auto max_bytes = static_cast<std::size_t>(std::clamp<std::int64_t>(
+          cbor::find(act.parameters, "max_bytes")
+              ? cbor::find(act.parameters, "max_bytes")->as_integer(65'536) : 65'536,
+          1, 1'048'576));
+      const bool truncated = content->size() > max_bytes;
+      if (truncated) content->resize(max_bytes);
+      return emit(beam, "artifact.previewed", "tokmon.artifact.preview.v1",
+          cbor::object({{"sha256", std::string(digest->as_string())}, {"content", *content},
+                        {"truncated", truncated}}));
+    }
+    auto destination = safe_target(act.parameters, "destination");
+    if (!destination) return tl::unexpected(destination.error());
+    if (std::filesystem::exists(*destination))
+      return tl::unexpected(make_error(ErrorCode::invalid_state,
+                                       "artifact export destination exists"));
+    std::filesystem::create_directories(destination->parent_path(), error);
+    std::filesystem::copy_file(path, *destination, std::filesystem::copy_options::none, error);
+    if (error) return tl::unexpected(make_error(ErrorCode::io_error,
+                                                 "artifact export failed: " + error.message()));
+    return emit(beam, "artifact.exported", "tokmon.artifact.export.v1", cbor::object({
+        {"sha256", std::string(digest->as_string())},
+        {"destination", destination->generic_string()}, {"verified", true}}));
   }
 
   std::vector<std::string> git_arguments;
@@ -219,7 +476,9 @@ Result<RefractionResult> CoveLens::refract(const PhotonWindow&, const Act& act,
   if (!git_root || git_root->as_string().empty())
     return tl::unexpected(make_error(ErrorCode::schema_mismatch,
                                      "Git action requires workspace_root"));
-  if (act.kind == "git.stage") {
+  if (act.kind == "git.status") {
+    git_arguments = {"status", "--porcelain=v2", "--branch", "--untracked-files=all"};
+  } else if (act.kind == "git.stage") {
     git_arguments = {"add", "--"};
     const auto* paths = cbor::find(act.parameters, "paths");
     if (!paths || !paths->as_array() || paths->as_array()->empty())
@@ -248,7 +507,9 @@ Result<RefractionResult> CoveLens::refract(const PhotonWindow&, const Act& act,
                                        "Git branch name is invalid"));
     git_arguments = act.kind == "git.branch"
         ? std::vector<std::string>{"switch", "-c", std::string(name->as_string())}
-        : std::vector<std::string>{"merge", "--no-edit", std::string(name->as_string())};
+        : act.kind == "git.rebase"
+            ? std::vector<std::string>{"rebase", std::string(name->as_string())}
+            : std::vector<std::string>{"merge", "--no-edit", std::string(name->as_string())};
   }
   auto result = run_git(act.parameters, std::move(git_arguments), act, beam);
   if (!result) return tl::unexpected(result.error());
@@ -256,10 +517,15 @@ Result<RefractionResult> CoveLens::refract(const PhotonWindow&, const Act& act,
                                                           "Git action timed out"));
   if (result->cancelled) return tl::unexpected(make_error(ErrorCode::cancelled,
                                                           "Git action cancelled"));
-  return emit(beam, result->exit_code == 0 ? "git.completed" : "git.failed",
+  const auto event = act.kind == "git.status" ? "git.status-observed" :
+      result->exit_code == 0 ? "git.completed" : "git.failed";
+  return emit(beam, event,
       "tokmon.git.result.v1", cbor::object({
           {"operation", act.kind}, {"exit_code", result->exit_code},
           {"stdout", result->stdout_text}, {"stderr", result->stderr_text},
+          {"conflict", result->exit_code != 0 &&
+              (act.kind == "git.merge" || act.kind == "git.rebase")},
+          {"automatic_overwrite", false},
           {"output_truncated", result->stdout_truncated || result->stderr_truncated}}));
 }
 

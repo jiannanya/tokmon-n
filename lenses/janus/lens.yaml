@@ -10,10 +10,13 @@ observes:
   - { kind: assistant.message, schema: "*" }
   - { kind: model.tool-call, schema: "*" }
   - { kind: tool.result, schema: "*" }
+  - { kind: "model.*", schema: "*" }
   - { kind: "act.*", schema: "*" }
   - { kind: "ray.*", schema: "*" }
+  - { kind: user.steering, schema: "*" }
 view_channels: [ray.status, model.intent]
 refracts:
   - { kind: ray.cancel, schema: tokmon.ray.cancel.v1 }
   - { kind: ray.steer, schema: tokmon.ray.steer.v1 }
+  - { kind: ray.terminate, schema: tokmon.ray.terminate.v1 }
 light_permissions: [photon.emit, log.write]

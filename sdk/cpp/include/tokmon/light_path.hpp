@@ -43,16 +43,18 @@ class BeamRegistry {
   struct Ticket {
     std::string id;
     LensId lens;
+    RayId ray;
     GenerationId generation{0};
     std::stop_source stop;
     std::chrono::steady_clock::time_point deadline;
   };
 
   [[nodiscard]] std::shared_ptr<Ticket> acquire(const LensId& lens,
-                                                GenerationId generation,
+                                                GenerationId generation, RayId ray,
                                                 std::chrono::milliseconds timeout);
   void release(const std::string& ticket_id);
   std::size_t stop_generation(const LensId& lens, GenerationId generation);
+  std::size_t stop_ray(const RayId& ray);
   [[nodiscard]] std::size_t active(const LensId& lens,
                                    GenerationId generation) const;
 
@@ -62,4 +64,3 @@ class BeamRegistry {
 };
 
 }  // namespace tokmon
-

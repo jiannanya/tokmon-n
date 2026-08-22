@@ -3,8 +3,10 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
+#include "tokmon/act.hpp"
 #include "tokmon/error.hpp"
 #include "tokmon/lens.hpp"
 
@@ -27,6 +29,28 @@ struct DesiredLens {
   RuntimeKind runtime{RuntimeKind::in_process};
 };
 
+enum class PolicyEffect : std::uint8_t { allow, ask, deny };
+
+struct PolicyRule {
+  PolicyEffect effect{PolicyEffect::deny};
+  std::vector<std::string> acts;
+  std::vector<std::string> targets;
+  std::vector<std::string> trusts;
+  std::vector<std::string> risks;
+  std::vector<std::string> paths;
+  std::vector<std::string> argv0;
+  std::unordered_map<std::string, std::string> parameters;
+  std::int64_t not_before_ms{0};
+  std::int64_t not_after_ms{0};
+};
+
+struct FallenPolicy {
+  PolicyEffect default_effect{PolicyEffect::allow};
+  std::vector<PolicyRule> rules;
+  std::vector<std::string> approval_risks{"external_irreversible"};
+  bool configured{false};
+};
+
 struct RuntimeConfig {
   TokmonPaths paths;
   std::vector<DesiredLens> light_path;
@@ -34,7 +58,15 @@ struct RuntimeConfig {
   std::size_t photon_window{4096};
   std::size_t max_beats{32};
   bool require_signatures{false};
+  std::unordered_map<std::string, std::string> trusted_signers;
+  FallenPolicy user_policy;
+  FallenPolicy project_policy;
 };
+
+[[nodiscard]] std::string_view to_string(PolicyEffect effect) noexcept;
+[[nodiscard]] PolicyEffect evaluate_policy(const RuntimeConfig& config, const Act& act,
+                                            TrustLevel target_trust,
+                                            std::string_view workspace);
 
 [[nodiscard]] Result<TokmonPaths> resolve_paths(
     const std::optional<std::filesystem::path>& workspace = std::nullopt);
@@ -43,4 +75,3 @@ struct RuntimeConfig {
 Result<void> ensure_directory_layout(const TokmonPaths& paths);
 
 }  // namespace tokmon
-

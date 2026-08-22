@@ -18,6 +18,17 @@ namespace tokmon {
 enum class RuntimeKind : std::uint8_t { in_process, native_worker, node, cpython, wasm, desktop };
 enum class TrustLevel : std::uint8_t { t0, t1, t2, t3 };
 
+struct LensDependency {
+  LensId id;
+  std::string version;
+};
+
+struct LensResourceLimits {
+  std::size_t memory_mb{256};
+  std::size_t output_bytes{1024u * 1024u};
+  std::chrono::milliseconds deadline{30'000};
+};
+
 struct LensManifest {
   LensId id;
   std::string display_name;
@@ -33,6 +44,14 @@ struct LensManifest {
   std::vector<ActPattern> refracts;
   std::vector<std::string> light_permissions;
   bool stateless{true};
+  std::vector<LensDependency> dependencies;
+  std::vector<LensId> conflicts;
+  std::vector<LensId> optical_before;
+  std::vector<LensId> optical_after;
+  LensResourceLimits resources;
+  std::string replacement{"R1"};
+  std::string schema_bundle;
+  std::string sbom;
 };
 
 class OpticalHost {
@@ -54,6 +73,8 @@ class RefractionBeam {
   [[nodiscard]] bool expired() const noexcept;
   Result<Photon> emit(std::string kind, std::string schema,
                       cbor::Value payload);
+  Result<Photon> emit_to(const RayId& ray, std::string kind, std::string schema,
+                         cbor::Value payload, PhotonId parent = {});
   void log(std::string_view level, std::string_view message) const;
 
  private:

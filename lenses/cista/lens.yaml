@@ -11,6 +11,11 @@ observes:
   - { kind: "redaction.*", schema: "*" }
 view_channels: [act.secrets, diagnostic.redaction]
 refracts:
+  - { kind: secret.create, schema: tokmon.secret.create.v1 }
+  - { kind: secret.read, schema: tokmon.secret.read.v1 }
+  - { kind: secret.rotate, schema: tokmon.secret.rotate.v1 }
+  - { kind: secret.delete, schema: tokmon.secret.delete.v1 }
+  - { kind: secret.list-metadata, schema: tokmon.secret.list-metadata.v1 }
   - { kind: secret.bind, schema: tokmon.secret.bind.v1 }
   - { kind: redaction.apply, schema: tokmon.redaction.apply.v1 }
-light_permissions: [photon.emit, secret.bind, log.write]
+light_permissions: [photon.emit, secret.bind, os.keyring, log.write]

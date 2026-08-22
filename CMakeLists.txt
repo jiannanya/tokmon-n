@@ -31,6 +31,7 @@ add_library(tokmon_core STATIC
   nyxia/base/error.cpp
   nyxia/base/hash.cpp
   nyxia/base/ids.cpp
+  nyxia/base/json.cpp
   nyxia/base/logging.cpp
   nyxia/base/value_types.cpp
   nyxia/config/config.cpp
@@ -65,8 +66,13 @@ add_library(tokmon_core STATIC
   lenses/textus/textus_lens.cpp
   lenses/tracket/tracket_lens.cpp
   lenses/common/builtin_registry.cpp
+  lenses/common/http_client.cpp
   lenses/common/lens_base.cpp
   lenses/common/process_runner.cpp
+  lenses/common/prometheus_endpoint.cpp
+  lenses/common/pty_session.cpp
+  lenses/common/secret_store.cpp
+  lenses/common/schema_validator.cpp
   protocol/snow_protocol.cpp
   protocol/snow_transport.cpp)
 
@@ -82,6 +88,7 @@ target_link_libraries(tokmon_core
   PUBLIC
     tl::expected
     spdlog::spdlog
+    nlohmann_json::nlohmann_json
     yaml-cpp::yaml-cpp
   PRIVATE
     tokmon_sqlite3)
@@ -91,7 +98,7 @@ target_compile_definitions(tokmon_core PRIVATE
   TOKMON_BUILD_BIN_DIR="${CMAKE_BINARY_DIR}/bin")
 
 if(WIN32)
-  target_link_libraries(tokmon_core PRIVATE bcrypt ws2_32)
+  target_link_libraries(tokmon_core PRIVATE bcrypt ws2_32 advapi32 crypt32)
 else()
   target_link_libraries(tokmon_core PRIVATE dl pthread)
 endif()

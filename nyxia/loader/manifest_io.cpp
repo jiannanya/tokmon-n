@@ -74,14 +74,39 @@ std::vector<std::string> strings(const YAML::Node& sequence) {
   return result;
 }
 
+Result<std::vector<LensDependency>> dependencies(const YAML::Node& sequence,
+                                                  const std::filesystem::path& source) {
+  std::vector<LensDependency> result;
+  if (!sequence) return result;
+  if (!sequence.IsSequence())
+    return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                     source.string() + ": dependencies must be a sequence"));
+  std::set<std::string> seen;
+  for (const auto& item : sequence) {
+    if (auto checked = reject_unknown(item, {"id", "version"}, source); !checked)
+      return tl::unexpected(checked.error());
+    if (!item["id"])
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                       "Lens dependency requires id"));
+    LensDependency dependency{item["id"].as<std::string>(),
+        item["version"] ? item["version"].as<std::string>() : "*"};
+    if (dependency.id.empty() || !seen.insert(dependency.id).second)
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                       "Lens dependencies must have unique non-empty ids"));
+    result.push_back(std::move(dependency));
+  }
+  return result;
+}
+
 }  // namespace
 
 Result<LensManifest> load_lens_manifest(const std::filesystem::path& path) {
   try {
     const auto root = YAML::LoadFile(path.string());
     if (auto checked = reject_unknown(root,
-        {"id", "display_name", "version", "abi", "runtime", "trust", "stateless",
-         "observes", "view_channels", "refracts", "light_permissions"}, path);
+        {"api", "id", "display_name", "version", "abi", "runtime", "trust", "stateless",
+         "observes", "view_channels", "refracts", "light_permissions", "dependencies",
+         "conflicts", "optical_order", "resources", "replacement", "schema_bundle", "sbom"}, path);
         !checked) return tl::unexpected(checked.error());
     LensManifest manifest;
     if (!root["id"] || !root["display_name"] || !root["version"] || !root["abi"] ||
@@ -125,6 +150,9 @@ Result<LensManifest> load_lens_manifest(const std::filesystem::path& path) {
     else return tl::unexpected(make_error(ErrorCode::schema_mismatch,
                                           "unknown Lens trust level: " + trust));
     manifest.stateless = !root["stateless"] || root["stateless"].as<bool>();
+    if (root["api"] && root["api"].as<std::string>() != "tokmon.lens/v1")
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                       "unsupported Lens manifest api"));
     auto observes = photon_patterns(root["observes"], path);
     auto refracts = act_patterns(root["refracts"], path);
     if (!observes) return tl::unexpected(observes.error());
@@ -133,6 +161,42 @@ Result<LensManifest> load_lens_manifest(const std::filesystem::path& path) {
     manifest.refracts = std::move(*refracts);
     manifest.view_channels = strings(root["view_channels"]);
     manifest.light_permissions = strings(root["light_permissions"]);
+    auto required_lenses = dependencies(root["dependencies"], path);
+    if (!required_lenses) return tl::unexpected(required_lenses.error());
+    manifest.dependencies = std::move(*required_lenses);
+    manifest.conflicts = strings(root["conflicts"]);
+    if (const auto order = root["optical_order"]) {
+      if (auto checked = reject_unknown(order, {"before", "after"}, path); !checked)
+        return tl::unexpected(checked.error());
+      manifest.optical_before = strings(order["before"]);
+      manifest.optical_after = strings(order["after"]);
+    }
+    if (const auto resources = root["resources"]) {
+      if (auto checked = reject_unknown(resources,
+          {"memory_mb", "output_bytes", "deadline_ms"}, path); !checked)
+        return tl::unexpected(checked.error());
+      if (resources["memory_mb"])
+        manifest.resources.memory_mb = resources["memory_mb"].as<std::size_t>();
+      if (resources["output_bytes"])
+        manifest.resources.output_bytes = resources["output_bytes"].as<std::size_t>();
+      if (resources["deadline_ms"])
+        manifest.resources.deadline = std::chrono::milliseconds(
+            resources["deadline_ms"].as<std::int64_t>());
+      if (manifest.resources.memory_mb == 0 || manifest.resources.memory_mb > 65'536u ||
+          manifest.resources.output_bytes == 0 ||
+          manifest.resources.output_bytes > 1024u * 1024u * 1024u ||
+          manifest.resources.deadline <= std::chrono::milliseconds::zero() ||
+          manifest.resources.deadline > std::chrono::hours(24))
+        return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                         "Lens resource limits are outside safe bounds"));
+    }
+    if (root["replacement"]) manifest.replacement = root["replacement"].as<std::string>();
+    if (manifest.replacement != "R1" && manifest.replacement != "R2")
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                       "Lens replacement must be R1 or R2"));
+    if (root["schema_bundle"])
+      manifest.schema_bundle = root["schema_bundle"].as<std::string>();
+    if (root["sbom"]) manifest.sbom = root["sbom"].as<std::string>();
     if (manifest.id.empty() || manifest.display_name.empty() ||
         manifest.abi_major != 1u || manifest.view_channels.empty() ||
         manifest.refracts.empty())

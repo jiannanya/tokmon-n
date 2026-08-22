@@ -58,6 +58,34 @@ Result<LensManifest> parse_manifest(const TokmonBytesV1 bytes) {
     for (const auto& item : *field->as_array()) manifest.view_channels.emplace_back(item.as_string());
   if (const auto* field = cbor::find(*value, "permissions"); field && field->as_array())
     for (const auto& item : *field->as_array()) manifest.light_permissions.emplace_back(item.as_string());
+  if (const auto* field = cbor::find(*value, "dependencies"); field && field->as_array())
+    for (const auto& item : *field->as_array()) {
+      const auto* id = cbor::find(item, "id");
+      const auto* version = cbor::find(item, "version");
+      if (id) manifest.dependencies.push_back(
+          {std::string(id->as_string()), version ? std::string(version->as_string("*")) : "*"});
+    }
+  const auto read_strings = [&](const std::string_view name, std::vector<std::string>& output) {
+    if (const auto* field = cbor::find(*value, name); field && field->as_array())
+      for (const auto& item : *field->as_array()) output.emplace_back(item.as_string());
+  };
+  read_strings("conflicts", manifest.conflicts);
+  read_strings("optical_before", manifest.optical_before);
+  read_strings("optical_after", manifest.optical_after);
+  if (const auto* resources = cbor::find(*value, "resources")) {
+    if (const auto* field = cbor::find(*resources, "memory_mb"))
+      manifest.resources.memory_mb = static_cast<std::size_t>(field->as_integer(256));
+    if (const auto* field = cbor::find(*resources, "output_bytes"))
+      manifest.resources.output_bytes = static_cast<std::size_t>(field->as_integer(1024 * 1024));
+    if (const auto* field = cbor::find(*resources, "deadline_ms"))
+      manifest.resources.deadline = std::chrono::milliseconds(field->as_integer(30'000));
+  }
+  if (const auto* field = cbor::find(*value, "replacement"))
+    manifest.replacement = std::string(field->as_string("R1"));
+  if (const auto* field = cbor::find(*value, "schema_bundle"))
+    manifest.schema_bundle = std::string(field->as_string());
+  if (const auto* field = cbor::find(*value, "sbom"))
+    manifest.sbom = std::string(field->as_string());
   if (const auto* field = cbor::find(*value, "observes"); field && field->as_array()) {
     for (const auto& item : *field->as_array())
       manifest.observes.push_back({std::string(cbor::find(item, "kind")->as_string()),

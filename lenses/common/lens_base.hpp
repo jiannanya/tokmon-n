@@ -33,6 +33,7 @@ class LensBase : public ILens {
       std::vector<PhotonPattern> observes, std::vector<ActPattern> refracts,
       std::vector<std::string> permissions = {"photon.emit", "log.write"},
       RuntimeKind runtime = RuntimeKind::in_process);
+  void mark_stateful() noexcept { manifest_.stateless = false; }
 
  private:
   LensManifest manifest_;

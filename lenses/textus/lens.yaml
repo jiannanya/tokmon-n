@@ -8,7 +8,14 @@ stateless: true
 observes:
   - { kind: user.input, schema: "*" }
   - { kind: assistant.message, schema: "*" }
+  - { kind: model.tool-call, schema: "*" }
   - { kind: tool.result, schema: "*" }
+  - { kind: system.fragment, schema: "*" }
+  - { kind: instruction.observed, schema: "*" }
+  - { kind: "skill.*", schema: "*" }
+  - { kind: memory.accepted, schema: "*" }
+  - { kind: context.retrieved, schema: "*" }
+  - { kind: "rag.*", schema: "*" }
   - { kind: summary.created, schema: "*" }
   - { kind: model.budget, schema: "*" }
 view_channels: [model.messages, model.context, diagnostic.context-budget]

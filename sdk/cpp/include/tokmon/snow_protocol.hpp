@@ -13,8 +13,12 @@ enum class SnowMessageKind : std::uint8_t {
   snapshot_request,
   snapshot,
   delta,
+  stream,
   intent,
   intent_result,
+  cancel,
+  close,
+  closed,
   ping,
   pong,
   error,
@@ -32,4 +36,3 @@ struct SnowMessage {
 [[nodiscard]] Result<SnowMessage> snow_message_from_cbor(const cbor::Value& value);
 
 }  // namespace tokmon
-

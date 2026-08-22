@@ -9,10 +9,13 @@ observes:
   - { kind: external.catalog-observed, schema: "*" }
   - { kind: "external.connection-*", schema: "*" }
   - { kind: "external.schema-*", schema: "*" }
-view_channels: [model.tools, diagnostic.external]
+  - { kind: lsp.diagnostics-observed, schema: "*" }
+view_channels: [model.tools, diagnostic.external, workspace.diagnostics]
 refracts:
   - { kind: external.connect, schema: tokmon.external.connect.v1 }
   - { kind: external.disconnect, schema: tokmon.external.disconnect.v1 }
   - { kind: external.call, schema: tokmon.external.call.v1 }
   - { kind: external.poll, schema: tokmon.external.poll.v1 }
-light_permissions: [photon.emit, io.http, log.write]
+  - { kind: lsp.request, schema: tokmon.lsp.request.v1 }
+  - { kind: external.serve, schema: tokmon.external.serve.v1 }
+light_permissions: [photon.emit, io.http, io.process, log.write]

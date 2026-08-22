@@ -30,6 +30,8 @@ class SnowClient final {
  public:
   explicit SnowClient(std::filesystem::path endpoint);
   [[nodiscard]] Result<SnowMessage> request(const SnowMessage& message) const;
+  [[nodiscard]] Result<SnowMessage> request_stream(const SnowMessage& message,
+      const std::function<Result<void>(const SnowMessage&)>& on_stream) const;
 
  private:
   std::filesystem::path endpoint_;

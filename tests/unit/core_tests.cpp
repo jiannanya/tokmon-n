@@ -37,7 +37,37 @@ struct UserProfileGuard {
   std::string previous;
 };
 
+class ManifestLens final : public tokmon::ILens {
+ public:
+  explicit ManifestLens(tokmon::LensManifest manifest) : manifest_(std::move(manifest)) {}
+  const tokmon::LensManifest& manifest() const noexcept override { return manifest_; }
+  tokmon::Result<void> view(const tokmon::PhotonWindow&,
+                            tokmon::SurfaceBuilder&) override { return {}; }
+  tokmon::Result<tokmon::RefractionResult> refract(
+      const tokmon::PhotonWindow&, const tokmon::Act&,
+      tokmon::RefractionBeam&) override {
+    return tokmon::RefractionResult{.status = tokmon::RefractionStatus::passed};
+  }
+  void request_stop() noexcept override {}
+
+ private:
+  tokmon::LensManifest manifest_;
+};
+
 }  // namespace
+
+TEST_CASE("JSON bridge preserves protocol objects") {
+  const auto value = tokmon::cbor::object({
+      {"method", "tools/call"}, {"id", 7},
+      {"params", tokmon::cbor::object({
+          {"enabled", true},
+          {"items", tokmon::cbor::Value::Array{"a", "b"}}})}});
+  const auto text = tokmon::json::stringify(value);
+  auto parsed = tokmon::json::parse(text);
+  REQUIRE(parsed);
+  REQUIRE(tokmon::cbor::encode(*parsed) == tokmon::cbor::encode(value));
+  REQUIRE_FALSE(tokmon::json::parse("{broken"));
+}
 
 TEST_CASE("canonical CBOR is deterministic and rejects trailing bytes") {
   const auto value = tokmon::cbor::object({{"z", 1}, {"aa", 2}, {"a", 3}});
@@ -146,6 +176,90 @@ TEST_CASE("Snow framing carries canonical requests and responses") {
   server.stop();
 }
 
+TEST_CASE("Snow local transport serves independent clients concurrently") {
+  const auto root = temporary_directory("snow-concurrent");
+  const auto endpoint = tokmon::default_snow_endpoint(root);
+  std::atomic_int active{0};
+  std::atomic_int maximum{0};
+  tokmon::SnowServer server;
+  REQUIRE(server.start(endpoint, [&active, &maximum](const tokmon::SnowMessage& request) {
+    const auto current = active.fetch_add(1) + 1;
+    auto observed = maximum.load();
+    while (current > observed && !maximum.compare_exchange_weak(observed, current)) {}
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    active.fetch_sub(1);
+    return tokmon::SnowMessage{.kind = tokmon::SnowMessageKind::pong,
+        .request_id = request.request_id};
+  }));
+  std::vector<std::jthread> clients;
+  std::atomic_int succeeded{0};
+  for (std::uint64_t index = 0; index < 8; ++index) {
+    clients.emplace_back([&, index] {
+      tokmon::SnowClient client(endpoint);
+      auto result = client.request(tokmon::SnowMessage{.kind = tokmon::SnowMessageKind::ping,
+          .request_id = index + 1});
+      if (result && result->request_id == index + 1) succeeded.fetch_add(1);
+    });
+  }
+  for (auto& client : clients) client.join();
+  REQUIRE(succeeded.load() == 8);
+  REQUIRE(maximum.load() > 1);
+  server.stop();
+}
+
+TEST_CASE("Fallen policy keeps deny precedence and project policy cannot expand root authority") {
+  tokmon::RuntimeConfig config;
+  config.user_policy.configured = true;
+  config.user_policy.default_effect = tokmon::PolicyEffect::ask;
+  config.user_policy.approval_risks.clear();
+  config.user_policy.rules.push_back(tokmon::PolicyRule{
+      .effect = tokmon::PolicyEffect::deny,
+      .acts = {"process.exec"}, .argv0 = {"powershell", "cmd"}});
+  config.user_policy.rules.push_back(tokmon::PolicyRule{
+      .effect = tokmon::PolicyEffect::allow,
+      .acts = {"fs.read"}, .paths = {"${workspace}/**"}});
+  config.project_policy.configured = true;
+  config.project_policy.default_effect = tokmon::PolicyEffect::allow;
+  config.project_policy.approval_risks.clear();
+  config.project_policy.rules.push_back(tokmon::PolicyRule{
+      .effect = tokmon::PolicyEffect::allow, .acts = {"process.exec"}});
+
+  tokmon::Act process{.kind = "process.exec", .schema = "tokmon.process.exec.v1",
+      .parameters = tokmon::cbor::object({
+          {"argv", tokmon::cbor::Value::Array{"powershell", "-NoProfile"}}}),
+      .target = "org.tokmon.lens.styx", .risk = tokmon::RiskClass::external};
+  REQUIRE(tokmon::evaluate_policy(config, process, tokmon::TrustLevel::t1,
+                                  "C:/workspace") == tokmon::PolicyEffect::deny);
+  tokmon::Act read{.kind = "fs.read", .schema = "tokmon.fs.read.v1",
+      .parameters = tokmon::cbor::object({{"path", "C:/workspace/src/main.cpp"}}),
+      .target = "org.tokmon.lens.cove", .risk = tokmon::RiskClass::observe};
+  REQUIRE(tokmon::evaluate_policy(config, read, tokmon::TrustLevel::t1,
+                                  "C:/workspace") == tokmon::PolicyEffect::allow);
+  read.parameters = tokmon::cbor::object({{"path", "C:/outside/secret.txt"}});
+  REQUIRE(tokmon::evaluate_policy(config, read, tokmon::TrustLevel::t1,
+                                  "C:/workspace") == tokmon::PolicyEffect::ask);
+}
+
+TEST_CASE("Act approved boolean cannot bypass the common admission decision") {
+  auto snapshot = std::make_shared<tokmon::LightPathSnapshot>();
+  snapshot->epoch = 9;
+  snapshot->lenses.push_back(tokmon::MountedLens{
+      tokmon::make_builtin_lens("cove"), 901, "builtin"});
+  tokmon::Act write{.id = "act-policy", .ray = "ray-policy", .kind = "fs.write",
+      .schema = "tokmon.fs.write.v1", .parameters = tokmon::cbor::object({}),
+      .epoch = 9, .risk = tokmon::RiskClass::external_irreversible, .approved = true};
+  tokmon::ActPipeline asks([](const tokmon::Act&) {
+    return tokmon::AdmissionDecision::ask;
+  });
+  auto rejected = asks.admit(write, *snapshot);
+  REQUIRE_FALSE(rejected);
+  REQUIRE(rejected.error().code == tokmon::ErrorCode::approval_required);
+  tokmon::ActPipeline allows([](const tokmon::Act&) {
+    return tokmon::AdmissionDecision::allow;
+  });
+  REQUIRE(allows.admit(std::move(write), *snapshot));
+}
+
 TEST_CASE("calculator executes the complete Fact Lens Act photon loop") {
   const auto root = temporary_directory("runtime");
   UserProfileGuard profile(root / "home");
@@ -166,6 +280,19 @@ TEST_CASE("calculator executes the complete Fact Lens Act photon loop") {
   REQUIRE(has_kind("tool.result"));
   REQUIRE(has_kind("assistant.message"));
   REQUIRE(photons->back().kind == "ray.darkened");
+  const auto first_tail = photons->back().sequence;
+  auto continued = runtime.submit_to(*ray, "3 + 7");
+  REQUIRE(continued);
+  REQUIRE(*continued == *ray);
+  auto continued_beats = runtime.advance(*ray);
+  REQUIRE(continued_beats);
+  auto continued_photons = runtime.history(*ray);
+  REQUIRE(continued_photons);
+  REQUIRE(std::ranges::count_if(*continued_photons, [](const tokmon::Photon& photon) {
+    return photon.kind == "user.input";
+  }) == 2);
+  REQUIRE(continued_photons->back().sequence > first_tail);
+  REQUIRE_FALSE(runtime.submit_to("ray-does-not-exist", "orphan input"));
   const auto first_epoch = runtime.light_path()->epoch;
   REQUIRE(runtime.reconcile());
   REQUIRE(runtime.light_path()->epoch == first_epoch + 1);
@@ -183,6 +310,31 @@ TEST_CASE("calculator executes the complete Fact Lens Act photon loop") {
   REQUIRE(runtime.verify());
 }
 
+TEST_CASE("Nyxia recovery marks unterminated in-flight Act outcome unknown") {
+  const auto root = temporary_directory("recovery");
+  UserProfileGuard profile(root / "home");
+  const auto workspace = root / "workspace";
+  const auto ray = "ray-recovery";
+  {
+    tokmon::TokmonRuntime runtime;
+    REQUIRE(runtime.open(workspace, "tokmon-tests-recovery-one"));
+    auto started = runtime.store().append(tokmon::PhotonDraft{.ray = ray,
+        .kind = "act.started", .schema = "tokmon.act.audit.v1",
+        .payload = tokmon::cbor::object({{"act_hash", std::string(64, 'f')}}),
+        .epoch = runtime.light_path()->epoch, .caused_by_act = "act-interrupted"});
+    REQUIRE(started);
+  }
+  tokmon::TokmonRuntime recovered;
+  REQUIRE(recovered.open(workspace, "tokmon-tests-recovery-two"));
+  auto photons = recovered.history(ray);
+  REQUIRE(photons);
+  REQUIRE(std::any_of(photons->begin(), photons->end(), [](const tokmon::Photon& photon) {
+    return photon.kind == "act.outcome-unknown" &&
+           photon.caused_by_act == "act-interrupted";
+  }));
+  REQUIRE(recovered.verify());
+}
+
 TEST_CASE("language Lens manifests carry an exact runtime entry") {
   const auto source = std::filesystem::path(TOKMON_SOURCE_DIR);
   auto node = tokmon::load_lens_manifest(source / "sdk/typescript/examples/lens.yaml");
@@ -193,6 +345,119 @@ TEST_CASE("language Lens manifests carry an exact runtime entry") {
   REQUIRE(python);
   REQUIRE(python->runtime == tokmon::RuntimeKind::cpython);
   REQUIRE(python->runtime_entry == "adder.py");
+}
+
+TEST_CASE("Lens manifest parses dependency order resources and immutable evidence") {
+  const auto root = temporary_directory("rich-manifest");
+  const auto path = root / "lens.yaml";
+  std::ofstream output(path);
+  output << "api: tokmon.lens/v1\n"
+      "id: org.example.rich\n"
+      "display_name: Rich lens\n"
+      "version: 2.1.0\n"
+      "abi: { major: 1, minor: 0 }\n"
+      "runtime: { kind: node, version: 24.0.0, entry: main.mjs }\n"
+      "observes: [{ kind: user.input, schema: '*' }]\n"
+      "view_channels: [model.tools]\n"
+      "refracts: [{ kind: example.run, schema: example.run.v1 }]\n"
+      "light_permissions: [photon.emit]\n"
+      "dependencies: [{ id: org.tokmon.lens.techor, version: ^0.1.0 }]\n"
+      "conflicts: [org.example.legacy]\n"
+      "optical_order: { after: [org.tokmon.lens.techor], before: [org.tokmon.lens.rhea] }\n"
+      "resources: { memory_mb: 512, output_bytes: 2097152, deadline_ms: 45000 }\n"
+      "replacement: R2\n"
+      "schema_bundle: schemas.cbor\n"
+      "sbom: sbom.cdx.json\n";
+  output.close();
+  auto manifest = tokmon::load_lens_manifest(path);
+  REQUIRE(manifest);
+  REQUIRE(manifest->dependencies.size() == 1);
+  REQUIRE(manifest->dependencies.front().id == "org.tokmon.lens.techor");
+  REQUIRE(manifest->optical_after.front() == "org.tokmon.lens.techor");
+  REQUIRE(manifest->resources.memory_mb == 512);
+  REQUIRE(manifest->resources.deadline == std::chrono::milliseconds(45'000));
+  REQUIRE(manifest->replacement == "R2");
+  REQUIRE(manifest->schema_bundle == "schemas.cbor");
+}
+
+TEST_CASE("LightPath refuses missing dependencies conflicts and invalid optical order") {
+  const auto basic = [](std::string id) {
+    return tokmon::LensManifest{.id = std::move(id), .display_name = "test",
+        .view_channels = {"test.channel"}, .refracts = {{"test.run", "*"}},
+        .light_permissions = {"photon.emit"}};
+  };
+  {
+    tokmon::LightPath path;
+    auto dependent = basic("org.example.dependent");
+    dependent.dependencies.push_back({"org.example.required", "1.0.0"});
+    auto candidate = std::make_shared<tokmon::LightPathSnapshot>();
+    candidate->epoch = 1;
+    candidate->lenses.push_back({std::make_shared<ManifestLens>(dependent), 1, "a"});
+    auto published = path.publish(candidate);
+    REQUIRE_FALSE(published);
+    REQUIRE(published.error().code == tokmon::ErrorCode::not_found);
+  }
+  {
+    tokmon::LightPath path;
+    auto first = basic("org.example.first");
+    first.conflicts.push_back("org.example.second");
+    auto second = basic("org.example.second");
+    second.refracts = {{"test.other", "*"}};
+    auto candidate = std::make_shared<tokmon::LightPathSnapshot>();
+    candidate->epoch = 1;
+    candidate->lenses.push_back({std::make_shared<ManifestLens>(first), 1, "a"});
+    candidate->lenses.push_back({std::make_shared<ManifestLens>(second), 2, "b"});
+    REQUIRE_FALSE(path.publish(candidate));
+  }
+  {
+    tokmon::LightPath path;
+    auto first = basic("org.example.first");
+    first.optical_after.push_back("org.example.second");
+    auto second = basic("org.example.second");
+    second.refracts = {{"test.other", "*"}};
+    auto candidate = std::make_shared<tokmon::LightPathSnapshot>();
+    candidate->epoch = 1;
+    candidate->lenses.push_back({std::make_shared<ManifestLens>(first), 1, "a"});
+    candidate->lenses.push_back({std::make_shared<ManifestLens>(second), 2, "b"});
+    REQUIRE_FALSE(path.publish(candidate));
+  }
+}
+
+TEST_CASE("signature-required runtime rejects an unlocked external Lens") {
+  const auto root = temporary_directory("signature-required");
+  UserProfileGuard profile(root / "home");
+  const auto workspace = root / "workspace";
+  const auto project = workspace / ".tokmon";
+  const auto artifact = project / "calculator-artifact";
+  std::filesystem::create_directories(artifact);
+  std::filesystem::create_directories(root / "home" / ".tokmon");
+  std::ofstream(root / "home" / ".tokmon" / "config.yaml")
+      << "security:\n  require_signatures: true\n";
+#if defined(_WIN32)
+  constexpr auto library_name = "calculator.dll";
+#elif defined(__APPLE__)
+  constexpr auto library_name = "libcalculator.dylib";
+#else
+  constexpr auto library_name = "libcalculator.so";
+#endif
+  std::filesystem::copy_file(TOKMON_TEST_LENS_PATH, artifact / library_name,
+                             std::filesystem::copy_options::overwrite_existing);
+  std::ofstream(artifact / "lens.yaml")
+      << "id: org.tokmon.lens.calculator\n"
+      "display_name: Calculator\nversion: 0.1.0\n"
+      "abi: { major: 1, minor: 0 }\n"
+      "runtime: { kind: in_process, entry: " << library_name << " }\n"
+      "observes: [{ kind: user.input, schema: tokmon.user.input.v1 }]\n"
+      "view_channels: [model.tools]\n"
+      "refracts: [{ kind: tool.calculate, schema: tokmon.math.calculate.v1 }]\n"
+      "light_permissions: [photon.emit, log.write]\n";
+  std::ofstream(project / "light-path.yaml")
+      << "version: 1\nlenses:\n"
+      "  - { id: org.tokmon.lens.calculator, artifact: calculator-artifact, enabled: true, runtime: in_process }\n";
+  tokmon::TokmonRuntime runtime;
+  auto opened = runtime.open(workspace, "tokmon-signature-test");
+  REQUIRE_FALSE(opened);
+  REQUIRE(opened.error().code == tokmon::ErrorCode::integrity_error);
 }
 
 TEST_CASE("runtime hot swaps a C ABI Lens generation through a higher epoch") {

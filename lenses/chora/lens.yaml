@@ -7,10 +7,15 @@ trust: t1
 stateless: true
 observes:
   - { kind: "*", schema: "*" }
-view_channels: [fact.storage, diagnostic.capacity]
+view_channels: [fact.storage, diagnostic.capacity, storage.kv]
 refracts:
   - { kind: photon.export, schema: tokmon.photon.export.v1 }
+  - { kind: kv.put, schema: tokmon.kv.put.v1 }
+  - { kind: kv.delete, schema: tokmon.kv.delete.v1 }
   - { kind: blob.put, schema: tokmon.blob.put.v1 }
+  - { kind: blob.verify, schema: tokmon.blob.verify.v1 }
   - { kind: checkpoint.build, schema: tokmon.checkpoint.build.v1 }
   - { kind: archive.seal, schema: tokmon.archive.seal.v1 }
-light_permissions: [photon.emit, blob.write, artifact.write, log.write]
+  - { kind: backup.create, schema: tokmon.backup.create.v1 }
+  - { kind: backup.restore, schema: tokmon.backup.restore.v1 }
+light_permissions: [photon.emit, blob.write, artifact.write, backup.io, log.write]

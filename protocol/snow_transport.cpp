@@ -3,6 +3,8 @@
 #include <array>
 #include <atomic>
 #include <cstring>
+#include <mutex>
+#include <set>
 #include <thread>
 #include <utility>
 
@@ -111,6 +113,12 @@ bool write_all(const Channel channel, const void* input, std::size_t size) {
 void close_channel(const Channel channel) {
   if (channel != invalid_channel) CloseHandle(channel);
 }
+void interrupt_channel(const Channel channel) {
+  if (channel != invalid_channel) {
+    CancelIoEx(channel, nullptr);
+    DisconnectNamedPipe(channel);
+  }
+}
 #else
 using Channel = int;
 constexpr Channel invalid_channel = -1;
@@ -133,6 +141,9 @@ bool write_all(const Channel channel, const void* input, std::size_t size) {
   return true;
 }
 void close_channel(const Channel channel) { if (channel != invalid_channel) ::close(channel); }
+void interrupt_channel(const Channel channel) {
+  if (channel != invalid_channel) ::shutdown(channel, SHUT_RDWR);
+}
 #endif
 
 Result<SnowMessage> read_message(const Channel channel) {
@@ -192,21 +203,30 @@ std::filesystem::path default_snow_endpoint(const std::filesystem::path& run_dir
 SnowClient::SnowClient(std::filesystem::path endpoint) : endpoint_(std::move(endpoint)) {}
 
 Result<SnowMessage> SnowClient::request(const SnowMessage& message) const {
+  return request_stream(message, {});
+}
+
+Result<SnowMessage> SnowClient::request_stream(const SnowMessage& message,
+    const std::function<Result<void>(const SnowMessage&)>& on_stream) const {
 #if defined(_WIN32)
   const auto endpoint = endpoint_.wstring();
   const auto connect_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
-  while (!WaitNamedPipeW(endpoint.c_str(), 100) &&
-         GetLastError() == ERROR_FILE_NOT_FOUND &&
-         std::chrono::steady_clock::now() < connect_deadline)
-    std::this_thread::sleep_for(std::chrono::milliseconds(25));
-  if (std::chrono::steady_clock::now() >= connect_deadline &&
-      !WaitNamedPipeW(endpoint.c_str(), 0))
+  Channel channel = invalid_channel;
+  while (std::chrono::steady_clock::now() < connect_deadline) {
+    if (WaitNamedPipeW(endpoint.c_str(), 100)) {
+      channel = CreateFileW(endpoint.c_str(), GENERIC_READ | GENERIC_WRITE, 0,
+          nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+      if (channel != invalid_channel) break;
+    }
+    const auto error = GetLastError();
+    if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PIPE_BUSY &&
+        error != ERROR_SEM_TIMEOUT)
+      break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  if (channel == invalid_channel)
     return tl::unexpected(make_error(ErrorCode::io_error,
                                      "tokmond Snow endpoint is unavailable"));
-  const auto channel = CreateFileW(endpoint.c_str(), GENERIC_READ | GENERIC_WRITE, 0,
-      nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-  if (channel == invalid_channel)
-    return tl::unexpected(make_error(ErrorCode::io_error, "cannot connect to tokmond"));
 #else
   const auto channel = ::socket(AF_UNIX, SOCK_STREAM, 0);
   if (channel == invalid_channel)
@@ -228,16 +248,45 @@ Result<SnowMessage> SnowClient::request(const SnowMessage& message) const {
   if (auto written = write_message(channel, message); !written) {
     close_channel(channel); return tl::unexpected(written.error());
   }
-  auto response = read_message(channel);
-  close_channel(channel);
-  return response;
+  while (true) {
+    auto response = read_message(channel);
+    if (!response) { close_channel(channel); return tl::unexpected(response.error()); }
+    if (response->kind != SnowMessageKind::stream) {
+      close_channel(channel);
+      return response;
+    }
+    if (on_stream) {
+      auto observed = on_stream(*response);
+      if (!observed) { close_channel(channel); return tl::unexpected(observed.error()); }
+    }
+  }
 }
 
 struct SnowServer::Impl {
   std::filesystem::path endpoint;
   Handler handler;
   std::jthread worker;
+  std::mutex clients_mutex;
+  std::vector<std::jthread> clients;
+  std::set<Channel> live_channels;
   std::atomic_bool active{false};
+
+  void launch_client(const Channel channel) {
+    std::scoped_lock lock(clients_mutex);
+    live_channels.insert(channel);
+    clients.emplace_back([this, channel] {
+      serve_channel(channel);
+#if defined(_WIN32)
+      FlushFileBuffers(channel);
+      DisconnectNamedPipe(channel);
+#endif
+      {
+        std::scoped_lock client_lock(clients_mutex);
+        live_channels.erase(channel);
+      }
+      close_channel(channel);
+    });
+  }
 
   void serve_channel(const Channel channel) {
     while (active.load(std::memory_order_acquire)) {
@@ -251,6 +300,19 @@ struct SnowServer::Impl {
       } catch (...) {
         response = error_message(*request,
             make_error(ErrorCode::internal_error, "unknown Snow handler failure"));
+      }
+      if (response.kind == SnowMessageKind::intent_result) {
+        if (const auto* photons = cbor::find(response.payload, "photons");
+            photons && photons->as_array()) {
+          std::uint64_t event_index = 0;
+          for (const auto& photon : *photons->as_array()) {
+            SnowMessage event{.kind = SnowMessageKind::stream,
+                .request_id = request->request_id, .cursor = response.cursor,
+                .payload = cbor::object({{"event_index", static_cast<std::int64_t>(event_index++)},
+                    {"event", "photon"}, {"photon", photon}})};
+            if (auto written = write_message(channel, event); !written) return;
+          }
+        }
       }
       if (auto written = write_message(channel, response); !written) break;
     }
@@ -269,8 +331,8 @@ struct SnowServer::Impl {
       }
       const auto connected = ConnectNamedPipe(channel, nullptr) != FALSE ||
                              GetLastError() == ERROR_PIPE_CONNECTED;
-      if (connected && active.load(std::memory_order_acquire)) serve_channel(channel);
-      FlushFileBuffers(channel); DisconnectNamedPipe(channel); close_channel(channel);
+      if (connected && active.load(std::memory_order_acquire)) launch_client(channel);
+      else close_channel(channel);
     }
 #else
     std::error_code filesystem_error;
@@ -288,8 +350,8 @@ struct SnowServer::Impl {
     while (active.load(std::memory_order_acquire)) {
       const auto channel = ::accept(listener, nullptr, nullptr);
       if (channel == invalid_channel) continue;
-      if (active.load(std::memory_order_acquire)) serve_channel(channel);
-      close_channel(channel);
+      if (active.load(std::memory_order_acquire)) launch_client(channel);
+      else close_channel(channel);
     }
     close_channel(listener); ::unlink(endpoint.c_str());
 #endif
@@ -330,6 +392,13 @@ void SnowServer::stop() noexcept {
   }
 #endif
   if (impl_->worker.joinable()) impl_->worker.join();
+  {
+    std::scoped_lock lock(impl_->clients_mutex);
+    for (const auto channel : impl_->live_channels) interrupt_channel(channel);
+  }
+  for (auto& client : impl_->clients)
+    if (client.joinable()) client.join();
+  impl_->clients.clear();
 }
 
 bool SnowServer::running() const noexcept {

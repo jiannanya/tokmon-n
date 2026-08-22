@@ -9,6 +9,11 @@ observes:
   - { kind: model.tool-call, schema: "*" }
   - { kind: tool.result, schema: "*" }
   - { kind: code.frame, schema: "*" }
+  - { kind: tool.registered, schema: "*" }
+  - { kind: tool.unregistered, schema: "*" }
+  - { kind: external.catalog-observed, schema: "*" }
+  - { kind: workflow.step-dispatched, schema: "*" }
+  - { kind: workflow.compensation-dispatched, schema: "*" }
 view_channels: [model.tools, act.candidates, diagnostic.tool-decode]
 refracts:
   - { kind: tool.decode, schema: tokmon.tool.decode.v1 }

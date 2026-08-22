@@ -244,12 +244,17 @@ WorkerLensProxy::WorkerLensProxy() : impl_(std::make_unique<Impl>()) {}
 WorkerLensProxy::~WorkerLensProxy() { request_stop(); }
 
 Result<std::shared_ptr<WorkerLensProxy>> WorkerLensProxy::launch(WorkerLensOptions options) {
-  if (options.manifest.runtime != RuntimeKind::node &&
+  if (options.manifest.runtime != RuntimeKind::native_worker &&
+      options.manifest.runtime != RuntimeKind::node &&
       options.manifest.runtime != RuntimeKind::cpython)
     return tl::unexpected(make_error(ErrorCode::invalid_argument,
                                      "worker runtime must be node or cpython"));
-  for (const auto& path : {options.supervisor, options.runtime_executable,
-                           options.adapter, options.entry})
+  std::vector<std::filesystem::path> required{options.supervisor, options.entry};
+  if (options.manifest.runtime != RuntimeKind::native_worker) {
+    required.push_back(options.runtime_executable);
+    required.push_back(options.adapter);
+  }
+  for (const auto& path : required)
     if (!std::filesystem::is_regular_file(path))
       return tl::unexpected(make_error(ErrorCode::not_found,
                                        "worker artifact is missing: " + path.string()));
@@ -257,8 +262,11 @@ Result<std::shared_ptr<WorkerLensProxy>> WorkerLensProxy::launch(WorkerLensOptio
   proxy->impl_->manifest = std::move(options.manifest);
   const auto runtime = std::string(to_string(proxy->impl_->manifest.runtime));
   std::vector<std::string> arguments{options.supervisor.string(), "--runtime", runtime,
-      "--runtime-executable", options.runtime_executable.string(), "--adapter",
-      options.adapter.string(), "--entry", options.entry.string()};
+                                     "--entry", options.entry.string()};
+  if (options.manifest.runtime != RuntimeKind::native_worker) {
+    arguments.insert(arguments.end(), {"--runtime-executable", options.runtime_executable.string(),
+                                       "--adapter", options.adapter.string()});
+  }
 #if defined(_WIN32)
   SECURITY_ATTRIBUTES security{sizeof(security), nullptr, TRUE};
   HANDLE child_input = nullptr; HANDLE child_output = nullptr;

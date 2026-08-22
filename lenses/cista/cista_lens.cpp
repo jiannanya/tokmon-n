@@ -1,32 +1,68 @@
 #include "lenses/cista/cista_lens.hpp"
 
-#include "tokmon/ids.hpp"
+#include <algorithm>
+#include <chrono>
+
+#include "lenses/common/secret_store.hpp"
 #include "tokmon/logging.hpp"
 
 namespace tokmon::builtin {
+namespace {
+
+std::string field(const cbor::Value& value, const std::string_view name,
+                  const std::string_view fallback = {}) {
+  const auto* item = cbor::find(value, name);
+  return item ? std::string(item->as_string(fallback)) : std::string(fallback);
+}
+
+struct WipedText {
+  std::string value;
+  ~WipedText() { std::fill(value.begin(), value.end(), '\0'); }
+};
+
+std::int64_t now_ms() {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+}  // namespace
 
 CistaLens::CistaLens() : LensBase(make_manifest("cista", "Cista / Secret 遮光秘盒",
     {"act.secrets", "diagnostic.redaction"},
     {{"secret.ref-observed", "*"}, {"secret.*", "*"}, {"redaction.*", "*"}},
-    {{"secret.bind", "tokmon.secret.bind.v1"},
+    {{"secret.create", "tokmon.secret.create.v1"},
+     {"secret.read", "tokmon.secret.read.v1"},
+     {"secret.rotate", "tokmon.secret.rotate.v1"},
+     {"secret.delete", "tokmon.secret.delete.v1"},
+     {"secret.list-metadata", "tokmon.secret.list-metadata.v1"},
+     {"secret.bind", "tokmon.secret.bind.v1"},
      {"redaction.apply", "tokmon.redaction.apply.v1"}},
-    {"photon.emit", "secret.bind", "log.write"})) {}
+    {"photon.emit", "secret.bind", "os.keyring", "log.write"})) {}
 
 Result<void> CistaLens::view(const PhotonWindow& photons, SurfaceBuilder& surface) {
   if (auto status = ready(); !status) return status;
-  cbor::Value::Array references;
+  cbor::Value::Map references;
   for (const auto& photon : photons.photons()) {
-    if (photon.kind != "secret.ref-observed") continue;
-    references.push_back(cbor::object({{"ref", text(photon, "ref")},
-        {"available", cbor::find(photon.payload, "available") ?
-            cbor::find(photon.payload, "available")->as_bool() : false},
-        {"plaintext", false}}));
+    if (photon.kind != "secret.ref-observed" && photon.kind != "secret.created" &&
+        photon.kind != "secret.rotated" && photon.kind != "secret.deleted") continue;
+    const auto id = field(photon.payload, "id", field(photon.payload, "ref"));
+    if (id.empty()) continue;
+    if (photon.kind == "secret.deleted") { references.erase(id); continue; }
+    references[id] = cbor::object({{"provider", "os-keyring"}, {"id", id},
+        {"purpose", field(photon.payload, "purpose")}, {"available", true},
+        {"last_rotated_ms", cbor::find(photon.payload, "last_rotated_ms")
+            ? cbor::find(photon.payload, "last_rotated_ms")->as_integer() : 0},
+        {"plaintext", false}});
   }
+  cbor::Value::Array items;
+  for (auto& [_, value] : references) items.push_back(std::move(value));
   if (auto result = identify(surface, "act.secrets", cbor::object({
-      {"references", std::move(references)}, {"plaintext_visible", false}})); !result)
+      {"references", std::move(items)}, {"backend", "os-keyring"},
+      {"plaintext_visible", false}, {"binding_max_lifetime_ms", 300000}})); !result)
     return result;
   return surface.add("diagnostic.redaction", "policy", cbor::object({
-      {"schema_aware", true}, {"fail_closed", true}, {"plaintext_logged", false}}), 10);
+      {"schema_aware", true}, {"fail_closed", true}, {"plaintext_logged", false},
+      {"binding_one_shot", true}}), 10);
 }
 
 Result<RefractionResult> CistaLens::refract(const PhotonWindow&, const Act& act,
@@ -34,29 +70,72 @@ Result<RefractionResult> CistaLens::refract(const PhotonWindow&, const Act& act,
   if (!accepts(act)) return RefractionResult{.status = RefractionStatus::passed};
   if (act.kind == "redaction.apply") {
     const auto* content = cbor::find(act.parameters, "content");
-    if (!content || !std::holds_alternative<std::string>(content->data))
+    if (!content)
       return tl::unexpected(make_error(ErrorCode::schema_mismatch,
-                                       "redaction.apply requires string content"));
+                                       "redaction.apply requires content"));
     return emit(beam, "redaction.applied", "tokmon.redaction.result.v1",
-        cbor::object({{"content", redact(content->as_string())},
-                      {"plaintext_retained", false}}));
+        cbor::object({{"content", redact_value(*content)},
+                      {"plaintext_retained", false}, {"fail_closed", true}}));
   }
-  const auto* purpose = cbor::find(act.parameters, "purpose");
-  const auto* act_hash = cbor::find(act.parameters, "act_hash");
+
+  if (act.kind == "secret.list-metadata") {
+    auto metadata = keyring_list();
+    if (!metadata) return tl::unexpected(metadata.error());
+    cbor::Value::Array items;
+    for (const auto& item : *metadata)
+      items.push_back(cbor::object({{"provider", "os-keyring"}, {"id", item.id},
+          {"purpose", item.purpose}, {"last_rotated_ms", item.last_rotated_ms},
+          {"available", true}, {"plaintext", false}}));
+    return emit(beam, "secret.metadata-listed", "tokmon.secret.metadata.v1",
+                cbor::object({{"items", std::move(items)}}));
+  }
+
+  const auto id = field(act.parameters, "id", field(act.parameters, "secret_ref"));
+  if (id.empty())
+    return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                     "secret operation requires id/secret_ref"));
+  if (act.kind == "secret.create" || act.kind == "secret.rotate") {
+    const auto purpose = field(act.parameters, "purpose");
+    const auto* supplied = cbor::find(act.parameters, "value");
+    if (purpose.empty() || !supplied || !std::holds_alternative<std::string>(supplied->data))
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                       "secret write requires purpose and string value"));
+    WipedText value{std::string(supplied->as_string())};
+    if (auto stored = keyring_write(id, purpose, value.value); !stored)
+      return tl::unexpected(stored.error());
+    const auto rotated = now_ms();
+    return emit(beam, act.kind == "secret.create" ? "secret.created" : "secret.rotated",
+        "tokmon.secret.metadata.v1", cbor::object({{"provider", "os-keyring"},
+          {"id", id}, {"purpose", purpose}, {"last_rotated_ms", rotated},
+          {"available", true}, {"plaintext", false}}));
+  }
+  if (act.kind == "secret.delete") {
+    if (auto removed = keyring_delete(id); !removed) return tl::unexpected(removed.error());
+    return emit(beam, "secret.deleted", "tokmon.secret.metadata.v1",
+                cbor::object({{"provider", "os-keyring"}, {"id", id},
+                              {"plaintext", false}}));
+  }
+
+  const auto purpose = field(act.parameters, "purpose");
+  const auto act_hash = field(act.parameters, "act_hash");
+  const auto consumer_target = field(act.parameters, "consumer_target");
   const auto* target_generation = cbor::find(act.parameters, "target_generation");
   const auto* lifetime = cbor::find(act.parameters, "lifetime_ms");
-  if (!purpose || purpose->as_string().empty() || !act_hash ||
-      act_hash->as_string().size() != 64u || !target_generation ||
-      target_generation->as_integer() <= 0 || !lifetime ||
+  if (purpose.empty() || act_hash.size() != 64u || consumer_target.empty() ||
+      !target_generation || target_generation->as_integer() <= 0 || !lifetime ||
       lifetime->as_integer() <= 0 || lifetime->as_integer() > 300'000)
     return tl::unexpected(make_error(ErrorCode::schema_mismatch,
-        "secret binding requires purpose, act_hash, target_generation and bounded lifetime"));
+        "secret binding requires purpose, act_hash, consumer_target, target_generation and bounded lifetime"));
+  auto binding = create_secret_binding(id, purpose, act_hash, consumer_target,
+      static_cast<GenerationId>(target_generation->as_integer()), act.epoch,
+      std::chrono::milliseconds(lifetime->as_integer()));
+  if (!binding) return tl::unexpected(binding.error());
   return emit(beam, "secret.bound", "tokmon.secret.binding.v1", cbor::object({
-      {"binding_id", make_id("secret-binding")}, {"purpose", std::string(purpose->as_string())},
-      {"act_hash", std::string(act_hash->as_string())},
-      {"target", act.target}, {"target_generation", *target_generation},
-      {"lifetime_ms", *lifetime},
-      {"epoch", static_cast<std::int64_t>(act.epoch)}, {"plaintext", false}}));
+      {"binding_id", *binding}, {"secret_ref", id}, {"purpose", purpose},
+      {"act_hash", act_hash}, {"consumer_target", consumer_target},
+      {"target_generation", *target_generation}, {"lifetime_ms", *lifetime},
+      {"epoch", static_cast<std::int64_t>(act.epoch)}, {"one_shot", true},
+      {"plaintext", false}}));
 }
 
 }  // namespace tokmon::builtin

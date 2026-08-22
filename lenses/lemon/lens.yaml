@@ -8,11 +8,15 @@ stateless: true
 observes:
   - { kind: "waveguide.frame-*", schema: "*" }
   - { kind: "waveguide.cursor-*", schema: "*" }
+  - { kind: "waveguide.subscription-*", schema: "*" }
   - { kind: worker.progress, schema: "*" }
-  - { kind: model.chunk, schema: "*" }
+  - { kind: "model.*chunk", schema: "*" }
 view_channels: [diagnostic.transport, ui.stream]
 refracts:
   - { kind: waveguide.send-frame, schema: tokmon.waveguide.frame.v1 }
+  - { kind: waveguide.broadcast, schema: tokmon.waveguide.frame.v1 }
   - { kind: waveguide.advance-cursor, schema: tokmon.waveguide.cursor.v1 }
+  - { kind: waveguide.subscribe, schema: tokmon.waveguide.subscription.v1 }
+  - { kind: waveguide.unsubscribe, schema: tokmon.waveguide.subscription.v1 }
   - { kind: waveguide.reconnect, schema: tokmon.waveguide.reconnect.v1 }
 light_permissions: [photon.emit, log.write]

@@ -2,6 +2,7 @@
 #include "tokmon/lens.hpp"
 #include "tokmon/photon.hpp"
 #include "tokmon/surface.hpp"
+#include "tokmon/hash.hpp"
 
 #include <algorithm>
 #include <limits>
@@ -151,6 +152,44 @@ Result<Act> act_from_cbor(const cbor::Value& value) {
   return act;
 }
 
+std::string act_binding_hash(const Act& act) {
+  return sha256_hex(cbor::encode(cbor::object({
+      {"id", act.id}, {"ray", act.ray}, {"kind", act.kind}, {"schema", act.schema},
+      {"parameters", act.parameters}, {"target", act.target},
+      {"epoch", static_cast<std::int64_t>(act.epoch)},
+      {"generation", static_cast<std::int64_t>(act.generation)},
+      {"risk", std::string(to_string(act.risk))},
+      {"idempotency_key", act.idempotency_key},
+      {"timeout_ms", static_cast<std::int64_t>(act.timeout.count())}})));
+}
+
+std::string act_secret_scope_hash(const Act& act) {
+  auto parameters = act.parameters;
+  if (auto* map = parameters.as_map()) {
+    map->erase("secret_binding");
+    // The opaque one-shot binding identifier is a transport carrier rather than
+    // part of the requested effect.  Keep every semantic field (notably the
+    // environment target and purpose) in the scope so that a binding issued for
+    // one secret placement cannot be replayed for a different placement.
+    if (auto found = map->find("secret_bindings"); found != map->end()) {
+      if (const auto* bindings = found->second.as_array()) {
+        auto sanitized = *bindings;
+        for (auto& binding : sanitized)
+          if (auto* entry = binding.as_map()) entry->erase("binding_id");
+        found->second = cbor::Value(std::move(sanitized));
+      }
+    }
+  }
+  return sha256_hex(cbor::encode(cbor::object({
+      {"id", act.id}, {"ray", act.ray}, {"kind", act.kind}, {"schema", act.schema},
+      {"parameters", std::move(parameters)}, {"target", act.target},
+      {"epoch", static_cast<std::int64_t>(act.epoch)},
+      {"generation", static_cast<std::int64_t>(act.generation)},
+      {"risk", std::string(to_string(act.risk))},
+      {"idempotency_key", act.idempotency_key},
+      {"timeout_ms", static_cast<std::int64_t>(act.timeout.count())}})));
+}
+
 SurfaceBuilder::SurfaceBuilder(LensId source) : source_(std::move(source)) {}
 Result<void> SurfaceBuilder::add(std::string channel, std::string key,
                                  cbor::Value value, const std::int32_t priority) {
@@ -232,6 +271,20 @@ Result<Photon> RefractionBeam::emit(std::string kind, std::string schema,
   return host_.emit(PhotonDraft{.ray = act_.ray, .kind = std::move(kind),
       .schema = std::move(schema), .payload = std::move(payload), .epoch = act_.epoch,
       .caused_by_act = act_.id});
+}
+Result<Photon> RefractionBeam::emit_to(const RayId& ray, std::string kind,
+                                       std::string schema, cbor::Value payload,
+                                       PhotonId parent) {
+  if (ray.empty())
+    return tl::unexpected(make_error(ErrorCode::invalid_argument,
+                                     "cross-ray emission requires a ray"));
+  if (stop_requested())
+    return tl::unexpected(make_error(ErrorCode::cancelled, "beam cancelled"));
+  if (expired())
+    return tl::unexpected(make_error(ErrorCode::timeout, "beam deadline exceeded"));
+  return host_.emit(PhotonDraft{.ray = ray, .parent = std::move(parent),
+      .kind = std::move(kind), .schema = std::move(schema), .payload = std::move(payload),
+      .epoch = act_.epoch, .caused_by_act = act_.id});
 }
 void RefractionBeam::log(const std::string_view level, const std::string_view message) const {
   host_.log(level, message, act_.target);

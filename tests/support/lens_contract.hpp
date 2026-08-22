@@ -38,7 +38,8 @@ inline void verify_pattern_sequence(const YAML::Node& sequence,
   }
 }
 
-inline void verify_lens_contract(const std::string_view short_id) {
+inline void verify_lens_contract(const std::string_view short_id,
+                                 const bool expected_stateless = true) {
   INFO("Lens: " << short_id);
   auto lens = make_builtin_lens(short_id);
   REQUIRE(lens);
@@ -49,7 +50,7 @@ inline void verify_lens_contract(const std::string_view short_id) {
   REQUIRE(manifest.abi_major == 1);
   REQUIRE(manifest.abi_minor == 0);
   REQUIRE(manifest.trust == TrustLevel::t1);
-  REQUIRE(manifest.stateless);
+  REQUIRE(manifest.stateless == expected_stateless);
   REQUIRE_FALSE(manifest.view_channels.empty());
   REQUIRE_FALSE(manifest.observes.empty());
   REQUIRE_FALSE(manifest.refracts.empty());

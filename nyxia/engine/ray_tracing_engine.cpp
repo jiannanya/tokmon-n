@@ -74,7 +74,17 @@ Result<void> RayTracingEngine::audit_act(const Act& act, std::string kind,
   auto map = payload.as_map();
   if (!map) payload = cbor::Value::Map{};
   map = payload.as_map();
-  (*map)["act"] = to_cbor(act);
+  auto safe_act = redact_value(to_cbor(act));
+  if (act.kind == "blob.put" && cbor::find(act.parameters, "sensitive") &&
+      cbor::find(act.parameters, "sensitive")->as_bool()) {
+    if (auto* root = safe_act.as_map()) {
+      const auto found = root->find("parameters");
+      if (found != root->end() && found->second.as_map())
+        (*found->second.as_map())["content"] = "<redacted>";
+    }
+  }
+  (*map)["act"] = std::move(safe_act);
+  (*map)["act_hash"] = act_binding_hash(act);
   auto appended = emit(PhotonDraft{.ray = act.ray, .kind = std::move(kind),
       .schema = "tokmon.act.audit.v1", .payload = std::move(payload), .epoch = act.epoch,
       .caused_by_act = act.id});
@@ -84,7 +94,8 @@ Result<void> RayTracingEngine::audit_act(const Act& act, std::string kind,
 
 Result<RefractionResult> RayTracingEngine::execute(const PhotonWindow& window, Act act,
                                                     const MountedLens& mounted) {
-  auto ticket = beams_.acquire(mounted.lens->manifest().id, mounted.generation, act.timeout);
+  auto ticket = beams_.acquire(mounted.lens->manifest().id, mounted.generation,
+                               act.ray, act.timeout);
   act.target = mounted.lens->manifest().id;
   act.generation = mounted.generation;
   if (auto audit = audit_act(act, "act.started"); !audit) {
@@ -109,9 +120,18 @@ Result<RefractionResult> RayTracingEngine::execute(const PhotonWindow& window, A
     auto audit = audit_act(act, "act.failed",
                            cbor::object({{"error", failure.describe()}}));
     if (!audit) return tl::unexpected(audit.error());
+    if (failure.code == ErrorCode::cancelled) {
+      auto cancelled = emit(PhotonDraft{.ray = act.ray, .kind = "ray.cancelled",
+          .schema = "tokmon.ray.cancelled.v1",
+          .payload = cbor::object({{"act", act.id}, {"history_deleted", false}}),
+          .epoch = act.epoch, .caused_by_act = act.id});
+      if (!cancelled) return tl::unexpected(cancelled.error());
+    }
     return tl::unexpected(std::move(failure));
   }
-  if (auto audit = audit_act(act, "act.completed",
+  const auto terminal_kind = result->status == RefractionStatus::completed ? "act.completed" :
+      result->status == RefractionStatus::rejected ? "act.rejected" : "act.failed";
+  if (auto audit = audit_act(act, terminal_kind,
       cbor::object({{"status", std::string(to_string(result->status))},
                     {"detail", result->detail}})); !audit)
     return tl::unexpected(audit.error());
@@ -122,6 +142,18 @@ Result<std::size_t> RayTracingEngine::advance(const RayId& ray,
                                                const std::size_t max_beats) {
   std::size_t beats = 0;
   while (beats < max_beats && !stopping_.load(std::memory_order_acquire)) {
+    {
+      std::scoped_lock lock(cancelled_mutex_);
+      if (cancelled_rays_.contains(ray)) {
+        auto cancelled = emit(PhotonDraft{.ray = ray, .kind = "ray.cancelled",
+            .schema = "tokmon.ray.cancelled.v1",
+            .payload = cbor::object({{"beats", static_cast<std::int64_t>(beats)},
+                                      {"history_deleted", false}}),
+            .epoch = path_.snapshot()->epoch});
+        if (!cancelled) return tl::unexpected(cancelled.error());
+        return tl::unexpected(make_error(ErrorCode::cancelled, "ray was cancelled"));
+      }
+    }
     auto surface = view(ray);
     if (!surface) return tl::unexpected(surface.error());
     if (surface->proposals.empty()) {
@@ -136,7 +168,7 @@ Result<std::size_t> RayTracingEngine::advance(const RayId& ray,
     auto act = surface->proposals.front();
     act.ray = ray;
     const auto current = path_.snapshot();
-    ActPipeline pipeline(approval_);
+    ActPipeline pipeline(admission_);
     if (auto proposed = audit_act(act, "act.proposed"); !proposed)
       return tl::unexpected(proposed.error());
     auto admitted = pipeline.admit(std::move(act), *current);
@@ -175,14 +207,36 @@ Result<std::size_t> RayTracingEngine::advance(const RayId& ray,
                                    "ray exceeded maximum beats"));
 }
 
+void RayTracingEngine::cancel_ray(const RayId& ray) noexcept {
+  {
+    std::scoped_lock lock(cancelled_mutex_);
+    cancelled_rays_.insert(ray);
+  }
+  (void)beams_.stop_ray(ray);
+}
+
 Result<RayId> RayTracingEngine::begin(std::string input, MountEpoch epoch) {
   const auto ray = make_id("ray");
-  if (epoch == 0) epoch = path_.snapshot()->epoch;
-  auto photon = emit(PhotonDraft{.ray = ray, .kind = "user.input",
-      .schema = "tokmon.user.input.v1",
-      .payload = cbor::object({{"text", std::move(input)}}), .epoch = epoch});
+  auto photon = continue_ray(ray, std::move(input), epoch);
   if (!photon) return tl::unexpected(photon.error());
   return ray;
+}
+
+Result<Photon> RayTracingEngine::continue_ray(const RayId& ray, std::string input,
+                                               MountEpoch epoch) {
+  if (ray.empty() || input.empty())
+    return tl::unexpected(make_error(ErrorCode::invalid_argument,
+                                     "ray and user input must be non-empty"));
+  {
+    std::scoped_lock lock(cancelled_mutex_);
+    if (cancelled_rays_.contains(ray))
+      return tl::unexpected(make_error(ErrorCode::cancelled,
+                                       "a cancelled ray cannot accept new input"));
+  }
+  if (epoch == 0) epoch = path_.snapshot()->epoch;
+  return emit(PhotonDraft{.ray = ray, .kind = "user.input",
+      .schema = "tokmon.user.input.v1",
+      .payload = cbor::object({{"text", std::move(input)}}), .epoch = epoch});
 }
 
 void RayTracingEngine::request_stop() noexcept {
@@ -191,9 +245,9 @@ void RayTracingEngine::request_stop() noexcept {
   for (const auto& mounted : current->lenses) mounted.lens->request_stop();
 }
 
-void RayTracingEngine::set_approval(std::function<bool(const Act&)> approval) {
-  approval_ = std::move(approval);
+void RayTracingEngine::set_admission(
+    std::function<AdmissionDecision(const Act&)> admission) {
+  admission_ = std::move(admission);
 }
 
 }  // namespace tokmon
-

@@ -10,7 +10,8 @@ observes:
 view_channels: [fact.integrity, ui.trajectory, ui.causality]
 refracts:
   - { kind: integrity.verify, schema: tokmon.integrity.verify.v1 }
+  - { kind: trace.vault-write, schema: tokmon.trace.vault-write.v1 }
   - { kind: replay.create, schema: tokmon.replay.create.v1 }
   - { kind: ray.fork, schema: tokmon.ray.fork.v1 }
   - { kind: trajectory.export, schema: tokmon.trajectory.export.v1 }
-light_permissions: [photon.emit, log.write]
+light_permissions: [photon.emit, trace.write, artifact.write, log.write]

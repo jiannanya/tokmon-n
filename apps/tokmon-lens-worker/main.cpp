@@ -52,11 +52,10 @@ tokmon::cbor::Value draft_payload(const std::vector<tokmon::PhotonDraft>& drafts
   return result;
 }
 
-int serve_native(const std::string& lens_id) {
+int serve_lens(std::shared_ptr<tokmon::ILens> lens, const std::string_view runtime_name) {
 #if defined(_WIN32)
   _setmode(_fileno(stdin), _O_BINARY); _setmode(_fileno(stdout), _O_BINARY);
 #endif
-  auto lens = tokmon::make_builtin_lens(lens_id);
   if (!lens) return 2;
   std::stop_source stop;
   for (;;) {
@@ -69,7 +68,7 @@ int serve_native(const std::string& lens_id) {
       response.payload = tokmon::cbor::object({
           {"protocol_major", static_cast<std::int64_t>(tokmon::worker_protocol_major)},
           {"protocol_minor", static_cast<std::int64_t>(tokmon::worker_protocol_minor)},
-          {"lens_id", lens->manifest().id}, {"runtime", "native"},
+          {"lens_id", lens->manifest().id}, {"runtime", std::string(runtime_name)},
           {"version", lens->manifest().version}});
     } else if (frame->type == "lens.view.request") {
       const auto* value = tokmon::cbor::find(frame->payload, "window");
@@ -196,11 +195,17 @@ int main(int argc, char** argv) {
     else if (argument == "--adapter" && index + 1 < argc) adapter = argv[++index];
     else if (argument == "--entry" && index + 1 < argc) entry = argv[++index];
   }
-  if (runtime == "native") return serve_native(lens);
+  if (runtime == "native") return serve_lens(tokmon::make_builtin_lens(lens), "native");
+  if (runtime == "native_worker" && !entry.empty()) {
+    auto loaded = tokmon::CAbiLens::load(entry);
+    if (!loaded) { std::cerr << loaded.error().describe() << '\n'; return 2; }
+    return serve_lens(std::static_pointer_cast<tokmon::ILens>(*loaded), "native_worker");
+  }
   if ((runtime == "node" || runtime == "cpython") && !executable.empty() &&
       !adapter.empty() && !entry.empty())
     return launch_language(runtime, executable, adapter, entry);
   std::cerr << "usage: tokmon-lens-worker --runtime native --lens <id> | "
+               "--runtime native_worker --entry <C-ABI-library> | "
                "--runtime node|cpython --runtime-executable <path> --adapter <path> --entry <path>\n";
   return 2;
 }

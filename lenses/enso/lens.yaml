@@ -7,13 +7,18 @@ trust: t1
 stateless: true
 observes:
   - { kind: instruction.observed, schema: "*" }
-  - { kind: skill.mounted, schema: "*" }
+  - { kind: "skill.*", schema: "*" }
   - { kind: "memory.*", schema: "*" }
-  - { kind: "rag.document-*", schema: "*" }
-  - { kind: "rag.index-*", schema: "*" }
-view_channels: [model.context, ui.context-sources]
+  - { kind: "rag.*", schema: "*" }
+  - { kind: "workspace.*", schema: "*" }
+view_channels: [model.context, ui.context-sources, memory.catalog, rag.catalog]
 refracts:
+  - { kind: skill.discover, schema: tokmon.skill.discover.v1 }
+  - { kind: skill.load, schema: tokmon.skill.load.v1 }
   - { kind: context.retrieve, schema: tokmon.context.retrieve.v1 }
   - { kind: memory.propose, schema: tokmon.memory.propose.v1 }
+  - { kind: memory.accept, schema: tokmon.memory.accept.v1 }
+  - { kind: memory.reject, schema: tokmon.memory.reject.v1 }
+  - { kind: memory.invalidate, schema: tokmon.memory.invalidate.v1 }
   - { kind: rag.reindex, schema: tokmon.rag.reindex.v1 }
-light_permissions: [photon.emit, log.write]
+light_permissions: [photon.emit, io.workspace.read, index.write, log.write]

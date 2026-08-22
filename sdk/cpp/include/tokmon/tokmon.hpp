@@ -9,6 +9,7 @@
 #include "tokmon/error.hpp"
 #include "tokmon/hash.hpp"
 #include "tokmon/ids.hpp"
+#include "tokmon/json.hpp"
 #include "tokmon/lens.hpp"
 #include "tokmon/light_path.hpp"
 #include "tokmon/logging.hpp"

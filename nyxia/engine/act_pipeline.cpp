@@ -4,7 +4,7 @@
 
 namespace tokmon {
 
-ActPipeline::ActPipeline(Approval approval) : approval_(std::move(approval)) {}
+ActPipeline::ActPipeline(Admission admission) : admission_(std::move(admission)) {}
 
 Result<Act> ActPipeline::admit(Act act, const LightPathSnapshot& path) const {
   if (act.id.empty()) act.id = make_id("act");
@@ -38,12 +38,15 @@ Result<Act> ActPipeline::admit(Act act, const LightPathSnapshot& path) const {
   act.generation = target->generation;
   if (act.idempotency_key.empty()) act.idempotency_key = act.id;
 
-  if (act.risk == RiskClass::external_irreversible && !act.approved) {
-    if (!approval_ || !approval_(act))
-      return tl::unexpected(make_error(ErrorCode::approval_required,
-                                       "external irreversible Act requires approval"));
-    act.approved = true;
-  }
+  const auto decision = admission_ ? admission_(act) :
+      act.risk == RiskClass::external_irreversible ? AdmissionDecision::ask :
+                                                    AdmissionDecision::allow;
+  if (decision == AdmissionDecision::deny)
+    return tl::unexpected(make_error(ErrorCode::permission_denied,
+                                     "Fallen policy denied Act " + act.kind));
+  if (decision == AdmissionDecision::ask)
+    return tl::unexpected(make_error(ErrorCode::approval_required,
+        "Act requires a bound approval Photon"));
   if (target->lens->manifest().trust == TrustLevel::t3)
     return tl::unexpected(make_error(ErrorCode::permission_denied,
                                      "quarantined Lens cannot receive Acts"));
@@ -51,4 +54,3 @@ Result<Act> ActPipeline::admit(Act act, const LightPathSnapshot& path) const {
 }
 
 }  // namespace tokmon
-

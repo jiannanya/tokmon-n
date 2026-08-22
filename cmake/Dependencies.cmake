@@ -21,11 +21,15 @@ FetchContent_Declare(yaml_cpp
   GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
   GIT_TAG 0.8.0
   GIT_SHALLOW TRUE)
+FetchContent_Declare(nlohmann_json
+  GIT_REPOSITORY https://github.com/nlohmann/json.git
+  GIT_TAG v3.11.3
+  GIT_SHALLOW TRUE)
 FetchContent_Declare(sqlite3
   URL https://www.sqlite.org/2025/sqlite-amalgamation-3490100.zip
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 
-FetchContent_MakeAvailable(tl_expected spdlog yaml_cpp sqlite3)
+FetchContent_MakeAvailable(tl_expected spdlog yaml_cpp nlohmann_json sqlite3)
 
 if(NOT TARGET tokmon_sqlite3)
   add_library(tokmon_sqlite3 STATIC "${sqlite3_SOURCE_DIR}/sqlite3.c")

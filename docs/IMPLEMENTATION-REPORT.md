@@ -1,208 +1,215 @@
-# Tokmon 新版实现报告
+# Tokmon 新版实现与验证报告
 
 > 架构题记：**A Lens to Them All**  
-> 实现语言：C++20  
-> 报告日期：2026-08-22  
+> 语言基线：C++20（未使用 C++23）  
+> 报告日期：2026-08-23  
 > 设计基线：[DESIGN.md](./DESIGN.md)  
 > 内置透镜详设：[BUILTIN-LENSES-DESIGN.md](./BUILTIN-LENSES-DESIGN.md)
 
-## 1. 交付结论
+## 1. 本次交付结论
 
-新版 Tokmon 已在 `tokmon-n/` 下形成可编译、可运行、可测试的 C++20 实现。Nyxia 是不可替换的微内核；业务能力全部通过 Fact/Photon → Lens → Surface/Act → new Fact 闭环表达。十九个正式内置透镜与 Calculator 参考透镜均已从目录占位替换为独立 C++ 类型、独立 manifest、独立契约测试和独立动态库产物。
+`tokmon-n/` 已形成一套可编译、可安装、可执行测试的新版 Tokmon。Nyxia 只保留微内核职责；业务能力以 `committed Photon → Lens view → Surface/Act → Beam refract → new Photon` 进入同一条光路。十九个正式内置透镜与 Calculator 参考透镜均有独立 C++ 实现、独立 `lens.yaml`、独立动态库和契约测试。
 
-本次收口还完成了：
+Windows 当前目标构建已完成：
 
-- 严格 YAML manifest 读取与未知字段拒绝；
-- 基于 `tl::expected` 的统一错误边界；
-- 基于 `spdlog` 的进程日志与敏感内容清洗；
-- SQLite Photon 全局 SHA-256 哈希链和物理 UPDATE/DELETE trigger 禁止；
-- C ABI 动态透镜装载；
-- Node.js 与 CPython 外部进程透镜、canonical CBOR Worker 协议、取消和进程树终止；
-- LightPath dark lane、完整图验证、durable epoch commit、原子发布和旧 generation afterglow；
-- Windows named pipe / Unix domain socket Snow 本地协议；
-- Slint 1.17.1 桌面 UI 与 Figma 视觉基线；
-- Debug 测试构建、完整 CTest 回归和带 Slint 的 MSVC 构建。
+- 核心与透镜测试：`77/77` 通过；
+- Slint 桌面目标：编译、链接成功；
+- 安装冒烟：成功，安装树共 81 个文件；
+- 动态透镜：20 个 DLL 全部生成；
+- Node.js 和 CPython 透镜：真实 Worker 进程端到端通过；
+- Rust：本次构建不需要，也没有要求用户补装。
 
-## 2. 实现结构
+## 2. 不可破坏的实现约束
 
-```text
-tokmon-n/
-├─ apps/
-│  ├─ tokmond/                 # 唯一 Photon writer 与 Snow server
-│  ├─ tokmon-cli/              # 命令行 Snow client
-│  ├─ tokmon-desktop/          # Slint Termon 桌面显像
-│  ├─ tokmon-launcher/         # 桌面进程启动/交接
-│  └─ tokmon-lens-worker/      # Node.js/CPython 受管进程 supervisor
-├─ nyxia/
-│  ├─ base/                    # CBOR、ID、SHA-256、Error、spdlog
-│  ├─ config/                  # 用户级/项目级 .tokmon YAML 合并
-│  ├─ engine/                  # RayTracingEngine 与 Act admission
-│  ├─ light_path/              # immutable epoch snapshot 与原子发布
-│  ├─ loader/                  # YAML manifest 与稳定 C ABI
-│  ├─ runtime/                 # reconcile、dark lane、换代、afterglow
-│  ├─ storage/                 # append-only PhotonStore
-│  └─ worker/                  # Worker protocol 与 WorkerLensProxy
-├─ lenses/                     # 十九个正式内置透镜 + Calculator
-├─ protocol/                   # Snow framing 与 OS transport
-├─ sdk/
-│  ├─ c/                       # 稳定 C ABI
-│  ├─ cpp/                     # C++20 Lens SDK
-│  ├─ typescript/              # Node.js ESM adapter/SDK/示例
-│  └─ python/                  # CPython adapter/SDK/示例
-├─ config/                     # 默认 config.yaml/light-path.yaml
-└─ tests/                      # 核心、跨边界、逐镜契约测试
-```
+### 2.1 只有一种业务语义
 
-## 3. 二十个透镜的实现状态
+实现中没有引入第二套业务扩展机制。内置 C++、C ABI、native worker、Node.js 和 CPython 最终都适配成同一个 `ILens` 契约：
 
-十九个正式顺序为：Ignis、Lemon、Iris、Rhea、Janus、Clotho、Aya、Textus、Enso、Techor、Styx、Fallen、Cista、Chora、Tracket、Nota、Cove、Snow、Termon。Calculator 是独立的开发者契约参考实现。
+1. Lens 只读取不可变 `PhotonWindow`；
+2. `view` 只贡献 Surface 或提出 Act，不执行现实 I/O；
+3. 现实 I/O 只能在取得 Beam 后的 `refract` 中发生；
+4. 结果必须追加为新 Photon，不能回写旧事实；
+5. 跨透镜协作依赖 Photon、SurfaceChannel 和 ActPattern，不依赖彼此的 C++ 对象。
 
-每个 `lenses/<name>/` 当前都有：
+### 2.2 因果光子流物理不可改写
 
-- `<name>_lens.hpp`：独立 final 类型与公开契约；
-- `<name>_lens.cpp`：该透镜自己的显像、校验、折射和结果 Photon；
-- `lens.yaml`：ID、版本、ABI、runtime、trust、observes、channels、refracts、permissions；
-- `tests/<name>_contract.cpp`：manifest 等价、确定性、边界和停止语义。
+`PhotonStore` 使用 SQLite WAL 和单写入口。提交时生成全局单调 sequence、previous hash、canonical CBOR payload hash 和整条 SHA-256 hash chain。数据库 trigger 直接拒绝 committed Photon 的 `UPDATE` 与 `DELETE`。
 
-业务实现不位于 registry 或通用基类中。`lens_base` 只提供 manifest 保存、stop、pattern 匹配、稳定 Act 提案和 Beam emit；`builtin_registry` 只包含 ID 到真实构造函数的映射。逐镜算法、参数和结果 Photon 的完整矩阵见内置透镜详设第 25 节。
+取消、失败、补偿、重试、恢复和回滚均追加新 Photon：
 
-其中已经触及现实系统并有专项测试的实现包括：
+- 取消追加 `ray.cancelled` 或相应 cancel observation；
+- 失败追加 `act.failed`，外部结果不确定时追加 outcome-unknown；
+- workflow 补偿产生新 Act 和新 attempt；
+- 回到旧透镜 artifact 必须发布一个更高 mount epoch；
+- 新会话只清空 Termon projection cache，不删除 daemon 历史。
 
-- Styx：使用 argv 启动真实子进程，不经过 shell；Windows Job Object/POSIX process group 负责树级终止，stdout/stderr 有界；
-- Cove：根内 canonical path、precondition hash、真实文件 read/write/move/delete、写后读取校验、无 shell Git；
-- Chora：真实 SHA-256 内容寻址 blob、export、checkpoint 和 archive；
-- Clotho：真实 DAG 解析、缺失依赖和环检测、稳定 ready-node 选择；
-- Rhea/Janus/Techor/Calculator：完成三拍 `Fact → model.call → tool.calculate → tool.result → final message` golden ray；
-- Snow：真实本地 IPC framing、request id、cursor 和 canonical CBOR；
-- Cista：credential、Bearer、assignment 与 URL query 清洗。
+## 3. 运行时组合与热替换
 
-## 4. 因果光子流与不可改写性
+`TokmonRuntime::reconcile()` 同时读取用户级 `~/.tokmon/` 和项目级 `<workspace>/.tokmon/` YAML。候选光路在 dark lane 中完成以下验证后才可发布：
 
-`PhotonStore` 的每次提交都分配新 sequence，填充 previous hash，使用 canonical CBOR payload 计算 SHA-256，并在 SQLite FULL synchronous 事务中追加。数据库建立 `photons_no_update` 与 `photons_no_delete` trigger，任何修改或删除 committed Photon 的 SQL 都会失败。
+- manifest、ABI、Lens ID、runtime kind 和 artifact hash；
+- `lens-lock.yaml`、schema/SBOM evidence hash 和可选 HMAC-SHA256 签名；
+- 依赖、冲突、optical order、重复 Lens ID 和精确 ActPattern 冲突；
+- 权限是否相对旧 generation 扩张；
+- 空 PhotonWindow 的真实 `view` 调用；
+- Worker hello/ready、runtime 和 Lens ID 握手。
 
-取消、失败、补偿、恢复和换镜没有撤销入口：
+成功后先 durable append `mount.epoch-committed`，再原子发布不可变 `LightPathSnapshot`。新 Beam 只进入新 generation；旧 generation 进入 afterglow，停止接收新 Beam，等待或取消在途 Beam，然后关闭 watcher、socket、Worker、子进程和动态库。
 
-- Act 成功追加 `act.completed` 和目标结果 Photon；
-- Act 失败追加 `act.failed`；
-- 取消追加 cancel/terminal Photon；
-- 恢复旧 Lens artifact 发布更高 epoch；
-- replay/fork 产生新 ray，不改变来源 ray。
-
-自动测试同时验证哈希链、previous hash 连续性以及 UPDATE/DELETE 的物理拒绝。
-
-## 5. 运行时组合与热插拔
-
-`TokmonRuntime::reconcile()` 重新读取用户级 `~/.tokmon/light-path.yaml` 与项目级 `<workspace>/.tokmon/light-path.yaml`，建立完整候选图。每个候选依次完成 artifact hash、manifest/ABI/ID/runtime 校验、进程握手（若需要）和空窗口 dark-lane `view`。完整图还会检查重复 Lens ID 与精确 ActPattern 冲突。
-
-只有所有候选通过后，Nyxia 才先追加 `mount.epoch-committed`，再用一次 atomic shared pointer store 发布 E+1。所有读者只能看到完整 E 或完整 E+1，不存在半张光路。旧 generation 随后停止接收新 Beam，取消并等待在途 Beam，最后释放动态库或整个 Worker 进程树。
-
-换代可观察过程为：
+组合管理可通过 CLI/Snow 执行：
 
 ```text
-config.light-path-observed
-→ lens.candidate-verified | lens.candidate-rejected
-→ mount.epoch-committed
-→ lens.afterglow-started
-→ lens.afterglow-completed
+tokmon lens list
+tokmon lens verify
+tokmon lens mount <id> <artifact> [runtime]
+tokmon lens replace <id> <artifact> [runtime]
+tokmon lens unmount <id>
+tokmon lens reconcile
 ```
 
-这些记录全部追加；恢复旧 generation 也必须产生新的 epoch。
+配置写入采用临时文件 + 原子替换。卸载和回滚只改变下一 epoch 的光路，不触碰历史 Photon。
 
-## 6. C++、Node.js 与 CPython 承载
+## 4. 二十个内置透镜的实现
 
-三种承载最终都适配为同一个 C++ `ILens`：
+| 透镜 | 主要已实现能力 | 现实边界与专项证据 |
+| --- | --- | --- |
+| Ignis | manifest/lock/signature/SBOM/schema evidence、依赖与冲突、dark lane、desired/current diff、mount/replace/unmount/reconcile、generation 换代 | C ABI 换代测试验证更高 epoch 原子发布；未知 YAML 不发布候选路径 |
+| Lemon | typed frame、容量/单帧/批量上限、单消费者/消费组/广播、producer tail、consumer cursor、背压、gap、durable cursor、epoch bridge | cursor 倒退、越界 frame 和 afterglow 由契约测试覆盖 |
+| Iris | MCP client、stdio/HTTP JSON-RPC、工具/资源/提示 catalog、真实健康探测、latency/capability hash、重连观察；LSP initialize/initialized/didOpen/request/shutdown/exit 与结果归一化；MCP server 以受管 server Act 接入 | Python MCP fixture 的真实发现/调用；Iris catalog → Techor → Iris 组合链；真实 LSP hover 生命周期 |
+| Rhea | OpenAI、Anthropic、DeepSeek、Gemini 与 local deterministic adapter；SSE/JSON 解析；reasoning/content/tool-call/usage 分流；timeout、Retry-After、指数退避、确定性 jitter、fallback broker、usage/cost、响应 hash、Cista binding | 本地 HTTP fixture 验证 503 重试、reasoning 隔离、content streaming 和 usage |
+| Janus | 从 Photon 重建 turn/step；need-model、tool result 后续拍、预算、重复 Act/无进展检测、steer/cancel/stop、状态显像 | Calculator golden ray 完成多拍模型—工具—模型闭环，并验证同一 ray 多轮追加 |
+| Clotho | YAML DAG、依赖/环/权限/schema 验证、模板、条件、fan-out/fan-in、join、全局/分组并发、retry attempt、timeout 元数据、continue/stop/compensate、pause/resume/cancel | DAG、确定性 ready、fan-out、group limit、显式 compensation 专项测试 |
+| Aya | fork/spawn、独立 child ray、预算/deadline/ActKind 上界、受控引用继承、禁止 secret 继承、只读 workspace、真实 Git worktree、parent/child/sibling message、progress/help/heartbeat/usage、取消传播、all/any/quorum/manual join、摘要/artifact/conflict、Cove merge proposal | 真实 Git 仓库创建隔离 worktree；进度/心跳/usage 只从 Photon 折叠 |
+| Textus | system/instruction/conversation/tool/memory/RAG 稳定组装、保守 token estimator、来源预算、最新输入与未完成调用保留、去重/相关性/滑窗/摘要/截断/溢出、reasoning 分区、稳定 cache key | token 预算和确定性由透镜契约覆盖 |
+| Enso | 用户/项目/artifact SKILL 发现、渐进加载、根内引用链/hash；append-only memory proposal/accept/reject/supersedes；文件/artifact 摄取、chunk、embedding、关键词+向量混合检索、过滤/重排、增量 tombstone | 真实 SKILL.md、RAG revision 与 memory provenance 专项测试 |
+| Techor | LightPath/MCP/worker/内置/Code Mode 统一工具目录；严格 JSON schema、schema drift、unknown/ambiguous tool、稳定幂等路由；受限 `tokmon-act-v1` Code Mode | MCP catalog 真实组合调用；Code Mode 编译为结构化 Act，不能直接 I/O |
+| Styx | `SandboxPlan`、argv 无 shell 执行、cwd/env allowlist、文件/网络范围、CPU/Mem/PID/output/deadline、bounded ring、PTY stdin/stdout/resize/exit、cooperative cancel 后进程树终止、Wasmtime CLI 与 Docker CLI adapter | Windows Job Object、ConPTY 和真实取消测试；adapter 缺失时 fail closed，禁止退化成本机裸执行 |
+| Fallen | deny → allow → ask、用户根策略限制项目策略、risk/trust/path/argv/参数/时间匹配、多级审批、Act hash/epoch/generation/deadline 绑定、one-shot/session、内容分类 | `approved=true` 不能绕过公共 admission；不可信文本分类不回显 secret |
+| Cista | Windows Credential Manager create/read/rotate/delete/list metadata；exact Act + target generation + purpose + epoch + lifetime 的一次性 binding；schema-aware redaction 与内存清零 | 真实 OS credential 读写与一次消费测试；Photon 中无明文 |
+| Chora | Photon WAL/append gate 显像、不可变版本 KV、内容寻址 Blob、去重/校验、Windows DPAPI 敏感 Blob、checkpoint、archive、backup manifest/restore | 真实 blob 写入、地址 hash 和不可变性测试 |
+| Tracket | sequence/id/parent/epoch/schema/hash/caused-by-act 验证、timeline/causal DAG、raw trace vault、R0/R1/R2/R3 replay、fork/export/audit/integrity report | 断链与未知 required schema 进入不可信诊断，不伪造可信 replay |
+| Nota | spdlog 结构化事件、correlation、Span/metric fold、OTLP HTTP exporter、Prometheus 文本和真实 loopback `/metrics` server、运行时 filter/sample、health/doctor/diagnostic bundle | 真实 HTTP collector 与 Prometheus GET 专项测试；endpoint 只允许 loopback |
+| Cove | canonical entity tree、类型/大小/mtime/hash/Git/ignored；create/modify/delete/rename 聚合；branch/HEAD/index/worktree/untracked/conflict；pre/post image、guarded read/write/create/move/delete、Git evidence、artifact/provenance | 真实文件生命周期、Git repo/ignored 状态、polling watcher 与 worktree 测试 |
+| Snow | interactive chat、headless run、history、JSONL/CBOR、stdio 并发、request id、stream/cancel/ordered close、named pipe/Unix socket、snapshot/cursor delta/gap/reconnect/idempotency、deadline、doctor、Lens 管理 | 真实本地 transport 并发、stdio 顺序关闭、断线 cursor 恢复测试 |
+| Termon | 13 个 `ui.*` SurfaceChannel：conversation、trajectory、code、terminal、approval、context、models、tools、workspace、children、lenses、diagnostics、settings；Slint 仅保存 projection cache | tokmond 新增按 ray 折叠 Surface；桌面端聊天后读取 `ui.trajectory`，所有提交仍由 daemon 完成 |
+| Calculator | C++20 开发者参考透镜，严格表达式校验、确定性 Act 与 `tool.result` | 完整 Fact → Lens → Act → Photon golden ray |
 
-| 承载 | 装载方式 | 换代单位 | 隔离 |
-| --- | --- | --- | --- |
-| C++ 内置 | 独立具体类型 | generation | Nyxia 进程内 |
-| C++ 动态库 | `tokmon_lens_entry_v1` 稳定 C ABI | DLL/shared object generation | 可选进程内 |
-| JS/编译后 TS | Node.js ESM adapter | 独立 Worker generation | 强制进程边界 |
-| Python | CPython adapter | 独立 Worker generation | 强制进程边界 |
+## 5. C++、Node.js 与 CPython 透镜
 
-Node.js 与 CPython 不嵌入 `tokmond`。`WorkerLensProxy` 启动 `tokmon-lens-worker`，后者再启动精确解释器与语言 adapter；双方使用 4-byte 大端长度 + canonical CBOR frame。`worker.hello/ready` 校验协议、Lens ID 和 runtime；`view/refract` 返回的 channel、Act proposal 和 Photon emit 还会在 C++ host 侧按 manifest 权限复核。
+三类扩展最终都遵守相同 Lens 契约：
 
-脚本 artifact 的 `lens.yaml` 必须声明 `runtime.kind/version/entry`。入口经过根内校验，不允许 `..` 逃逸。Node.js 与 CPython 仍可使用各自的 npm/PyPI 生态，但依赖应在构建时锁定并与 artifact 一起固化；运行时不会执行在线 install。
+| 形式 | 进程/ABI 边界 | 热替换单位 |
+| --- | --- | --- |
+| C++ 动态透镜 | `tokmon_lens_entry_v1` 稳定 C ABI | DLL/shared-object generation |
+| JS/编译后的 TS | Node.js ESM adapter + Worker Protocol | 独立 Worker generation |
+| Python | CPython adapter + Worker Protocol | 独立 Worker generation |
 
-运行时文件位置：
+脚本透镜没有使用 QuickJS 或 MicroPython，因此可以使用正常的 npm/PyPI 包生态。依赖必须在构建/打包时锁定进不可变 artifact；运行时不在线安装包，也不允许联网改变依赖图。
 
-```text
-~/.tokmon/runtimes/node/node.exe                 # Windows
-~/.tokmon/runtimes/cpython/python.exe            # Windows
-~/.tokmon/runtimes/node/bin/node                 # Unix
-~/.tokmon/runtimes/cpython/bin/python3           # Unix
-```
+Worker Protocol 使用 4-byte 大端长度 + canonical CBOR frame。C++ host 会复核脚本返回的 SurfaceChannel、Act proposal、Photon kind 与 manifest 权限；Worker 异常、超时或退出被转换成 `tl::expected<..., Error>`，不能穿透 Nyxia。
 
-开发示例位于 `sdk/typescript/examples/adder.mjs` 与 `sdk/python/examples/adder.py`，两者各有可由严格 loader 读取的 `lens.yaml`。
+## 6. Snow、daemon 与桌面进程
 
-## 7. 配置、错误与日志
+- `tokmond`：唯一持有 `TokmonRuntime` 和 Photon append gate 的 daemon；
+- `tokmon`：Snow CLI 客户端，不拥有事实状态；
+- `tokmon-desktop`：Slint/Termon projection 客户端；
+- `tokmon-launcher`：启动与交接桌面进程；
+- `tokmon-lens-worker`：受管 C ABI、Node.js、CPython Lens 进程边界。
 
-- 所有配置采用 YAML；用户级和项目级目录均命名为 `.tokmon`；
-- 项目级配置覆盖用户级同 ID Lens，artifact 相对路径以声明它的 `light-path.yaml` 所在目录解析；
-- 未知 YAML 字段、未知 runtime、缺少 manifest 字段或错误 ABI 会返回 `schema_mismatch`/`abi_mismatch`，不会发布新路径；
-- 可预期错误统一为 `tl::expected<T, Error>`；跨 C ABI/Worker 边界的异常在最外层变为结构化 Error；
-- C++ 日志统一使用 spdlog；Worker 日志经 host Beam 回传后进入同一出口，并经过清洗。
+会话支持同一 ray 的多轮追加。CLI `/new` 和桌面“新会话”只让下一输入创建新 ray。Snow chat 支持 `deadline_ms`；deadline 到达时取消 ray，在途进程先 cooperative stop，再终止进程树。
 
-## 8. Slint UI
+Termon 不再用硬编码 timeline/code model 作为事实来源。桌面端先消费 snapshot/cursor delta；发送 chat 后再请求该 ray 的 `SurfaceSnapshot`，从 Termon 的 `ui.trajectory` 重建活动会话投影。
 
-Termon 使用 Slint 1.17.1 C++ SDK。UI 实现保留 Figma 的三栏信息架构、暗色视觉、会话导航、中心工作区、轨迹/审批/代码/终端信息区和底部输入区。图标来自设计资源并以 SVG 资产加载，中文界面已做截图验证。
+## 7. 配置、错误和日志
 
-桌面进程不是事实源：Slint property 与 model 只保存 projection cache；用户操作经 Snow 转为 intent，提交与因果状态仍由 `tokmond` 掌握。
+- 配置格式：YAML；
+- 用户级目录：`~/.tokmon/`；
+- 项目级目录：`<workspace>/.tokmon/`；
+- 可预期失败：`tl::expected<T, tokmon::Error>`；
+- C++ 日志：spdlog；
+- 语言标准：C++20。
 
-本机使用项目内预编译 Slint C++ SDK，因此本次构建不依赖 Rust 工具链。
+YAML loader 拒绝未知字段、未知 runtime、非法资源上限、缺失 entry、错误 ABI、重复依赖和越界路径。日志、Error、Photon、Surface、HTTP 错误正文和 diagnostic bundle 在进入 sink 前执行 redaction。
 
-## 9. 编译与验证结果
+## 8. 编译、测试和安装结果
 
-### 9.1 无 UI 的完整测试构建
+### 8.1 核心构建和全量测试
 
 ```powershell
-cmake --build build/verify-tests --parallel
+cmake --build build/verify-tests --parallel 4
 ctest --test-dir build/verify-tests --output-on-failure
 ```
 
-结果：`41/41` 通过，`0` 失败。测试覆盖：
+结果：`77/77` 通过，`0` 失败，总耗时约 12.51 秒。
 
-- canonical CBOR；
-- append-only Photon store 与哈希链；
-- LightPath 原子 epoch；
-- C ABI dark lane 与二十个 DLL 身份；
-- 十九个正式透镜与 Calculator 契约；
-- 每个内置透镜至少一个声明折射场景；
-- Calculator 三拍完整因果 ray；
-- Styx/Cove/Chora/Clotho 现实行为；
-- Node.js/CPython SDK；
-- Node.js/CPython `WorkerLensProxy` 真实进程端到端；
-- reconcile lifecycle Photon；
-- C ABI Calculator generation 经 dark lane 从动态库换为内置实现，并以更高 epoch 原子发布。
+测试包含：
 
-### 9.2 带 UI 的 MSVC 构建
+- canonical CBOR/JSON bridge；
+- SQLite 物理 append-only 与 hash chain；
+- LightPath 原子 epoch、artifact signature 和 C ABI hot swap；
+- 二十个动态库身份、二十镜声明折射场景和逐镜契约；
+- Node.js/CPython SDK 与真实 WorkerLensProxy；
+- 真实 MCP、LSP、HTTP provider、OTLP、Prometheus；
+- 真实进程、ConPTY、取消、Git、worktree、文件 watcher；
+- DAG、RAG、SKILL、memory、Cista、Chora；
+- Snow 并发、stdio、cursor 重连；
+- Termon 十三个页面 SurfaceChannel。
+
+### 8.2 带 Slint 的 Windows 构建
 
 ```powershell
-cmake --build build/windows-msvc-ui-debug --parallel
+cmake --build build/windows-msvc-ui-debug --parallel 4
 ```
 
-结果：成功生成 `tokmond.exe`、`tokmon.exe`、`tokmon-launcher.exe`、`tokmon-lens-worker.exe`、`tokmon-desktop.exe` 和二十个 `tokmon-lens-<name>.dll`。编译器输出中只有第三方头文件 shadow/deprecation 与 Windows `getenv` 安全提示，没有编译或链接错误。
+结果：成功生成 5 个应用程序、20 个 `tokmon-lens-*.dll` 和 `slint_cpp.dll`。编译器只有第三方 spdlog/fmt/yaml-cpp warning，没有 Tokmon 编译或链接错误。
 
-安装冒烟使用 `cmake --install build/windows-msvc-ui-debug --prefix build/install-smoke` 成功；安装树包含五个应用程序、二十个 Lens DLL、`slint_cpp.dll`、40 个 Figma SVG、默认 YAML 以及 Node.js/CPython adapter。
+### 8.3 安装冒烟
 
-### 9.3 已验证的外部运行时
+```powershell
+cmake --install build/windows-msvc-ui-debug --prefix build/install-smoke
+```
 
-- Node.js `v25.8.1`；
-- CPython `3.10.7`；
-- Slint C++ `1.17.1`。
+结果：成功。安装树含 81 个文件，包括应用程序、20 个透镜 DLL、Slint runtime、40 个 Figma SVG、默认 YAML、TypeScript adapter 和 Python adapter。
 
-## 10. 交付文件索引
+### 8.4 实际工具链
 
-- 总设计：`docs/DESIGN.md`
-- 二十镜详细设计与实现矩阵：`docs/BUILTIN-LENSES-DESIGN.md`
-- 本报告：`docs/IMPLEMENTATION-REPORT.md`
-- 微内核运行时换代：`nyxia/runtime/runtime.cpp`
-- 严格 manifest loader：`nyxia/loader/manifest_io.cpp`
-- Worker proxy：`nyxia/worker/worker_lens_proxy.cpp`
-- C ABI loader/entry：`nyxia/loader/c_abi_loader.cpp`、`lenses/common/named_lens_entry.cpp`
-- 二十镜源码：`lenses/*/*_lens.cpp`
+| 工具 | 本机结果 |
+| --- | --- |
+| CMake | 4.2.1 |
+| Clang/LLVM | 17.0.6 |
+| Node.js | v25.8.1 |
+| CPython | 3.10.7 |
+| Git | 2.53.0.windows.2 |
+| Slint C++ runtime | 项目构建目标成功 |
+
+## 9. 环境受限但不会静默降级的验证项
+
+以下是外部执行后端的环境状态，不应伪装成已完成现场验证：
+
+- Wasmtime CLI 本机未安装。Styx 的 WASI adapter、参数校验、scope 和 fail-closed 路径已实现；本机没有执行真实 `.wasm` 模块。
+- Docker CLI 29.4.0 已安装，但 Docker Desktop daemon 未运行。容器 create/copy/exec/stop/remove 生命周期已实现；本机没有完成 live container 测试。
+- 当前完整编译与现实系统测试在 Windows 上执行。Cista 当前使用 Windows Credential Manager；非 Windows credential backend 保持明确 `unsupported`，不会退化成明文文件。
+- Chora 敏感 Blob 在 Windows 使用 DPAPI；非 Windows 未配置 envelope backend 时明确拒绝敏感写入。
+
+这些限制不影响本次 Windows 目标的 77 项测试与 Slint 构建，但若把“完成”定义为所有 OS/所有可选外部后端都做现场验收，则仍需相应平台或 daemon 环境。由于这些后端会 fail closed，缺少环境不会导致较弱隔离被冒充为成功。
+
+## 10. 关键文件索引
+
+- 微内核与换代：`nyxia/runtime/runtime.cpp`
+- 光流发动机：`nyxia/engine/ray_tracing_engine.cpp`
+- append-only storage：`nyxia/storage/photon_store.cpp`
+- manifest/lock：`nyxia/loader/manifest_io.cpp`
+- C ABI：`nyxia/loader/c_abi_loader.cpp`
+- Worker：`nyxia/worker/worker_lens_proxy.cpp`
+- Snow transport：`protocol/snow_transport.cpp`
+- daemon：`apps/tokmond/main.cpp`
+- CLI：`apps/tokmon-cli/main.cpp`
+- Slint host：`apps/tokmon-desktop/main.cpp`
 - Slint UI：`apps/tokmon-desktop/ui/tokmon.slint`
-- 测试：`tests/unit/` 与 `lenses/*/tests/`
+- 二十镜源码：`lenses/*/*_lens.cpp`
+- 核心与现实边界测试：`tests/unit/core_tests.cpp`、`tests/unit/builtin_lens_tests.cpp`
+- 逐镜契约：`lenses/*/tests/*_contract.cpp`
 
-## 11. 工具链结论
+## 11. Rust 工具链结论
 
-当前 Windows 构建已经完整成功，不需要手动补齐 Rust。继续开发所需的必备工具是 CMake 3.25+、Ninja、C++20 编译器；只有在不再使用项目内 Slint C++ SDK、转为从 Slint 源码自行生成工具时，才需要 Rust/Cargo。
+当前构建使用已经可用的 Slint C++ 依赖，`tokmon-desktop.exe` 已成功生成，因此不需要手工补齐 Rust/Cargo。只有未来决定从 Slint Rust 源码重新构建其 C++ SDK，或主动引入必须由 Cargo 构建的组件时，才需要安装 Rust 工具链。

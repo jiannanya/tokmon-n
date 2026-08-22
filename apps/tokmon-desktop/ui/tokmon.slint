@@ -6,6 +6,7 @@ export struct NavigationItem {
     indent: int,
     selected: bool,
     expandable: bool,
+    expanded: bool,
 }
 
 export struct TimelineItem {
@@ -55,6 +56,21 @@ component StatusDot inherits Rectangle {
                 tone == "danger" ? #ef4444 : #a8a29e;
 }
 
+component MenuOption inherits Rectangle {
+    in property <string> label;
+    in property <bool> active: false;
+    callback chosen;
+    height: 27px;
+    border-radius: 5px;
+    background: active ? #fef3d6 : option-touch.has-hover ? #f5f5f4 : transparent;
+    Text {
+        x: 9px; width: parent.width - 18px; height: parent.height;
+        text: root.label; color: root.active ? #855702 : #44403c;
+        font-size: 10px; vertical-alignment: center; overflow: elide;
+    }
+    option-touch := TouchArea { clicked => { root.chosen(); } }
+}
+
 component SidebarRow inherits Rectangle {
     in property <NavigationItem> item;
     callback selected;
@@ -87,72 +103,100 @@ component SidebarRow inherits Rectangle {
 
 component TimelineRow inherits Rectangle {
     in property <TimelineItem> item;
-    height: item.detail == "" ? 31px : item.progress >= 0 ? 92px : 47px;
+    height: item.kind == "complete" ? 66px : item.progress >= 0 ? 82px : item.detail == "" ? 30px : 46px;
     background: transparent;
-    HorizontalLayout {
-        padding-left: 8px;
-        padding-right: 8px;
-        spacing: 9px;
-        Rectangle {
-            width: 18px;
-            height: 18px;
-            border-radius: 9px;
-            background: item.tone == "success" ? #dcfce7 : item.tone == "warning" ? #fef3c7 : #f5f5f4;
-            Text {
-                text: item.tone == "success" ? "✓" : item.kind == "command" ? ">_" : "·";
-                color: item.tone == "success" ? #16a34a : item.tone == "warning" ? #d97706 : #78716c;
-                font-size: 10px;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
+    if item.kind == "complete": Rectangle {
+        x: 24px;
+        y: 3px;
+        width: parent.width - 32px;
+        height: 59px;
+        border-radius: 7px;
+        background: #f0fdf4;
+        border-width: 1px;
+        border-color: #bbf7d0;
+        Image { x: 10px; y: 10px; width: 14px; height: 14px; source: @image-url("../assets/figma/icon-20.svg"); }
+        Text {
+            x: 31px; y: 8px; width: parent.width - 42px; height: 17px;
+            text: item.title; color: #15803d; font-size: 10.5px; font-weight: 700;
         }
-        VerticalLayout {
-            padding-top: 1px;
-            spacing: 3px;
-            HorizontalLayout {
-                spacing: 8px;
-                Text { text: item.time; color: #a8a29e; font-size: 10px; font-family: "Microsoft YaHei UI"; }
-                Text { text: item.title; color: #292524; font-size: 11.5px; font-weight: 600; font-family: "Microsoft YaHei UI"; }
-            }
-            Text {
-                visible: item.detail != "";
-                text: item.detail;
-                color: #78716c;
-                font-size: 10.5px;
-                font-family: "Microsoft YaHei UI";
-                overflow: elide;
-            }
-            Rectangle {
-                visible: item.progress >= 0;
-                height: 31px;
-                border-radius: 6px;
-                background: #fafaf9;
-                border-width: 1px;
-                border-color: #e7e5e4;
-                Rectangle {
-                    x: 8px;
-                    y: 9px;
-                    height: 4px;
-                    width: (parent.width - 16px) * min(100, max(0, item.progress)) / 100;
-                    border-radius: 2px;
-                    background: #f59e0b;
-                }
-                Text {
-                    x: 8px;
-                    y: 17px;
-                    text: "进度 " + item.progress + " %";
-                    color: #a16207;
-                    font-size: 9px;
-                }
-            }
+        Text {
+            x: 31px; y: 25px; width: parent.width - 42px; height: 28px;
+            text: item.detail; color: #16a34a; font-size: 9.5px; wrap: word-wrap;
         }
     }
+    if item.kind != "complete": Rectangle {
+        x: 14px; y: 0px; width: 1px; height: parent.height;
+        background: #e7e5e4;
+    }
+    if item.kind != "complete": Rectangle {
+        x: 8px; y: 8px; width: 13px; height: 13px; border-radius: 7px;
+        background: item.tone == "success" ? #dcfce7 : #fffbeb;
+        border-width: 1px;
+        border-color: item.tone == "success" ? #86efac : #f59e0b;
+        Image {
+            x: 2px; y: 2px; width: 8px; height: 8px;
+            source: item.kind == "folder" ? @image-url("../assets/figma/icon-22.svg") :
+                    item.kind == "file" ? @image-url("../assets/figma/icon-23.svg") :
+                    item.tone == "success" ? @image-url("../assets/figma/icon-24.svg") :
+                    @image-url("../assets/figma/icon-26.svg");
+        }
+    }
+    if item.kind != "complete": Text {
+        x: 28px; y: 6px; width: 35px; height: 18px;
+        text: item.time; color: #a8a29e; font-size: 9.5px;
+        vertical-alignment: center;
+    }
+    if item.kind != "complete": Text {
+        x: 67px; y: 6px; width: parent.width - 78px; height: 18px;
+        text: item.title; color: #292524; font-size: 10.5px;
+        font-weight: item.kind == "task" ? 700 : 500;
+        vertical-alignment: center; overflow: elide;
+    }
+    if item.kind != "complete" && item.detail != "" && item.progress < 0: Rectangle {
+        x: 67px; y: 25px; width: min(parent.width - 82px, 210px); height: 18px;
+        border-radius: 4px; background: #f5f5f4;
+        Text {
+            x: 7px; width: parent.width - 14px; height: parent.height;
+            text: item.detail; color: #78716c; font-size: 9px;
+            vertical-alignment: center; overflow: elide;
+        }
+    }
+    if item.kind != "complete" && item.progress >= 0: Rectangle {
+        x: 67px; y: 25px; width: parent.width - 80px; height: 52px;
+        border-radius: 6px; background: #fafaf9;
+        border-width: 1px; border-color: #e7e5e4;
+        Text {
+            x: 9px; y: 4px; width: parent.width - 75px; height: 15px;
+            text: item.detail; color: #57534e; font-size: 9px; overflow: elide;
+        }
+        Text {
+            x: parent.width - 58px; y: 4px; width: 48px; height: 15px;
+            text: "进度  " + item.progress + " %"; color: #c2410c; font-size: 9px;
+            font-weight: 600; horizontal-alignment: right;
+        }
+        Rectangle {
+            x: 9px; y: 23px; width: parent.width - 18px; height: 4px;
+            border-radius: 2px; background: #e7e5e4;
+            Rectangle {
+                width: parent.width * min(100, max(0, item.progress)) / 100;
+                height: parent.height; border-radius: 2px; background: #f59e0b;
+            }
+        }
+        Text {
+            x: 9px; y: 31px; width: parent.width - 18px; height: 14px;
+            text: "预计剩余: 00:01:32"; color: #a8a29e; font-size: 8.5px;
+        }
+    }
+
 }
 
 export component MainWindow inherits Window {
     title: "Tokmon — A Lens to Them All";
-    width: 1440px;
-    height: 900px;
+    no-frame: true;
+    preferred-width: 1440px;
+    preferred-height: 900px;
+    min-width: 1040px;
+    min-height: 680px;
     background: #f5f5f4;
     default-font-family: "Microsoft YaHei UI";
 
@@ -165,21 +209,104 @@ export component MainWindow inherits Window {
     in-out property <string> access-mode: "完全访问";
     in-out property <string> effort: "最高";
     in-out property <string> composer-text;
+    in-out property <string> last-message: "使用 faster-whisper 模型对音频文件进行转录，输出带时间戳的字幕（Segmentation 模式）。";
     in-out property <bool> sidebar-visible: true;
     in-out property <bool> code-visible: true;
     in-out property <bool> trajectory-selected: true;
     in-out property <bool> file-preview-selected: false;
+    in-out property <string> search-text;
+    in-out property <bool> task-expanded: true;
+    in-out property <bool> title-editing: false;
+    in-out property <bool> settings-open: false;
+    in-out property <bool> access-menu-open: false;
+    in-out property <bool> model-menu-open: false;
+    in-out property <bool> effort-menu-open: false;
+    in-out property <bool> file-menu-open: false;
+    in-out property <bool> code-menu-open: false;
+    in-out property <bool> issues-open: false;
+    in-out property <bool> attachment-menu-open: false;
+    in-out property <bool> window-maximized: false;
+    in-out property <length> sidebar-width: 240px;
+    in-out property <length> code-panel-width: 440px;
     callback send-message(string);
     callback new-session;
     callback select-navigation(int);
+    callback search-changed(string);
+    callback add-navigation;
     callback reconcile;
+    callback drag-window;
+    callback minimize-window;
+    callback toggle-maximize-window;
+    callback close-window;
 
-    HorizontalLayout {
+    VerticalLayout {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
         spacing: 0px;
 
-        sidebar := Rectangle {
+        Rectangle {
+            height: 30px;
+            background: #fbfbfa;
+            border-width: 1px;
+            border-color: #f0eee8;
+            drag-touch := TouchArea {
+                pointer-event(event) => {
+                    if (event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
+                        root.drag-window();
+                    }
+                }
+            }
+            HorizontalLayout {
+                width: parent.width; height: parent.height;
+                padding-left: 10px;
+                spacing: 7px;
+                Image { width: 14px; height: 14px; source: @image-url("../assets/figma/icon-00.svg"); }
+                Text {
+                    text: "Tokmon — A Lens to Them All";
+                    color: #57534e; font-size: 10.5px; vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Rectangle {
+                    width: 34px;
+                    background: minimize-touch.has-hover ? #f0eee8 : transparent;
+                    Text { text: "—"; color: #57534e; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+                    minimize-touch := TouchArea { clicked => { root.minimize-window(); } }
+                }
+                Rectangle {
+                    width: 34px;
+                    background: maximize-touch.has-hover ? #f0eee8 : transparent;
+                    if !root.window-maximized: Rectangle {
+                        x: 12px; y: 9px; width: 10px; height: 9px;
+                        border-width: 1px; border-color: #78716c; background: transparent;
+                    }
+                    if root.window-maximized: Rectangle {
+                        x: 10px; y: 11px; width: 9px; height: 8px;
+                        border-width: 1px; border-color: #78716c; background: #fbfbfa;
+                        Rectangle {
+                            x: 3px; y: -4px; width: 9px; height: 8px;
+                            border-width: 1px; border-color: #78716c; background: transparent;
+                        }
+                    }
+                    maximize-touch := TouchArea { clicked => { root.toggle-maximize-window(); } }
+                }
+                Rectangle {
+                    width: 38px;
+                    background: close-touch.has-hover ? #ef4444 : transparent;
+                    Text { text: "×"; color: close-touch.has-hover ? white : #57534e; font-size: 15px; horizontal-alignment: center; vertical-alignment: center; }
+                    close-touch := TouchArea { clicked => { root.close-window(); } }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            vertical-stretch: 1;
+            spacing: 0px;
+
+            sidebar := Rectangle {
             visible: root.sidebar-visible;
-            width: root.sidebar-visible ? 240px : 0px;
+            width: root.sidebar-visible ? root.sidebar-width : 0px;
             background: #f9f9f8;
             border-width: 1px;
             border-color: #e7e5e4;
@@ -216,7 +343,15 @@ export component MainWindow inherits Window {
                         Image { width: 16px; height: 16px; source: @image-url("../assets/figma/icon-02.svg"); }
                         Text { text: "新建会话"; color: #855702; font-size: 13px; font-weight: 600; }
                     }
-                    TouchArea { clicked => { root.new-session(); } }
+                    TouchArea {
+                        clicked => {
+                            root.new-session();
+                            root.session-title = "新会话";
+                            root.trajectory-selected = false;
+                            root.composer-text = "";
+                            root.last-message = "";
+                        }
+                    }
                 }
                 Rectangle {
                     height: 34px;
@@ -227,6 +362,8 @@ export component MainWindow inherits Window {
                         x: 35px; y: 1px; width: parent.width - 40px; height: 32px;
                         placeholder-text: "搜索项目或会话...";
                         font-size: 12px;
+                        text <=> root.search-text;
+                        edited => { root.search-changed(self.text); }
                     }
                 }
                 HorizontalLayout {
@@ -240,7 +377,11 @@ export component MainWindow inherits Window {
                         letter-spacing: 0.5px;
                     }
                     Rectangle { horizontal-stretch: 1; }
-                    ToolIcon { icon-size: 14px; source: @image-url("../assets/figma/icon-04.svg"); }
+                    ToolIcon {
+                        icon-size: 14px;
+                        source: @image-url("../assets/figma/icon-04.svg");
+                        clicked => { root.add-navigation(); }
+                    }
                 }
                 ListView {
                     vertical-stretch: 1;
@@ -249,19 +390,50 @@ export component MainWindow inherits Window {
                         selected => { root.select-navigation(index); }
                     }
                 }
-                HorizontalLayout {
+                Rectangle {
                     height: 27px;
-                    spacing: 7px;
-                    Image { width: 14px; height: 14px; source: @image-url("../assets/figma/icon-23.svg"); }
-                    Text { text: "设置"; color: #57534e; font-size: 11.5px; vertical-alignment: center; }
-                    Rectangle { horizontal-stretch: 1; }
-                    StatusDot { tone: "success"; }
+                    border-radius: 7px;
+                    background: settings-touch.has-hover ? #f0eee8 : transparent;
+                    HorizontalLayout {
+                        width: parent.width; height: parent.height;
+                        spacing: 7px;
+                        Image { width: 14px; height: 14px; source: @image-url("../assets/figma/icon-13.svg"); }
+                        Text { text: "设置"; color: #57534e; font-size: 11.5px; vertical-alignment: center; }
+                        Rectangle { horizontal-stretch: 1; }
+                        StatusDot { tone: "success"; }
+                    }
+                    settings-touch := TouchArea { clicked => { root.settings-open = true; } }
                 }
             }
         }
 
-        main := Rectangle {
+            Rectangle {
+                visible: root.sidebar-visible;
+                width: root.sidebar-visible ? 6px : 0px;
+                background: left-resize.has-hover || left-resize.pressed ? #fff7ed : #ffffff;
+                Rectangle {
+                    x: (parent.width - self.width) / 2;
+                    width: left-resize.has-hover || left-resize.pressed ? 2px : 1px;
+                    height: parent.height;
+                    background: left-resize.has-hover || left-resize.pressed ? #f59e0b : #e7e5e4;
+                }
+                left-resize := TouchArea {
+                    mouse-cursor: col-resize;
+                    moved => {
+                        if (self.pressed) {
+                            root.sidebar-width = max(180px, min(
+                                min(380px, root.width - (root.code-visible ? root.code-panel-width + 6px : 0px) - 366px),
+                                root.sidebar-width + self.mouse-x - self.width / 2
+                            ));
+                        }
+                    }
+                }
+            }
+
+            main := Rectangle {
             horizontal-stretch: 1;
+            min-width: 360px;
+            max-width: 100000px;
             background: #ffffff;
             VerticalLayout {
                 spacing: 0px;
@@ -279,18 +451,31 @@ export component MainWindow inherits Window {
                             source: @image-url("../assets/figma/icon-01.svg");
                             clicked => { root.sidebar-visible = true; }
                         }
-                        Text {
-                            text: root.session-title;
-                            color: #292524;
-                            font-family: "Microsoft YaHei UI";
-                            font-size: 13px;
-                            font-weight: 700;
-                            vertical-alignment: center;
+                        Rectangle {
+                            width: root.title-editing ? 190px : 170px;
+                            if !root.title-editing: Text {
+                                text: root.session-title;
+                                color: #292524;
+                                font-family: "Microsoft YaHei UI";
+                                font-size: 13px;
+                                font-weight: 700;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                            if root.title-editing: LineEdit {
+                                width: parent.width; height: 30px;
+                                text <=> root.session-title;
+                                accepted => { root.title-editing = false; }
+                            }
                         }
-                        ToolIcon { icon-size: 13px; source: @image-url("../assets/figma/icon-14.svg"); }
+                        ToolIcon {
+                            icon-size: 13px;
+                            source: @image-url("../assets/figma/icon-14.svg");
+                            clicked => { root.title-editing = !root.title-editing; }
+                        }
                         Rectangle { horizontal-stretch: 1; }
                         ToolIcon {
-                            source: @image-url("../assets/figma/icon-35.svg");
+                            source: @image-url("../assets/figma/icon-15.svg");
                             clicked => { root.code-visible = !root.code-visible; }
                         }
                     }
@@ -319,12 +504,87 @@ export component MainWindow inherits Window {
                 Rectangle {
                     vertical-stretch: 1;
                     background: #ffffff;
-                    if root.trajectory-selected: ListView {
-                        x: 13px;
-                        y: 12px;
-                        width: parent.width - 26px;
-                        height: parent.height - 24px;
-                        for item in root.timeline: TimelineRow { item: item; }
+                    if root.trajectory-selected: Rectangle {
+                        Text {
+                            x: 0px; y: 13px; width: parent.width; height: 18px;
+                            text: "10:20"; color: #a8a29e; font-size: 9.5px;
+                            horizontal-alignment: center;
+                        }
+                        Rectangle {
+                            width: min(parent.width * 0.43, 430px);
+                            height: 105px;
+                            x: parent.width - self.width - 48px;
+                            y: 43px;
+                            border-radius: 12px;
+                            background: #fffbeb;
+                            border-color: #fde68a;
+                            border-width: 1px;
+                            Text {
+                                x: 12px; y: 10px; width: parent.width - 24px; height: 34px;
+                                text: root.last-message == "" ? "开始一个新的任务" : root.last-message;
+                                color: #292524; font-size: 10px; font-weight: 600; wrap: word-wrap;
+                            }
+                            Rectangle {
+                                x: 12px; y: 49px; width: parent.width - 24px; height: 45px;
+                                border-radius: 6px; background: #fefce8;
+                                border-width: 1px; border-color: #fef3c7;
+                                Text {
+                                    x: 8px; y: 5px; width: parent.width - 16px; height: 35px;
+                                    text: "模型路径：C:\\Models\\faster-whisper-large-v3-turbo\n音频文件：C:\\Data\\audio.mp3\n输出字幕文件：UTF-8 编码的 .srt";
+                                    color: #a8a29e; font-size: 8.7px; wrap: word-wrap;
+                                }
+                            }
+                        }
+                        Rectangle {
+                            x: parent.width - 38px; y: 44px; width: 28px; height: 28px;
+                            border-radius: 14px; background: #fef08a;
+                            Image {
+                                x: 6px; y: 6px; width: 16px; height: 16px;
+                                source: @image-url("../assets/figma/icon-16.svg");
+                            }
+                        }
+                        Rectangle {
+                            x: 20px; y: 168px; width: 27px; height: 27px;
+                            border-radius: 14px; background: #fff7ed;
+                            border-width: 1px; border-color: #fed7aa;
+                            Image {
+                                x: 5px; y: 5px; width: 16px; height: 16px;
+                                source: @image-url("../assets/figma/icon-17.svg");
+                            }
+                        }
+                        Text {
+                            x: 56px; y: 169px; width: parent.width - 76px; height: 32px;
+                            text: "已理解你的需求，我将使用 faster-whisper 进行音频转录，并输出带时间戳的字幕文件。我会分步骤完成任务并实时向你汇报进度。";
+                            color: #44403c; font-size: 10.5px; wrap: word-wrap;
+                        }
+                        Rectangle {
+                            x: 20px; y: 211px; width: parent.width - 40px;
+                            height: root.task-expanded ? max(190px, min(395px, parent.height - 226px)) : 42px;
+                            border-radius: 10px; background: #ffffff;
+                            border-width: 1px; border-color: #e7e5e4;
+                            drop-shadow-blur: 3px; drop-shadow-color: #0000000c;
+                            Rectangle {
+                                x: 0px; y: 0px;
+                                width: parent.width; height: 42px;
+                                border-color: #f0eee8; border-width: 1px;
+                                HorizontalLayout {
+                                    width: parent.width; height: parent.height;
+                                    padding-left: 14px; padding-right: 12px; spacing: 16px;
+                                    Text { text: "已工作   2分18秒"; color: #57534e; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
+                                    Text { text: "已探索   12 项"; color: #57534e; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
+                                    Text { text: "已运行   9 条命令"; color: #57534e; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
+                                    Text { text: "完成任务   1/1"; color: #166534; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    Text { text: root.task-expanded ? "收起步骤  ^" : "展开步骤  v"; color: #78716c; font-size: 9px; vertical-alignment: center; }
+                                }
+                                TouchArea { clicked => { root.task-expanded = !root.task-expanded; } }
+                            }
+                            ListView {
+                                visible: root.task-expanded;
+                                x: 10px; y: 46px; width: parent.width - 20px; height: parent.height - 53px;
+                                for item in root.timeline: TimelineRow { item: item; }
+                            }
+                        }
                     }
                     if !root.trajectory-selected: ScrollView {
                         x: 28px; y: 22px; width: parent.width - 56px; height: parent.height - 44px;
@@ -339,7 +599,7 @@ export component MainWindow inherits Window {
                                 border-width: 1px;
                                 Text {
                                     x: 13px; y: 12px; width: parent.width - 26px; height: parent.height - 24px;
-                                    text: "使用 faster-whisper 模型对音频文件进行转录，输出带时间戳的字幕（Segmentation 模式）。\n\n模型路径：C:\\Models\\faster-whisper-large-v3-turbo\n音频文件：C:\\Data\\audio.mp3\n输出字幕：UTF-8 编码的 .srt";
+                                    text: (root.last-message == "" ? "开始一个新的任务" : root.last-message) + "\n\n模型路径：C:\\Models\\faster-whisper-large-v3-turbo\n音频文件：C:\\Data\\audio.mp3\n输出字幕：UTF-8 编码的 .srt";
                                     color: #44403c; font-size: 11.5px; wrap: word-wrap;
                                 }
                             }
@@ -353,10 +613,10 @@ export component MainWindow inherits Window {
                 Rectangle {
                     height: 88px;
                     background: #ffffff;
-                    Rectangle {
-                        x: max(18px, (parent.width - 620px) / 2);
+                    composer-shell := Rectangle {
+                        x: max(18px, (parent.width - self.width) / 2);
                         y: 8px;
-                        width: min(parent.width - 36px, 620px);
+                        width: min(parent.width - 36px, 720px);
                         height: 70px;
                         border-radius: 12px;
                         background: #ffffff;
@@ -369,27 +629,111 @@ export component MainWindow inherits Window {
                             placeholder-text: "提出后续修改要求";
                             text <=> root.composer-text;
                             accepted => {
-                                if (self.text != "") { root.send-message(self.text); self.text = ""; }
+                                if (self.text != "") {
+                                    root.last-message = self.text;
+                                    root.trajectory-selected = false;
+                                    root.send-message(self.text);
+                                    self.text = "";
+                                }
                             }
                         }
                         HorizontalLayout {
                             x: 10px; y: 39px; width: parent.width - 20px; height: 25px;
                             spacing: 8px;
-                            ToolIcon { source: @image-url("../assets/figma/icon-02.svg"); icon-size: 14px; }
-                            Text { text: root.access-mode + "⌄"; color: #c2410c; font-size: 10px; vertical-alignment: center; }
+                            ToolIcon {
+                                source: @image-url("../assets/figma/icon-02.svg"); icon-size: 14px;
+                                clicked => {
+                                    root.attachment-menu-open = !root.attachment-menu-open;
+                                    root.access-menu-open = false; root.model-menu-open = false; root.effort-menu-open = false;
+                                }
+                            }
+                            Rectangle {
+                                width: 78px;
+                                Text { text: root.access-mode + "  v"; color: #c2410c; font-size: 10px; vertical-alignment: center; }
+                                TouchArea {
+                                    clicked => {
+                                        root.access-menu-open = !root.access-menu-open;
+                                        root.attachment-menu-open = false; root.model-menu-open = false; root.effort-menu-open = false;
+                                    }
+                                }
+                            }
                             Rectangle { horizontal-stretch: 1; }
-                            Text { text: root.model-name + "⌄"; color: #57534e; font-size: 10px; vertical-alignment: center; }
-                            Text { text: root.effort + "⌄"; color: #57534e; font-size: 10px; vertical-alignment: center; }
+                            Rectangle {
+                                width: min(210px, parent.width - 230px);
+                                Text { text: root.model-name + "  v"; color: #57534e; font-size: 10px; vertical-alignment: center; overflow: elide; }
+                                TouchArea {
+                                    clicked => {
+                                        root.model-menu-open = !root.model-menu-open;
+                                        root.attachment-menu-open = false; root.access-menu-open = false; root.effort-menu-open = false;
+                                    }
+                                }
+                            }
+                            Rectangle {
+                                width: 48px;
+                                Text { text: root.effort + "  v"; color: #57534e; font-size: 10px; vertical-alignment: center; }
+                                TouchArea {
+                                    clicked => {
+                                        root.effort-menu-open = !root.effort-menu-open;
+                                        root.attachment-menu-open = false; root.access-menu-open = false; root.model-menu-open = false;
+                                    }
+                                }
+                            }
                             Rectangle {
                                 width: 24px; height: 24px; border-radius: 12px; background: #737b8c;
                                 Text { text: "↑"; color: white; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
                                 TouchArea {
                                     clicked => {
                                         if (root.composer-text != "") {
-                                            root.send-message(root.composer-text); root.composer-text = "";
+                                            root.last-message = root.composer-text;
+                                            root.trajectory-selected = false;
+                                            root.send-message(root.composer-text);
+                                            root.composer-text = "";
                                         }
                                     }
                                 }
+                            }
+                        }
+                        if root.attachment-menu-open: Rectangle {
+                            x: 8px; y: -58px; width: 126px; height: 57px;
+                            border-radius: 8px; background: white; border-width: 1px; border-color: #e7e5e4;
+                            drop-shadow-blur: 8px; drop-shadow-color: #00000018;
+                            VerticalLayout {
+                                padding: 2px;
+                                MenuOption { label: "添加文件"; chosen => { root.composer-text = "请处理所选文件"; root.attachment-menu-open = false; } }
+                                MenuOption { label: "添加文件夹"; chosen => { root.composer-text = "请处理所选文件夹"; root.attachment-menu-open = false; } }
+                            }
+                        }
+                        if root.access-menu-open: Rectangle {
+                            x: 35px; y: -84px; width: 132px; height: 83px;
+                            border-radius: 8px; background: white; border-width: 1px; border-color: #e7e5e4;
+                            drop-shadow-blur: 8px; drop-shadow-color: #00000018;
+                            VerticalLayout {
+                                padding: 1px;
+                                MenuOption { label: "完全访问"; active: root.access-mode == "完全访问"; chosen => { root.access-mode = "完全访问"; root.access-menu-open = false; } }
+                                MenuOption { label: "受限访问"; active: root.access-mode == "受限访问"; chosen => { root.access-mode = "受限访问"; root.access-menu-open = false; } }
+                                MenuOption { label: "只读模式"; active: root.access-mode == "只读模式"; chosen => { root.access-mode = "只读模式"; root.access-menu-open = false; } }
+                            }
+                        }
+                        if root.model-menu-open: Rectangle {
+                            x: parent.width - 306px; y: -84px; width: 220px; height: 83px;
+                            border-radius: 8px; background: white; border-width: 1px; border-color: #e7e5e4;
+                            drop-shadow-blur: 8px; drop-shadow-color: #00000018;
+                            VerticalLayout {
+                                padding: 1px;
+                                MenuOption { label: "faster-whisper-large-v3-turbo"; active: root.model-name == "faster-whisper-large-v3-turbo"; chosen => { root.model-name = "faster-whisper-large-v3-turbo"; root.model-menu-open = false; } }
+                                MenuOption { label: "local-deterministic"; active: root.model-name == "local-deterministic"; chosen => { root.model-name = "local-deterministic"; root.model-menu-open = false; } }
+                                MenuOption { label: "cloud-auto"; active: root.model-name == "cloud-auto"; chosen => { root.model-name = "cloud-auto"; root.model-menu-open = false; } }
+                            }
+                        }
+                        if root.effort-menu-open: Rectangle {
+                            x: parent.width - 133px; y: -84px; width: 92px; height: 83px;
+                            border-radius: 8px; background: white; border-width: 1px; border-color: #e7e5e4;
+                            drop-shadow-blur: 8px; drop-shadow-color: #00000018;
+                            VerticalLayout {
+                                padding: 1px;
+                                MenuOption { label: "最高"; active: root.effort == "最高"; chosen => { root.effort = "最高"; root.effort-menu-open = false; } }
+                                MenuOption { label: "中等"; active: root.effort == "中等"; chosen => { root.effort = "中等"; root.effort-menu-open = false; } }
+                                MenuOption { label: "较低"; active: root.effort == "较低"; chosen => { root.effort = "较低"; root.effort-menu-open = false; } }
                             }
                         }
                     }
@@ -397,9 +741,32 @@ export component MainWindow inherits Window {
             }
         }
 
-        code-panel := Rectangle {
+            Rectangle {
+                visible: root.code-visible;
+                width: root.code-visible ? 6px : 0px;
+                background: right-resize.has-hover || right-resize.pressed ? #fff7ed : #ffffff;
+                Rectangle {
+                    x: (parent.width - self.width) / 2;
+                    width: right-resize.has-hover || right-resize.pressed ? 2px : 1px;
+                    height: parent.height;
+                    background: right-resize.has-hover || right-resize.pressed ? #f59e0b : #e7e5e4;
+                }
+                right-resize := TouchArea {
+                    mouse-cursor: col-resize;
+                    moved => {
+                        if (self.pressed) {
+                            root.code-panel-width = max(300px, min(
+                                min(620px, root.width - (root.sidebar-visible ? root.sidebar-width + 6px : 0px) - 366px),
+                                root.code-panel-width - (self.mouse-x - self.width / 2)
+                            ));
+                        }
+                    }
+                }
+            }
+
+            code-panel := Rectangle {
             visible: root.code-visible;
-            width: root.code-visible ? 430px : 0px;
+            width: root.code-visible ? root.code-panel-width : 0px;
             background: #ffffff;
             border-width: 1px;
             border-color: #e7e5e4;
@@ -432,14 +799,43 @@ export component MainWindow inherits Window {
                     border-width: 1px;
                     border-color: #e7e5e4;
                     HorizontalLayout {
+                        width: parent.width; height: parent.height;
                         padding-left: 10px;
                         padding-right: 10px;
                         spacing: 7px;
                         Text { text: "🐍"; font-size: 12px; vertical-alignment: center; }
-                        Text { text: "transcribe.py"; color: #44403c; font-size: 11px; font-weight: 600; vertical-alignment: center; }
+                        Rectangle {
+                            width: 112px;
+                            Text { text: root.file-preview-selected ? "output.srt  v" : "transcribe.py  v"; color: #44403c; font-size: 11px; font-weight: 600; vertical-alignment: center; }
+                            TouchArea { clicked => { root.file-menu-open = !root.file-menu-open; root.code-menu-open = false; } }
+                        }
                         Rectangle { horizontal-stretch: 1; }
                         Text { text: "+42"; color: #16a34a; font-size: 10px; vertical-alignment: center; }
                         Text { text: "-0"; color: #ef4444; font-size: 10px; vertical-alignment: center; }
+                        ToolIcon {
+                            source: @image-url("../assets/figma/icon-35.svg"); icon-size: 14px;
+                            clicked => { root.code-menu-open = !root.code-menu-open; root.file-menu-open = false; }
+                        }
+                    }
+                    if root.file-menu-open: Rectangle {
+                        x: 28px; y: 33px; width: 150px; height: 58px;
+                        border-radius: 8px; background: white; border-width: 1px; border-color: #e7e5e4;
+                        drop-shadow-blur: 8px; drop-shadow-color: #00000018;
+                        VerticalLayout {
+                            padding: 2px;
+                            MenuOption { label: "transcribe.py"; active: !root.file-preview-selected; chosen => { root.file-preview-selected = false; root.file-menu-open = false; } }
+                            MenuOption { label: "output.srt"; active: root.file-preview-selected; chosen => { root.file-preview-selected = true; root.file-menu-open = false; } }
+                        }
+                    }
+                    if root.code-menu-open: Rectangle {
+                        x: parent.width - 154px; y: 33px; width: 145px; height: 58px;
+                        border-radius: 8px; background: white; border-width: 1px; border-color: #e7e5e4;
+                        drop-shadow-blur: 8px; drop-shadow-color: #00000018;
+                        VerticalLayout {
+                            padding: 2px;
+                            MenuOption { label: "重新审阅"; chosen => { root.status-text = "正在重新审阅"; root.reconcile(); root.code-menu-open = false; } }
+                            MenuOption { label: "关闭审阅面板"; chosen => { root.code-visible = false; root.code-menu-open = false; } }
+                        }
                     }
                 }
                 if !root.file-preview-selected: ListView {
@@ -452,14 +848,14 @@ export component MainWindow inherits Window {
                                 width: 31px;
                                 text: line.number;
                                 color: #d6d3d1;
-                                font-family: "Microsoft YaHei UI";
+                                font-family: "Consolas";
                                 font-size: 10px;
                                 horizontal-alignment: right;
                             }
                             Text {
                                 text: line.text;
                                 color: line.tone == "keyword" ? #8200db : line.tone == "string" ? #007a55 : line.tone == "comment" ? #99a1af : #1e2939;
-                                font-family: "Microsoft YaHei UI";
+                                font-family: "Consolas";
                                 font-size: 11px;
                                 overflow: elide;
                             }
@@ -481,15 +877,89 @@ export component MainWindow inherits Window {
                     border-width: 1px;
                     border-color: #e7e5e4;
                     HorizontalLayout {
+                        width: parent.width; height: parent.height;
                         padding-left: 10px;
                         padding-right: 10px;
                         spacing: 7px;
                         StatusDot { tone: "success"; }
                         Text { text: root.status-text; color: #16a34a; font-size: 10.5px; vertical-alignment: center; }
                         Rectangle { horizontal-stretch: 1; }
-                        Text { text: "Python  |  UTF-8  |  2 个问题"; color: #78716c; font-size: 10px; vertical-alignment: center; }
+                        Text { text: "Python  |  UTF-8  |"; color: #78716c; font-size: 10px; vertical-alignment: center; }
+                        Rectangle {
+                            width: 62px;
+                            Text { text: "2 个问题  ^"; color: #78716c; font-size: 10px; vertical-alignment: center; }
+                            TouchArea { clicked => { root.issues-open = !root.issues-open; } }
+                        }
+                    }
+                    if root.issues-open: Rectangle {
+                        x: parent.width - 274px; y: -78px; width: 264px; height: 74px;
+                        border-radius: 8px; background: white; border-width: 1px; border-color: #e7e5e4;
+                        drop-shadow-blur: 8px; drop-shadow-color: #00000018;
+                        VerticalLayout {
+                            padding: 5px; spacing: 2px;
+                            Text { text: "问题"; color: #292524; font-size: 10.5px; font-weight: 700; }
+                            Text { text: "第 8 行：dict 返回类型可进一步收窄"; color: #78716c; font-size: 9.5px; }
+                            Text { text: "第 32 行：建议确认 output.srt 的父目录"; color: #78716c; font-size: 9.5px; }
+                        }
                     }
                 }
+            }
+            }
+        }
+    }
+
+    if root.settings-open: Rectangle {
+        x: 0px; y: 0px;
+        width: parent.width;
+        height: parent.height;
+        background: #0000003d;
+        TouchArea { clicked => { root.settings-open = false; } }
+        Rectangle {
+            width: min(parent.width - 40px, 430px); height: 328px;
+            x: (parent.width - self.width) / 2; y: max(20px, (parent.height - self.height) / 2);
+            border-radius: 14px; background: #ffffff;
+            border-width: 1px; border-color: #e7e5e4;
+            drop-shadow-blur: 18px; drop-shadow-color: #0000002c;
+            Text { x: 20px; y: 17px; text: "设置"; color: #292524; font-size: 15px; font-weight: 700; }
+            ToolIcon { x: parent.width - 38px; y: 10px; source: @image-url("../assets/figma/icon-39.svg"); clicked => { root.settings-open = false; } }
+            Rectangle { x: 20px; y: 54px; width: parent.width - 40px; height: 1px; background: #e7e5e4; }
+            Text { x: 20px; y: 72px; text: "界面布局"; color: #78716c; font-size: 10.5px; font-weight: 600; }
+            Rectangle {
+                x: 20px; y: 99px; width: parent.width - 40px; height: 42px;
+                Text { text: "显示侧边栏"; color: #44403c; font-size: 11px; vertical-alignment: center; }
+                Rectangle {
+                    x: parent.width - 43px; y: 10px; width: 36px; height: 21px; border-radius: 11px;
+                    background: root.sidebar-visible ? #f59e0b : #d6d3d1;
+                    Rectangle { x: root.sidebar-visible ? 18px : 2px; y: 2px; width: 17px; height: 17px; border-radius: 9px; background: white; }
+                    TouchArea { clicked => { root.sidebar-visible = !root.sidebar-visible; } }
+                }
+            }
+            Rectangle {
+                x: 20px; y: 145px; width: parent.width - 40px; height: 42px;
+                Text { text: "显示代码审阅面板"; color: #44403c; font-size: 11px; vertical-alignment: center; }
+                Rectangle {
+                    x: parent.width - 43px; y: 10px; width: 36px; height: 21px; border-radius: 11px;
+                    background: root.code-visible ? #f59e0b : #d6d3d1;
+                    Rectangle { x: root.code-visible ? 18px : 2px; y: 2px; width: 17px; height: 17px; border-radius: 9px; background: white; }
+                    TouchArea { clicked => { root.code-visible = !root.code-visible; } }
+                }
+            }
+            Rectangle {
+                x: 20px; y: 191px; width: parent.width - 40px; height: 42px;
+                Text { text: "默认展开任务步骤"; color: #44403c; font-size: 11px; vertical-alignment: center; }
+                Rectangle {
+                    x: parent.width - 43px; y: 10px; width: 36px; height: 21px; border-radius: 11px;
+                    background: root.task-expanded ? #f59e0b : #d6d3d1;
+                    Rectangle { x: root.task-expanded ? 18px : 2px; y: 2px; width: 17px; height: 17px; border-radius: 9px; background: white; }
+                    TouchArea { clicked => { root.task-expanded = !root.task-expanded; } }
+                }
+            }
+            Rectangle { x: 20px; y: 244px; width: parent.width - 40px; height: 1px; background: #e7e5e4; }
+            Rectangle {
+                x: parent.width - 108px; y: 265px; width: 88px; height: 36px;
+                border-radius: 9px; background: #fef3d6; border-width: 1px; border-color: #f5e4ab;
+                Text { text: "完成"; color: #855702; font-size: 11px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                TouchArea { clicked => { root.settings-open = false; } }
             }
         }
     }

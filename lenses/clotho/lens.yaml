@@ -6,13 +6,19 @@ runtime: { kind: in_process }
 trust: t1
 stateless: true
 observes:
-  - { kind: workflow.defined, schema: "*" }
-  - { kind: workflow.started, schema: "*" }
-  - { kind: "workflow.step-*", schema: "*" }
-  - { kind: "workflow.join-*", schema: "*" }
+  - { kind: "workflow.*", schema: "*" }
+  - { kind: act.started, schema: "*" }
+  - { kind: act.completed, schema: "*" }
+  - { kind: act.failed, schema: "*" }
 view_channels: [workflow.graph, workflow.status]
 refracts:
+  - { kind: workflow.define, schema: tokmon.workflow.define.v1 }
   - { kind: workflow.step, schema: tokmon.workflow.step.v1 }
+  - { kind: workflow.record-step, schema: tokmon.workflow.record-step.v1 }
+  - { kind: workflow.compensate, schema: tokmon.workflow.compensate.v1 }
+  - { kind: workflow.record-compensation, schema: tokmon.workflow.record-compensation.v1 }
   - { kind: workflow.retry, schema: tokmon.workflow.retry.v1 }
+  - { kind: workflow.pause, schema: tokmon.workflow.pause.v1 }
+  - { kind: workflow.resume, schema: tokmon.workflow.resume.v1 }
   - { kind: workflow.cancel, schema: tokmon.workflow.cancel.v1 }
 light_permissions: [photon.emit, log.write]

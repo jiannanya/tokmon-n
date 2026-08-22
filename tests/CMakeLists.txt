@@ -31,9 +31,10 @@ target_compile_definitions(tokmon-tests PRIVATE
   TOKMON_TEST_LENS_PATH="$<TARGET_FILE:tokmon-lens-calculator>"
   TOKMON_TEST_LENS_DIR="$<TARGET_FILE_DIR:tokmon-lens-calculator>"
   TOKMON_WORKER_EXECUTABLE="$<TARGET_FILE:tokmon-lens-worker>"
+  TOKMON_CLI_EXECUTABLE="$<TARGET_FILE:tokmon>"
   TOKMON_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
   TOKMON_CMAKE_COMMAND="${CMAKE_COMMAND}")
-add_dependencies(tokmon-tests ${TOKMON_LENS_TARGETS} tokmon-lens-worker)
+add_dependencies(tokmon-tests ${TOKMON_LENS_TARGETS} tokmon-lens-worker tokmon)
 
 include(Catch)
 catch_discover_tests(tokmon-tests)

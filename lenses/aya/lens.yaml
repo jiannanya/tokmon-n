@@ -6,14 +6,13 @@ runtime: { kind: in_process }
 trust: t1
 stateless: true
 observes:
-  - { kind: child.requested, schema: "*" }
-  - { kind: child.started, schema: "*" }
-  - { kind: child.progress, schema: "*" }
-  - { kind: child.completed, schema: "*" }
-  - { kind: child.joined, schema: "*" }
-view_channels: [child.runs, ui.child-runs]
+  - { kind: "child.*", schema: "*" }
+  - { kind: "workspace.merge-*", schema: "*" }
+view_channels: [child.runs, ui.child-runs, child.topology]
 refracts:
   - { kind: child.spawn, schema: tokmon.child.spawn.v1 }
+  - { kind: child.message, schema: tokmon.child.message.v1 }
   - { kind: child.join, schema: tokmon.child.join.v1 }
   - { kind: child.cancel, schema: tokmon.child.cancel.v1 }
-light_permissions: [photon.emit, log.write]
+  - { kind: workspace.merge-proposal, schema: tokmon.workspace.merge-proposal.v1 }
+light_permissions: [photon.emit, io.process.git, workspace.worktree, log.write]
