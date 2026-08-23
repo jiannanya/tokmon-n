@@ -395,6 +395,38 @@ std::optional<TimelineItem> conversation_workflow_item(const tokmon::Photon& pho
     detail = joined_detail({payload_text(photon.payload, "provider"),
                             payload_text(photon.payload, "model")});
     item.tone = "success";
+  } else if (photon.kind == "fs.read") {
+    title = "探索 / 读取文件";
+    detail = payload_text(photon.payload, "path");
+    item.tone = "neutral";
+  } else if (photon.kind == "fs.written" || photon.kind == "fs.created") {
+    title = photon.kind == "fs.created" ? "生成文件" : "写入文件";
+    detail = payload_text(photon.payload, "path");
+    item.tone = "success";
+  } else if (photon.kind == "fs.deleted") {
+    title = "删除文件";
+    detail = payload_text(photon.payload, "path");
+    item.tone = "warning";
+  } else if (photon.kind == "process.started") {
+    title = "运行命令";
+    detail = joined_detail({payload_text(photon.payload, "command"),
+                            payload_text(photon.payload, "args")});
+    item.tone = "warning";
+  } else if (photon.kind == "process.output") {
+    title = "命令输出";
+    detail = bounded_detail(payload_text(photon.payload, "text"));
+    item.tone = "neutral";
+  } else if (photon.kind == "process.exit") {
+    const auto code = payload_text(photon.payload, "exit_code");
+    title = code == "0" || code.empty() ? "命令执行完成" : "命令执行退出 (" + code + ")";
+    detail = payload_text(photon.payload, "summary");
+    item.tone = code == "0" || code.empty() ? "success" : "danger";
+  } else if (photon.kind == "worker.progress") {
+    title = "正在执行任务";
+    detail = payload_text(photon.payload, "status");
+    item.tone = "warning";
+    if (const auto* progress = tokmon::cbor::find(photon.payload, "percent"))
+      item.progress = static_cast<int>(progress->as_integer());
   } else if (photon.kind == "workflow.defined") {
     title = "透镜工作流已定义";
     detail = payload_text(photon.payload, "name");
@@ -462,6 +494,7 @@ std::vector<TimelineItem> conversation_workflow_from(
 
 struct TraceSummary final {
   std::string duration{"0ms"};
+  std::string turn_duration{"0ms"};
   int turns{0};
   int calls{0};
   std::int64_t input_tokens{0};
@@ -485,8 +518,12 @@ TraceSummary trace_summary_from(const std::vector<tokmon::Photon>& photons) {
   if (!photons.empty())
     summary.duration = duration_label(std::max<std::int64_t>(0,
         photons.back().committed_at_ms - photons.front().committed_at_ms));
+  std::int64_t turn_start_ms = 0;
   for (const auto& photon : photons) {
-    if (photon.kind == "user.input" || photon.kind == "user.message") ++summary.turns;
+    if (photon.kind == "user.input" || photon.kind == "user.message") {
+      ++summary.turns;
+      turn_start_ms = photon.committed_at_ms;
+    }
     if (photon.kind == "model.dispatched") ++summary.calls;
     if (photon.kind == "model.usage") {
       if (const auto* value = tokmon::cbor::find(photon.payload, "input_tokens"))
@@ -505,6 +542,9 @@ TraceSummary trace_summary_from(const std::vector<tokmon::Photon>& photons) {
     if (photon.kind == "model.failed" || photon.kind == "act.failed" ||
         photon.kind == "act.rejected") summary.result = "执行失败";
   }
+  if (turn_start_ms > 0 && !photons.empty())
+    summary.turn_duration = duration_label(std::max<std::int64_t>(0,
+        photons.back().committed_at_ms - turn_start_ms));
   return summary;
 }
 
@@ -1164,6 +1204,7 @@ class UiSnowController final {
              handle->set_last_message(display_string(user_message));
            handle->set_status_text(display_string(state));
             handle->set_trace_duration(display_string(trace.duration));
+            handle->set_workflow_duration(display_string(trace.turn_duration));
             handle->set_trace_turns(trace.turns);
             handle->set_trace_calls(trace.calls);
             handle->set_trace_input_tokens(static_cast<int>(std::min<std::int64_t>(
