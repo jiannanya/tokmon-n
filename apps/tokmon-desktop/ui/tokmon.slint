@@ -314,7 +314,13 @@ export component MainWindow inherits Window {
     in-out property <string> setting-language: "简体中文";
     in-out property <string> setting-startup: "上次打开的会话";
     in-out property <bool> setting-autosave: true;
-    in-out property <string> setting-provider: "Tokmon 官方";
+    in-out property <string> setting-provider: "local";
+    in-out property <string> setting-provider-protocol: "openai-compatible";
+    in-out property <string> setting-provider-endpoint: "";
+    in-out property <string> setting-provider-auth: "protocol-default";
+    in-out property <string> setting-provider-secret: "";
+    in-out property <string> setting-provider-credential: "本地模型无需密钥";
+    in-out property <bool> setting-provider-thinking: false;
     in-out property <string> setting-main-model: "local-deterministic";
     in-out property <string> setting-reasoning: "标准";
     in-out property <string> setting-command-approval: "按需确认";
@@ -345,6 +351,9 @@ export component MainWindow inherits Window {
     callback reconcile;
     callback save-settings;
     callback reset-settings;
+    callback configure-provider(string, string, string, string, string, bool);
+    callback store-provider-secret(string, string);
+    callback test-provider(string);
     callback drag-window;
     callback minimize-window;
     callback toggle-maximize-window;
@@ -1130,12 +1139,48 @@ export component MainWindow inherits Window {
 
                 if root.settings-page == 1: Rectangle {
                     x: 28px; y: 94px; width: parent.width - 56px; height: parent.height - 110px;
-                    SettingsValueRow { x: 0px; y: 0px; width: parent.width; title: "默认智能体"; detail: "新会话默认使用的任务角色"; value: "代码助手"; }
-                    SettingsValueRow { x: 0px; y: 70px; width: parent.width; title: "模型提供方"; detail: "官方托管或你自己的兼容端点"; value: root.setting-provider; chosen => { root.setting-provider = root.setting-provider == "Tokmon 官方" ? "自定义" : "Tokmon 官方"; } }
-                    SettingsValueRow { x: 0px; y: 140px; width: parent.width; title: "主模型"; detail: "用于计划、对话和工具选择"; value: root.setting-main-model; chosen => { root.setting-main-model = root.setting-main-model == "local-deterministic" ? "faster-whisper-large-v3-turbo" : "local-deterministic"; } }
-                    Text { x: 14px; y: 224px; text: "推理强度"; color: #292524; font-size: 11px; font-weight: 600; }
+                    Text { x: 0px; y: 0px; text: "平台 ID"; color: #292524; font-size: 10px; font-weight: 600; }
+                    LineEdit { x: 0px; y: 17px; width: 160px; height: 32px; text <=> root.setting-provider; placeholder-text: "例如 deepseek / private-cloud"; }
+                    Text { x: 174px; y: 0px; text: "协议适配器"; color: #292524; font-size: 10px; font-weight: 600; }
+                    Rectangle {
+                        x: 174px; y: 17px; width: parent.width - 174px; height: 32px; border-radius: 6px;
+                        border-width: 1px; border-color: #e7e5e4; background: white;
+                        Text { x: 9px; width: parent.width - 28px; height: parent.height; text: root.setting-provider-protocol; font-size: 9.5px; color: #57534e; vertical-alignment: center; }
+                        Text { x: parent.width - 19px; width: 12px; height: parent.height; text: "↻"; color: #a8a29e; vertical-alignment: center; }
+                        TouchArea { clicked => { root.setting-provider-protocol = root.setting-provider-protocol == "openai-compatible" ? "anthropic" : root.setting-provider-protocol == "anthropic" ? "gemini" : "openai-compatible"; } }
+                    }
+                    Text { x: 0px; y: 58px; text: "HTTPS Endpoint"; color: #292524; font-size: 10px; font-weight: 600; }
+                    LineEdit { x: 0px; y: 75px; width: parent.width; height: 32px; text <=> root.setting-provider-endpoint; placeholder-text: "https://…/chat/completions"; }
+                    Text { x: 0px; y: 116px; text: "模型"; color: #292524; font-size: 10px; font-weight: 600; }
+                    LineEdit { x: 0px; y: 133px; width: 218px; height: 32px; text <=> root.setting-main-model; placeholder-text: "模型 ID"; }
+                    Text { x: 232px; y: 116px; text: "鉴权"; color: #292524; font-size: 10px; font-weight: 600; }
+                    Rectangle {
+                        x: 232px; y: 133px; width: parent.width - 232px; height: 32px; border-radius: 6px;
+                        border-width: 1px; border-color: #e7e5e4; background: white;
+                        Text { x: 9px; width: parent.width - 18px; height: parent.height; text: root.setting-provider-auth; font-size: 9px; color: #57534e; vertical-alignment: center; }
+                        TouchArea { clicked => { root.setting-provider-auth = root.setting-provider-auth == "protocol-default" ? "bearer" : root.setting-provider-auth == "bearer" ? "x-api-key" : "protocol-default"; } }
+                    }
+                    Text { x: 0px; y: 175px; text: "API Key（仅写入系统凭据库）"; color: #292524; font-size: 10px; font-weight: 600; }
+                    LineEdit { x: 0px; y: 192px; width: parent.width - 112px; height: 32px; text <=> root.setting-provider-secret; input-type: password; placeholder-text: root.setting-provider-credential; }
+                    Rectangle {
+                        x: parent.width - 104px; y: 192px; width: 104px; height: 32px; border-radius: 7px; background: #292524;
+                        Text { text: "安全保存 Key"; color: white; font-size: 9.5px; horizontal-alignment: center; vertical-alignment: center; }
+                        TouchArea { clicked => { if (root.setting-provider-secret != "") { root.store-provider-secret(root.setting-provider, root.setting-provider-secret); root.setting-provider-secret = ""; root.settings-status = "正在写入系统凭据库…"; } } }
+                    }
+                    Rectangle {
+                        x: 0px; y: 234px; width: parent.width; height: 42px; border-width: 1px; border-color: #f0eee8;
+                        Text { x: 10px; y: 6px; text: "扩展推理字段"; font-size: 9.5px; color: #292524; font-weight: 600; }
+                        Text { x: 10px; y: 23px; text: "仅在平台明确兼容时启用"; font-size: 8.5px; color: #a8a29e; }
+                        SettingsSwitch { x: parent.width - 50px; y: 9px; checked: root.setting-provider-thinking; toggled(value) => { root.setting-provider-thinking = value; } }
+                    }
                     HorizontalLayout {
-                        x: 14px; y: 249px; width: parent.width - 28px; height: 32px; spacing: 8px;
+                        x: 0px; y: 285px; width: parent.width; height: 32px; spacing: 8px;
+                        SettingsChoice { horizontal-stretch: 1; label: "保存平台配置"; active: false; chosen => { root.configure-provider(root.setting-provider, root.setting-provider-protocol, root.setting-provider-endpoint, root.setting-main-model, root.setting-provider-auth, root.setting-provider-thinking); root.settings-status = "正在原子保存 provider YAML…"; } }
+                        SettingsChoice { horizontal-stretch: 1; label: "测试真实连接"; active: true; chosen => { root.test-provider(root.setting-provider); root.settings-status = "正在通过 Rhea 测试真实连接…"; } }
+                    }
+                    Text { x: 14px; y: 329px; text: "推理强度"; color: #292524; font-size: 11px; font-weight: 600; }
+                    HorizontalLayout {
+                        x: 14px; y: 350px; width: parent.width - 28px; height: 32px; spacing: 8px;
                         SettingsChoice { horizontal-stretch: 1; label: "低"; active: root.setting-reasoning == "低"; chosen => { root.setting-reasoning = "低"; } }
                         SettingsChoice { horizontal-stretch: 1; label: "标准"; active: root.setting-reasoning == "标准"; chosen => { root.setting-reasoning = "标准"; } }
                         SettingsChoice { horizontal-stretch: 1; label: "高"; active: root.setting-reasoning == "高"; chosen => { root.setting-reasoning = "高"; } }
@@ -1315,7 +1360,9 @@ export component MainWindow inherits Window {
                     Text { text: "恢复默认设置"; color: #78716c; font-size: 10.5px; horizontal-alignment: center; vertical-alignment: center; }
                     reset-touch := TouchArea { clicked => {
                         root.setting-language = "简体中文"; root.setting-startup = "上次打开的会话";
-                        root.setting-autosave = true; root.setting-provider = "Tokmon 官方";
+                        root.setting-autosave = true; root.setting-provider = "local";
+                        root.setting-provider-endpoint = ""; root.setting-provider-protocol = "openai-compatible";
+                        root.setting-provider-auth = "protocol-default"; root.setting-provider-thinking = false;
                         root.setting-main-model = "local-deterministic"; root.setting-reasoning = "标准";
                         root.setting-command-approval = "按需确认"; root.setting-network = true;
                         root.setting-high-risk = true; root.setting-index-mode = "标准";

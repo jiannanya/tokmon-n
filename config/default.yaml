@@ -5,7 +5,14 @@ engine:
   max_beats: 32
 security:
   require_signatures: false
+models:
+  default: local
+  providers:
+    local:
+      protocol: local
+      endpoint: builtin://rhea
+      model: local-deterministic
+      auth: none
 ui:
   stream_batch_ms: 16
   max_terminal_buffer_bytes: 8388608
-

@@ -1,4 +1,5 @@
 #include <atomic>
+#include <algorithm>
 #include <chrono>
 #include <csignal>
 #include <condition_variable>
@@ -7,6 +8,7 @@
 #include <fstream>
 #include <mutex>
 #include <optional>
+#include <regex>
 #include <set>
 #include <string>
 #include <thread>
@@ -27,6 +29,7 @@
 #include <spdlog/spdlog.h>
 
 #include "tokmon/tokmon.hpp"
+#include "tokmon/secret_store.hpp"
 
 namespace {
 std::atomic_bool running{true};
@@ -261,6 +264,177 @@ tokmon::Result<tokmon::cbor::Value> read_project_settings(
         "cannot read project UI settings: " + std::string(exception.what())));
   }
 }
+
+bool loopback_endpoint(const std::string_view endpoint) {
+  return endpoint.starts_with("http://127.0.0.1") ||
+      endpoint.starts_with("http://localhost") || endpoint.starts_with("http://[::1]");
+}
+
+tokmon::Result<void> publish_yaml(const std::filesystem::path& file,
+                                  const YAML::Node& root,
+                                  const std::string_view description) {
+  std::error_code error;
+  std::filesystem::create_directories(file.parent_path(), error);
+  if (error)
+    return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::io_error,
+        "cannot create project .tokmon directory: " + error.message()));
+  const auto temporary = std::filesystem::path(file.string() + ".new");
+  {
+    std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+    if (!output)
+      return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::io_error,
+          "cannot write " + std::string(description) + " candidate"));
+    output << root;
+    output.flush();
+    if (!output)
+      return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::io_error,
+          "cannot flush " + std::string(description) + " candidate"));
+  }
+#if defined(_WIN32)
+  if (!MoveFileExW(temporary.wstring().c_str(), file.wstring().c_str(),
+                   MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+    return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::io_error,
+        "cannot atomically publish " + std::string(description) + " YAML"));
+#else
+  std::filesystem::rename(temporary, file, error);
+  if (error)
+    return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::io_error,
+        "cannot atomically publish " + std::string(description) + " YAML"));
+#endif
+  return {};
+}
+
+std::string provider_secret_ref(const std::string_view id) {
+  return "model-provider/" + std::string(id);
+}
+
+tokmon::Result<void> update_project_model_provider(const std::filesystem::path& file,
+                                                    const tokmon::cbor::Value& payload) {
+  const auto read = [&payload](const char* key, const std::string_view fallback = {}) {
+    const auto* field = tokmon::cbor::find(payload, key);
+    return field ? std::string(field->as_string(fallback)) : std::string(fallback);
+  };
+  const auto id = read("id");
+  const auto protocol = read("protocol", "openai-compatible");
+  const auto endpoint = read("endpoint");
+  const auto model = read("model");
+  const auto auth = read("auth", "protocol-default");
+  static const std::regex id_pattern("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$");
+  static const std::set<std::string> protocols{
+      "openai-compatible", "anthropic", "gemini"};
+  static const std::set<std::string> auth_modes{
+      "protocol-default", "bearer", "x-api-key", "x-goog-api-key", "none"};
+  const bool allow_anonymous = tokmon::cbor::find(payload, "allow_anonymous") &&
+      tokmon::cbor::find(payload, "allow_anonymous")->as_bool();
+  const auto max_output_tokens = tokmon::cbor::find(payload, "max_output_tokens")
+      ? tokmon::cbor::find(payload, "max_output_tokens")->as_integer(4096) : 4096;
+  const auto max_attempts = tokmon::cbor::find(payload, "max_attempts")
+      ? tokmon::cbor::find(payload, "max_attempts")->as_integer(2) : 2;
+  const auto retry_backoff_ms = tokmon::cbor::find(payload, "retry_backoff_ms")
+      ? tokmon::cbor::find(payload, "retry_backoff_ms")->as_integer(250) : 250;
+  if (!std::regex_match(id, id_pattern) || id == "local" || !protocols.contains(protocol) ||
+      !auth_modes.contains(auth) || endpoint.empty() || model.empty())
+    return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::invalid_argument,
+        "provider requires a valid id, protocol, HTTPS endpoint, model and auth mode"));
+  if (!endpoint.starts_with("https://") && !loopback_endpoint(endpoint))
+    return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::permission_denied,
+        "provider endpoint must use HTTPS or loopback HTTP"));
+  if (allow_anonymous && !loopback_endpoint(endpoint) && auth != "none")
+    return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::permission_denied,
+        "anonymous remote providers must explicitly use auth: none"));
+  if (max_output_tokens <= 0 || max_output_tokens > 1'000'000 ||
+      max_attempts <= 0 || max_attempts > 10 ||
+      retry_backoff_ms < 0 || retry_backoff_ms > 60'000)
+    return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::invalid_argument,
+        "provider retry/token limits are outside the allowed range"));
+  try {
+    YAML::Node root;
+    if (std::filesystem::exists(file)) root = YAML::LoadFile(file.string());
+    if (!root || !root.IsMap()) root = YAML::Node(YAML::NodeType::Map);
+    auto providers = root["models"]["providers"];
+    if (!providers || !providers.IsMap()) providers = YAML::Node(YAML::NodeType::Map);
+    auto entry = providers[id];
+    if (!entry || !entry.IsMap()) entry = YAML::Node(YAML::NodeType::Map);
+    entry["protocol"] = protocol;
+    entry["endpoint"] = endpoint;
+    entry["model"] = model;
+    entry["secret_ref"] = provider_secret_ref(id);
+    entry["auth"] = auth;
+    entry["enabled"] = !tokmon::cbor::find(payload, "enabled") ||
+        tokmon::cbor::find(payload, "enabled")->as_bool();
+    entry["allow_anonymous"] = allow_anonymous;
+    entry["thinking"] = tokmon::cbor::find(payload, "thinking") &&
+        tokmon::cbor::find(payload, "thinking")->as_bool();
+    entry["reasoning_effort"] = read("reasoning_effort");
+    entry["max_output_tokens"] = max_output_tokens;
+    entry["max_attempts"] = max_attempts;
+    entry["retry_backoff_ms"] = retry_backoff_ms;
+    providers[id] = entry;
+    root["models"]["providers"] = providers;
+    if (tokmon::cbor::find(payload, "default") &&
+        tokmon::cbor::find(payload, "default")->as_bool()) root["models"]["default"] = id;
+    return publish_yaml(file, root, "model provider");
+  } catch (const YAML::Exception& exception) {
+    return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::schema_mismatch,
+        "cannot update project model provider: " + std::string(exception.what())));
+  }
+}
+
+tokmon::Result<void> select_project_model_provider(const std::filesystem::path& file,
+                                                   const std::string_view id) {
+  try {
+    YAML::Node root;
+    if (std::filesystem::exists(file)) root = YAML::LoadFile(file.string());
+    if (!root || !root.IsMap()) root = YAML::Node(YAML::NodeType::Map);
+    root["models"]["default"] = std::string(id);
+    return publish_yaml(file, root, "default model provider");
+  } catch (const YAML::Exception& exception) {
+    return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::schema_mismatch,
+        "cannot select project model provider: " + std::string(exception.what())));
+  }
+}
+
+tokmon::cbor::Value provider_value(const tokmon::ModelProviderConfig& provider,
+                                   const bool credential_present) {
+  return tokmon::cbor::object({
+      {"id", provider.id}, {"protocol", provider.protocol},
+      {"endpoint", provider.endpoint}, {"model", provider.model},
+      {"auth", provider.auth}, {"enabled", provider.enabled},
+      {"allow_anonymous", provider.allow_anonymous}, {"thinking", provider.thinking},
+      {"reasoning_effort", provider.reasoning_effort},
+      {"max_output_tokens", provider.max_output_tokens},
+      {"max_attempts", provider.max_attempts},
+      {"retry_backoff_ms", provider.retry_backoff_ms},
+      {"credential_present", credential_present}});
+}
+
+tokmon::Result<tokmon::cbor::Value> resolved_model_context(
+    const tokmon::RuntimeConfig& config, const tokmon::cbor::Value& payload) {
+  const auto* requested = tokmon::cbor::find(payload, "provider");
+  const auto id = requested && !requested->as_string().empty()
+      ? std::string(requested->as_string()) : config.default_model_provider;
+  const auto found = config.model_providers.find(id);
+  if (found == config.model_providers.end() || !found->second.enabled)
+    return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::not_found,
+        "requested model provider is not configured or is disabled"));
+  const auto& provider = found->second;
+  auto context = tokmon::cbor::object({
+      {"provider", provider.id}, {"protocol", provider.protocol},
+      {"endpoint", provider.endpoint}, {"model", provider.model},
+      {"auth", provider.auth}, {"allow_anonymous", provider.allow_anonymous},
+      {"thinking", provider.thinking}, {"reasoning_effort", provider.reasoning_effort},
+      {"max_output_tokens", provider.max_output_tokens},
+      {"max_attempts", provider.max_attempts},
+      {"retry_backoff_ms", provider.retry_backoff_ms},
+      {"access_mode", tokmon::cbor::find(payload, "access_mode")
+          ? std::string(tokmon::cbor::find(payload, "access_mode")->as_string())
+          : std::string("完全访问")},
+      {"effort", tokmon::cbor::find(payload, "effort")
+          ? std::string(tokmon::cbor::find(payload, "effort")->as_string())
+          : std::string("标准")}});
+  if (!provider.secret_ref.empty()) (*context.as_map())["secret_ref"] = provider.secret_ref;
+  return context;
+}
 }
 
 int main(int argc, char** argv) {
@@ -397,9 +571,89 @@ int main(int argc, char** argv) {
           .payload = tokmon::cbor::object({{"saved", true}, {"scope", "project"},
               {"path", (runtime.config().paths.project / "config.yaml").generic_string()}})});
     }
-    if (action == "chat") {
+    if (action == "model.providers") {
+      std::set<std::string> credentials;
+      auto stored = tokmon::builtin::keyring_list();
+      if (stored)
+        for (const auto& item : *stored) credentials.insert(item.id);
+      tokmon::cbor::Value::Array providers;
+      std::vector<std::string> ids;
+      ids.reserve(runtime.config().model_providers.size());
+      for (const auto& [id, provider] : runtime.config().model_providers) ids.push_back(id);
+      std::ranges::sort(ids);
+      for (const auto& id : ids) {
+        const auto& provider = runtime.config().model_providers.at(id);
+        providers.push_back(provider_value(provider,
+            provider.auth == "none" || provider.allow_anonymous ||
+            credentials.contains(provider.secret_ref)));
+      }
+      return remember(tokmon::SnowMessage{.kind = tokmon::SnowMessageKind::intent_result,
+          .request_id = request.request_id, .cursor = request.cursor,
+          .payload = tokmon::cbor::object({
+              {"default", runtime.config().default_model_provider},
+              {"providers", std::move(providers)}, {"secrets", "redacted"}})});
+    }
+    if (action == "model.provider.configure") {
+      const auto file = runtime.config().paths.project / "config.yaml";
+      auto saved = update_project_model_provider(file, request.payload);
+      if (!saved) return snow_error(request, saved.error());
+      auto reconciled = runtime.reconcile();
+      if (!reconciled) return snow_error(request, reconciled.error());
+      const auto id = std::string(tokmon::cbor::find(request.payload, "id")->as_string());
+      return remember(tokmon::SnowMessage{.kind = tokmon::SnowMessageKind::intent_result,
+          .request_id = request.request_id, .cursor = request.cursor,
+          .payload = tokmon::cbor::object({{"configured", true}, {"id", id},
+              {"default", runtime.config().default_model_provider},
+              {"path", file.generic_string()}, {"credential", "redacted"}})});
+    }
+    if (action == "model.provider.use") {
+      const auto* id_field = tokmon::cbor::find(request.payload, "id");
+      const auto id = id_field ? std::string(id_field->as_string()) : std::string{};
+      const auto found = runtime.config().model_providers.find(id);
+      if (found == runtime.config().model_providers.end() || !found->second.enabled)
+        return snow_error(request, tokmon::make_error(tokmon::ErrorCode::not_found,
+            "default model provider must be configured and enabled"));
+      auto selected = select_project_model_provider(
+          runtime.config().paths.project / "config.yaml", id);
+      if (!selected) return snow_error(request, selected.error());
+      auto reconciled = runtime.reconcile();
+      if (!reconciled) return snow_error(request, reconciled.error());
+      return remember(tokmon::SnowMessage{.kind = tokmon::SnowMessageKind::intent_result,
+          .request_id = request.request_id, .cursor = request.cursor,
+          .payload = tokmon::cbor::object({{"selected", id}})});
+    }
+    if (action == "model.provider.secret.set" ||
+        action == "model.provider.secret.delete") {
+      const auto* id_field = tokmon::cbor::find(request.payload, "id");
+      const auto id = id_field ? std::string(id_field->as_string()) : std::string{};
+      const auto found = runtime.config().model_providers.find(id);
+      if (found == runtime.config().model_providers.end() || id == "local")
+        return snow_error(request, tokmon::make_error(tokmon::ErrorCode::not_found,
+                                                       "model provider is not configured"));
+      tokmon::Result<void> changed;
+      if (action == "model.provider.secret.set") {
+        const auto* secret = tokmon::cbor::find(request.payload, "secret");
+        if (!secret || secret->as_string().empty())
+          return snow_error(request, tokmon::make_error(tokmon::ErrorCode::invalid_argument,
+                                                         "API secret is required"));
+        changed = tokmon::builtin::keyring_write(found->second.secret_ref, "model-api",
+                                                  secret->as_string());
+      } else {
+        changed = tokmon::builtin::keyring_delete(found->second.secret_ref);
+      }
+      if (!changed) return snow_error(request, changed.error());
+      return remember(tokmon::SnowMessage{.kind = tokmon::SnowMessageKind::intent_result,
+          .request_id = request.request_id, .cursor = request.cursor,
+          .payload = tokmon::cbor::object({
+              {"id", id}, {"credential_present", action.ends_with(".set")},
+              {"storage", "operating-system-credential-manager"}})});
+    }
+    if (action == "chat" || action == "model.provider.test") {
       const auto* text_field = tokmon::cbor::find(request.payload, "text");
-      const auto text = text_field ? std::string(text_field->as_string()) : std::string{};
+      const auto text = text_field && !text_field->as_string().empty()
+          ? std::string(text_field->as_string())
+          : action == "model.provider.test"
+              ? std::string("Reply with exactly: TOKMON_PROVIDER_OK") : std::string{};
       if (text.empty())
         return snow_error(request, tokmon::make_error(tokmon::ErrorCode::invalid_argument,
                                                       "chat text is required"));
@@ -409,19 +663,11 @@ int main(int argc, char** argv) {
         return snow_error(request, tokmon::make_error(tokmon::ErrorCode::invalid_argument,
             "request deadline_ms must be within 0..86400000"));
       const auto* requested_ray = tokmon::cbor::find(request.payload, "ray");
-      tokmon::cbor::Value context = tokmon::cbor::object({
-          {"model", tokmon::cbor::find(request.payload, "model")
-              ? std::string(tokmon::cbor::find(request.payload, "model")->as_string())
-              : std::string("local-deterministic")},
-          {"access_mode", tokmon::cbor::find(request.payload, "access_mode")
-              ? std::string(tokmon::cbor::find(request.payload, "access_mode")->as_string())
-              : std::string("完全访问")},
-          {"effort", tokmon::cbor::find(request.payload, "effort")
-              ? std::string(tokmon::cbor::find(request.payload, "effort")->as_string())
-              : std::string("标准")}});
+      auto context = resolved_model_context(runtime.config(), request.payload);
+      if (!context) return snow_error(request, context.error());
       auto ray = requested_ray && !requested_ray->as_string().empty()
-          ? runtime.submit_to(std::string(requested_ray->as_string()), text, context)
-          : runtime.submit(text, context);
+          ? runtime.submit_to(std::string(requested_ray->as_string()), text, *context)
+          : runtime.submit(text, *context);
       if (!ray) return snow_error(request, ray.error());
       {
         std::scoped_lock state_lock(request_mutex);
@@ -466,7 +712,8 @@ int main(int argc, char** argv) {
           .request_id = request.request_id, .cursor = cursor,
           .payload = tokmon::cbor::object({{"ray", *ray},
               {"beats", static_cast<std::int64_t>(*advanced)},
-              {"photons", photon_array(*photons)}})});
+              {"photons", photon_array(*photons)},
+              {"provider_test", action == "model.provider.test"}})});
     }
     if (action == "history") {
       const auto* ray_field = tokmon::cbor::find(request.payload, "ray");
@@ -579,23 +826,29 @@ int main(int argc, char** argv) {
   }
   spdlog::info("Snow endpoint listening at {}", endpoint.string());
 
-  auto user_config = runtime.config().paths.user / "light-path.yaml";
-  auto project_config = runtime.config().paths.project / "light-path.yaml";
-  auto user_time = std::filesystem::file_time_type::min();
-  auto project_time = std::filesystem::file_time_type::min();
+  const std::vector<std::filesystem::path> watched_config{
+      runtime.config().paths.user / "config.yaml",
+      runtime.config().paths.project / "config.yaml",
+      runtime.config().paths.user / "light-path.yaml",
+      runtime.config().paths.project / "light-path.yaml"};
+  std::vector<std::filesystem::file_time_type> watched_time(
+      watched_config.size(), std::filesystem::file_time_type::min());
   while (running.load(std::memory_order_acquire)) {
     std::error_code error;
-    const auto next_user = std::filesystem::exists(user_config, error)
-        ? std::filesystem::last_write_time(user_config, error) : std::filesystem::file_time_type::min();
-    const auto next_project = std::filesystem::exists(project_config, error)
-        ? std::filesystem::last_write_time(project_config, error) : std::filesystem::file_time_type::min();
-    if ((user_time != std::filesystem::file_time_type::min() && next_user != user_time) ||
-        (project_time != std::filesystem::file_time_type::min() && next_project != project_time)) {
+    bool changed = false;
+    for (std::size_t index = 0; index < watched_config.size(); ++index) {
+      const auto next = std::filesystem::exists(watched_config[index], error)
+          ? std::filesystem::last_write_time(watched_config[index], error)
+          : std::filesystem::file_time_type::min();
+      if (watched_time[index] != std::filesystem::file_time_type::min() &&
+          next != watched_time[index]) changed = true;
+      watched_time[index] = next;
+    }
+    if (changed) {
       std::scoped_lock lock(runtime_mutex);
       if (auto result = runtime.reconcile(); !result)
-        spdlog::error("light-path reconcile rejected: {}", result.error().describe());
+        spdlog::error("configuration reconcile rejected: {}", result.error().describe());
     }
-    user_time = next_user; project_time = next_project;
     std::this_thread::sleep_for(std::chrono::milliseconds(250));
   }
   snow.stop();

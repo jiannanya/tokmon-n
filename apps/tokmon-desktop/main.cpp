@@ -232,10 +232,11 @@ class UiSnowController final {
     condition_.notify_all();
   }
 
-  void chat(std::string text, std::string model, std::string access_mode,
+  void chat(std::string text, std::string provider, std::string model, std::string access_mode,
             std::string effort) {
     Command command{"chat", std::move(text)};
-    command.payload = tokmon::cbor::object({{"model", std::move(model)},
+    command.payload = tokmon::cbor::object({{"provider", std::move(provider)},
+        {"model", std::move(model)},
         {"access_mode", std::move(access_mode)}, {"effort", std::move(effort)}});
     enqueue(std::move(command));
   }
@@ -243,9 +244,26 @@ class UiSnowController final {
   void reconcile() { enqueue(Command{"reconcile", {}}); }
   void new_session() { enqueue(Command{"new-session", {}}); }
   void load_settings() { enqueue(Command{"settings-load", {}}); }
+  void load_providers() { enqueue(Command{"providers-load", {}}); }
   void save_settings(tokmon::cbor::Value values) {
     Command command{"settings-save", {}};
     command.payload = std::move(values);
+    enqueue(std::move(command));
+  }
+  void configure_provider(tokmon::cbor::Value values) {
+    Command command{"provider-configure", {}};
+    command.payload = std::move(values);
+    enqueue(std::move(command));
+  }
+  void store_provider_secret(std::string id, std::string secret) {
+    Command command{"provider-secret", {}};
+    command.payload = tokmon::cbor::object(
+        {{"id", std::move(id)}, {"secret", std::move(secret)}});
+    enqueue(std::move(command));
+  }
+  void test_provider(std::string id) {
+    Command command{"provider-test", {}};
+    command.payload = tokmon::cbor::object({{"provider", std::move(id)}});
     enqueue(std::move(command));
   }
 
@@ -416,6 +434,39 @@ class UiSnowController final {
     });
   }
 
+  void apply_providers(const tokmon::cbor::Value& payload) {
+    const auto* selected = tokmon::cbor::find(payload, "default");
+    const auto* providers = tokmon::cbor::find(payload, "providers");
+    if (!selected || !providers || !providers->as_array()) return;
+    tokmon::cbor::Value chosen;
+    for (const auto& provider : *providers->as_array())
+      if (const auto* id = tokmon::cbor::find(provider, "id");
+          id && id->as_string() == selected->as_string()) { chosen = provider; break; }
+    if (!chosen.as_map()) return;
+    auto window = window_;
+    (void)slint::invoke_from_event_loop([window, chosen = std::move(chosen)] {
+      auto locked = window.lock();
+      if (!locked) return;
+      auto handle = *locked;
+      const auto string_field = [&chosen](const char* key) {
+        const auto* value = tokmon::cbor::find(chosen, key);
+        return display_string(value ? value->as_string() : std::string_view{});
+      };
+      handle->set_setting_provider(string_field("id"));
+      handle->set_setting_provider_protocol(string_field("protocol"));
+      handle->set_setting_provider_endpoint(string_field("endpoint"));
+      handle->set_setting_provider_auth(string_field("auth"));
+      handle->set_setting_main_model(string_field("model"));
+      handle->set_model_name(string_field("model"));
+      const auto* thinking = tokmon::cbor::find(chosen, "thinking");
+      handle->set_setting_provider_thinking(thinking && thinking->as_bool());
+      const auto* credential = tokmon::cbor::find(chosen, "credential_present");
+      handle->set_setting_provider_credential(
+          credential && credential->as_bool() ? "凭据已安全保存（输入可轮换）" : "尚未配置 API Key");
+      handle->set_settings_status("provider 配置已由 tokmond 验证并载入");
+    });
+  }
+
   void update_daemon_state(const slint::SharedString& state) {
     auto window = window_;
     (void)slint::invoke_from_event_loop([window, state] {
@@ -476,9 +527,24 @@ class UiSnowController final {
               (*request.payload.as_map())[key] = value;
         } else if (command.kind == "settings-load")
           request.payload = tokmon::cbor::object({{"action", "settings.get"}});
+        else if (command.kind == "providers-load")
+          request.payload = tokmon::cbor::object({{"action", "model.providers"}});
         else if (command.kind == "settings-save")
           request.payload = tokmon::cbor::object({{"action", "settings.save"},
               {"values", std::move(command.payload)}});
+        else if (command.kind == "provider-configure") {
+          request.payload = tokmon::cbor::object({{"action", "model.provider.configure"}});
+          if (const auto* values = command.payload.as_map())
+            for (const auto& [key, value] : *values) (*request.payload.as_map())[key] = value;
+        } else if (command.kind == "provider-secret") {
+          request.payload = tokmon::cbor::object({{"action", "model.provider.secret.set"}});
+          if (const auto* values = command.payload.as_map())
+            for (const auto& [key, value] : *values) (*request.payload.as_map())[key] = value;
+        } else if (command.kind == "provider-test") {
+          request.payload = tokmon::cbor::object({{"action", "model.provider.test"}});
+          if (const auto* values = command.payload.as_map())
+            for (const auto& [key, value] : *values) (*request.payload.as_map())[key] = value;
+        }
         else request.payload = tokmon::cbor::object({{"action", "lens.reconcile"}});
       }
       tokmon::SnowClient client(endpoint_);
@@ -501,6 +567,10 @@ class UiSnowController final {
           apply_settings(*values);
         continue;
       }
+      if (command.kind == "providers-load") {
+        apply_providers(response->payload);
+        continue;
+      }
       if (command.kind == "settings-save") {
         auto window = window_;
         (void)slint::invoke_from_event_loop([window] {
@@ -511,14 +581,33 @@ class UiSnowController final {
         });
         continue;
       }
+      if (command.kind == "provider-configure" || command.kind == "provider-secret") {
+        auto window = window_;
+        const auto status = command.kind == "provider-configure"
+            ? slint::SharedString("平台 YAML 已原子保存并完成热重载")
+            : slint::SharedString("API Key 已写入系统凭据库；未进入 YAML/Photon/日志");
+        (void)slint::invoke_from_event_loop([window, status] {
+          if (auto locked = window.lock()) (*locked)->set_settings_status(status);
+        });
+        load_providers();
+        continue;
+      }
       if (command.kind == "reconcile") continue;
-      if (command.kind == "chat")
+      if (command.kind == "chat" || command.kind == "provider-test")
         if (const auto* ray = tokmon::cbor::find(response->payload, "ray"))
           active_ray_ = std::string(ray->as_string());
       auto photons = photons_from(*response);
       if (!photons.empty())
         apply_photons(std::move(photons), response->kind == tokmon::SnowMessageKind::snapshot);
-      if (command.kind == "chat" && !active_ray_.empty()) {
+      if (command.kind == "provider-test") {
+        auto window = window_;
+        (void)slint::invoke_from_event_loop([window] {
+          if (auto locked = window.lock())
+            (*locked)->set_settings_status("真实 provider 请求已完成；结果已投影到对话与轨迹");
+        });
+      }
+      if ((command.kind == "chat" || command.kind == "provider-test") &&
+          !active_ray_.empty()) {
         tokmon::SnowMessage surface_request;
         surface_request.kind = tokmon::SnowMessageKind::intent;
         surface_request.request_id = tokmon::next_snow_request_id();
@@ -647,6 +736,7 @@ int main(int argc, char** argv) {
                               slint::ComponentWeakHandle<MainWindow>(window));
   controller.snapshot();
   controller.load_settings();
+  controller.load_providers();
   window->on_send_message([&controller, timeline_model, window](const slint::SharedString& text) {
     TimelineItem item;
     item.time = time_label(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -659,7 +749,8 @@ int main(int argc, char** argv) {
     item.tone = "warning";
     item.progress = -1;
     timeline_model->push_back(std::move(item));
-    controller.chat(std::string(text), std::string(window->get_model_name()),
+    controller.chat(std::string(text), std::string(window->get_setting_provider()),
+                    std::string(window->get_model_name()),
                     std::string(window->get_access_mode()),
                     std::string(window->get_effort()));
   });
@@ -697,6 +788,23 @@ int main(int argc, char** argv) {
                        std::string(window->get_search_text()));
   });
   window->on_reconcile([&controller] { controller.reconcile(); });
+  window->on_configure_provider([&controller](const slint::SharedString& id,
+      const slint::SharedString& protocol, const slint::SharedString& endpoint,
+      const slint::SharedString& model, const slint::SharedString& auth, bool thinking) {
+    controller.configure_provider(tokmon::cbor::object({
+        {"id", std::string(id)}, {"protocol", std::string(protocol)},
+        {"endpoint", std::string(endpoint)}, {"model", std::string(model)},
+        {"auth", std::string(auth)}, {"thinking", thinking}, {"default", true},
+        {"max_output_tokens", 4096}, {"max_attempts", 2},
+        {"retry_backoff_ms", 250}}));
+  });
+  window->on_store_provider_secret([&controller](const slint::SharedString& id,
+                                                  const slint::SharedString& secret) {
+    controller.store_provider_secret(std::string(id), std::string(secret));
+  });
+  window->on_test_provider([&controller](const slint::SharedString& id) {
+    controller.test_provider(std::string(id));
+  });
   window->on_save_settings([window, &controller] {
     controller.save_settings(tokmon::cbor::object({
         {"language", std::string(window->get_setting_language())},

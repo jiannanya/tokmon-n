@@ -19,9 +19,11 @@ namespace {
 
 struct ProviderPlan {
   std::string provider;
+  std::string protocol;
   std::string model;
   std::string endpoint;
-  std::string credential_env;
+  std::string secret_ref;
+  std::string auth{"protocol-default"};
   std::string curl_executable{"curl"};
 };
 
@@ -89,33 +91,29 @@ bool local_endpoint(const std::string_view endpoint) {
       endpoint.starts_with("http://localhost") || endpoint.starts_with("http://[::1]");
 }
 
-std::string default_endpoint(const std::string_view provider,
-                             const std::string_view model) {
-  if (provider == "openai") return "https://api.openai.com/v1/chat/completions";
-  if (provider == "anthropic") return "https://api.anthropic.com/v1/messages";
-  if (provider == "deepseek") return "https://api.deepseek.com/chat/completions";
-  if (provider == "gemini")
-    return "https://generativelanguage.googleapis.com/v1beta/models/" +
-        std::string(model) + ":streamGenerateContent?alt=sse";
-  return {};
-}
-
 Result<ProviderPlan> provider_plan(const cbor::Value& value,
                                    const ProviderPlan* inherited = nullptr) {
   ProviderPlan plan = inherited ? *inherited : ProviderPlan{};
   if (const auto provider = string_field(value, "provider"); !provider.empty())
     plan.provider = provider;
+  if (const auto protocol = string_field(value, "protocol"); !protocol.empty())
+    plan.protocol = protocol;
   if (const auto model = string_field(value, "model"); !model.empty()) plan.model = model;
   if (const auto endpoint = string_field(value, "endpoint"); !endpoint.empty())
     plan.endpoint = endpoint;
-  if (const auto env = string_field(value, "credential_env"); !env.empty())
-    plan.credential_env = env;
+  if (const auto reference = string_field(value, "secret_ref"); !reference.empty())
+    plan.secret_ref = reference;
+  if (const auto auth = string_field(value, "auth"); !auth.empty()) plan.auth = auth;
   if (const auto curl = string_field(value, "curl_executable"); !curl.empty())
     plan.curl_executable = curl;
   if (plan.provider.empty() || plan.model.empty())
     return tl::unexpected(make_error(ErrorCode::schema_mismatch,
                                      "model provider and model are required"));
-  if (plan.endpoint.empty()) plan.endpoint = default_endpoint(plan.provider, plan.model);
+  // Legacy direct Acts used provider as the protocol. Configured platforms
+  // always supply protocol explicitly.
+  if (plan.protocol.empty())
+    plan.protocol = plan.provider == "anthropic" ? "anthropic" :
+                    plan.provider == "gemini" ? "gemini" : "openai-compatible";
   if (plan.endpoint.empty())
     return tl::unexpected(make_error(ErrorCode::schema_mismatch,
                                      "model provider endpoint is required"));
@@ -127,12 +125,24 @@ Result<ProviderPlan> provider_plan(const cbor::Value& value,
 
 Result<std::string> credential(const ProviderPlan& plan, const bool allow_anonymous,
                                const Act& act) {
-  if (allow_anonymous || local_endpoint(plan.endpoint)) return std::string{};
+  if (plan.auth == "none" || (allow_anonymous && local_endpoint(plan.endpoint)))
+    return std::string{};
   if (const auto binding = string_field(act.parameters, "secret_binding");
       !binding.empty()) {
     return resolve_secret_binding(binding,
         string_field(act.parameters, "secret_purpose", "model-api"),
         act_secret_scope_hash(act), act.target, act.generation, act.epoch);
+  }
+  if (!plan.secret_ref.empty()) {
+    if (plan.secret_ref != "model-provider/" + plan.provider)
+      return tl::unexpected(make_error(ErrorCode::permission_denied,
+          "model provider SecretRef is outside its platform scope"));
+    auto binding = create_secret_binding(plan.secret_ref, "model-api",
+        act_secret_scope_hash(act), act.target, act.generation, act.epoch,
+        std::chrono::minutes(2));
+    if (!binding) return tl::unexpected(binding.error());
+    return resolve_secret_binding(*binding, "model-api", act_secret_scope_hash(act),
+                                  act.target, act.generation, act.epoch);
   }
   return tl::unexpected(make_error(ErrorCode::permission_denied,
       "model provider credentials require a one-shot Cista Secret binding"));
@@ -151,14 +161,14 @@ cbor::Value request_body(const ProviderPlan& plan, const cbor::Value& parameters
   const auto max_tokens = cbor::find(parameters, "max_output_tokens")
       ? cbor::find(parameters, "max_output_tokens")->as_integer(4096) : 4096;
   auto messages = request_messages(parameters, prompt);
-  if (plan.provider == "anthropic") {
+  if (plan.protocol == "anthropic") {
     auto body = cbor::object({{"model", plan.model}, {"messages", std::move(messages)},
         {"max_tokens", max_tokens}, {"stream", true}});
     if (const auto* tools = cbor::find(parameters, "tools"))
       (*body.as_map())["tools"] = *tools;
     return body;
   }
-  if (plan.provider == "gemini") {
+  if (plan.protocol == "gemini") {
     cbor::Value::Array contents;
     for (const auto& message : *messages.as_array()) {
       const auto role = string_field(message, "role") == "assistant" ? "model" : "user";
@@ -173,6 +183,11 @@ cbor::Value request_body(const ProviderPlan& plan, const cbor::Value& parameters
   }
   auto body = cbor::object({{"model", plan.model}, {"messages", std::move(messages)},
       {"stream", true}, {"max_tokens", max_tokens}});
+  if (const auto* thinking = cbor::find(parameters, "thinking");
+      thinking && thinking->as_bool())
+    (*body.as_map())["thinking"] = cbor::object({{"type", "enabled"}});
+  if (const auto effort = string_field(parameters, "reasoning_effort"); !effort.empty())
+    (*body.as_map())["reasoning_effort"] = effort;
   if (const auto* tools = cbor::find(parameters, "tools"))
     (*body.as_map())["tools"] = *tools;
   return body;
@@ -183,12 +198,17 @@ std::vector<std::pair<std::string, std::string>> headers(
   std::vector<std::pair<std::string, std::string>> result{{"Content-Type", "application/json"},
       {"Accept", "text/event-stream, application/json"}};
   if (secret.empty()) return result;
-  if (plan.provider == "anthropic") {
+  const auto auth = plan.auth == "protocol-default"
+      ? (plan.protocol == "anthropic" ? "x-api-key" :
+         plan.protocol == "gemini" ? "x-goog-api-key" : "bearer")
+      : plan.auth;
+  if (auth == "x-api-key") {
     result.emplace_back("x-api-key", secret);
-    result.emplace_back("anthropic-version", "2023-06-01");
-  } else if (plan.provider == "gemini") {
+    if (plan.protocol == "anthropic")
+      result.emplace_back("anthropic-version", "2023-06-01");
+  } else if (auth == "x-goog-api-key") {
     result.emplace_back("x-goog-api-key", secret);
-  } else {
+  } else if (auth == "bearer") {
     result.emplace_back("Authorization", "Bearer " + secret);
   }
   return result;
@@ -241,7 +261,7 @@ void parse_event(const ProviderPlan& plan, const cbor::Value& event,
     return;
   }
 
-  if (plan.provider == "anthropic") {
+  if (plan.protocol == "anthropic") {
     if (const auto* delta = cbor::find(event, "delta")) {
       if (const auto thinking = string_field(*delta, "thinking"); !thinking.empty())
         parsed.reasoning_chunks.push_back(thinking);
@@ -259,7 +279,7 @@ void parse_event(const ProviderPlan& plan, const cbor::Value& event,
     return;
   }
 
-  if (plan.provider == "gemini") {
+  if (plan.protocol == "gemini") {
     const auto* candidate = array_item(cbor::find(event, "candidates"));
     const auto* content = candidate ? cbor::find(*candidate, "content") : nullptr;
     const auto* parts = content ? cbor::find(*content, "parts") : nullptr;

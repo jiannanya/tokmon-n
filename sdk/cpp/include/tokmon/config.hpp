@@ -51,6 +51,25 @@ struct FallenPolicy {
   bool configured{false};
 };
 
+// `id` names the platform/account while `protocol` selects the wire adapter.
+// DeepSeek, OpenRouter and private gateways can therefore share the same
+// openai-compatible adapter without becoming special cases in Rhea.
+struct ModelProviderConfig {
+  std::string id;
+  std::string protocol{"openai-compatible"};
+  std::string endpoint;
+  std::string model;
+  std::string secret_ref;
+  std::string auth{"protocol-default"};
+  bool enabled{true};
+  bool allow_anonymous{false};
+  bool thinking{false};
+  std::string reasoning_effort;
+  std::int64_t max_output_tokens{4096};
+  std::int64_t max_attempts{2};
+  std::int64_t retry_backoff_ms{250};
+};
+
 struct RuntimeConfig {
   TokmonPaths paths;
   std::vector<DesiredLens> light_path;
@@ -61,6 +80,8 @@ struct RuntimeConfig {
   std::unordered_map<std::string, std::string> trusted_signers;
   FallenPolicy user_policy;
   FallenPolicy project_policy;
+  std::string default_model_provider{"local"};
+  std::unordered_map<std::string, ModelProviderConfig> model_providers;
 };
 
 [[nodiscard]] std::string_view to_string(PolicyEffect effect) noexcept;

@@ -105,12 +105,10 @@ Result<void> JanusLens::view(const PhotonWindow& photons, SurfaceBuilder& surfac
   const auto* selected_model = cbor::find(input->payload, "model");
   const auto* access_mode = cbor::find(input->payload, "access_mode");
   const auto* effort = cbor::find(input->payload, "effort");
-  auto act = propose(source, "model.call", "tokmon.model.call.v1",
-      "org.tokmon.lens.rhea", cbor::object({
+  auto parameters = cbor::object({
           {"prompt", steering && steering->sequence > input->sequence ? text(*steering) : text(*input)},
-          {"model", "local-deterministic"},
-          {"requested_model", selected_model ? std::string(selected_model->as_string())
-                                               : std::string("local-deterministic")},
+          {"model", selected_model ? std::string(selected_model->as_string())
+                                    : std::string("local-deterministic")},
           {"access_mode", access_mode ? std::string(access_mode->as_string())
                                        : std::string("完全访问")},
           {"effort", effort ? std::string(effort->as_string()) : std::string("标准")},
@@ -118,7 +116,16 @@ Result<void> JanusLens::view(const PhotonWindow& photons, SurfaceBuilder& surfac
           {"after_tool_result", result_ready},
           {"model_surface_hash", model_surface_hash},
           {"tool_schema_hash", tool_schema_hash},
-          {"max_output_tokens", 4096}}), RiskClass::external);
+          {"max_output_tokens", 4096}});
+  // tokmond resolved this envelope from trusted YAML. Plaintext credentials
+  // are never part of a Photon or Act.
+  for (const auto* key : {"provider", "protocol", "endpoint", "secret_ref", "auth",
+                          "allow_anonymous", "thinking", "reasoning_effort",
+                          "max_output_tokens", "max_attempts", "retry_backoff_ms"})
+    if (const auto* value = cbor::find(input->payload, key))
+      (*parameters.as_map())[key] = *value;
+  auto act = propose(source, "model.call", "tokmon.model.call.v1",
+      "org.tokmon.lens.rhea", std::move(parameters), RiskClass::external);
   return surface.propose(std::move(act));
 }
 

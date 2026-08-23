@@ -18,6 +18,7 @@
 #include "tokmon/photon.hpp"
 #include "tokmon/photon_store.hpp"
 #include "tokmon/runtime.hpp"
+#include "tokmon/secret_store.hpp"
 #include "tokmon/snow_protocol.hpp"
 #include "tokmon/snow_transport.hpp"
 #include "tokmon/surface.hpp"

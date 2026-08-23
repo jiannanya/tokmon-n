@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <algorithm>
 #include <chrono>
+#include <regex>
 #include <set>
 #include <unordered_map>
 
@@ -147,6 +148,97 @@ Result<void> parse_fallen_policy(FallenPolicy& policy, const YAML::Node& fallen,
   return {};
 }
 
+bool loopback_endpoint(const std::string_view endpoint) {
+  return endpoint.starts_with("http://127.0.0.1") ||
+      endpoint.starts_with("http://localhost") || endpoint.starts_with("http://[::1]");
+}
+
+Result<void> parse_model_providers(RuntimeConfig& config, const YAML::Node& models,
+                                   const std::filesystem::path& source) {
+  if (!models.IsMap())
+    return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                     source.string() + ": models must be a map"));
+  if (auto result = reject_unknown(models, {"default", "providers"}, source); !result)
+    return result;
+  if (models["default"]) config.default_model_provider = models["default"].as<std::string>();
+  const auto providers = models["providers"];
+  if (!providers) return {};
+  if (!providers.IsMap())
+    return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+        source.string() + ": models.providers must be a map"));
+  static const std::regex id_pattern("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$");
+  static const std::set<std::string> protocols{
+      "local", "openai-compatible", "anthropic", "gemini"};
+  static const std::set<std::string> auth_modes{
+      "protocol-default", "bearer", "x-api-key", "x-goog-api-key", "none"};
+  for (const auto& encoded : providers) {
+    const auto id = encoded.first.as<std::string>();
+    const auto value = encoded.second;
+    if (!std::regex_match(id, id_pattern) || !value.IsMap())
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+          source.string() + ": invalid model provider id or definition: " + id));
+    if (auto result = reject_unknown(value,
+        {"protocol", "endpoint", "model", "secret_ref", "auth", "enabled",
+         "allow_anonymous", "thinking", "reasoning_effort", "max_output_tokens",
+         "max_attempts", "retry_backoff_ms"}, source); !result) return result;
+    ModelProviderConfig provider;
+    if (const auto found = config.model_providers.find(id);
+        found != config.model_providers.end()) provider = found->second;
+    provider.id = id;
+    if (value["protocol"]) provider.protocol = value["protocol"].as<std::string>();
+    if (value["endpoint"]) provider.endpoint = value["endpoint"].as<std::string>();
+    if (value["model"]) provider.model = value["model"].as<std::string>();
+    if (value["secret_ref"]) provider.secret_ref = value["secret_ref"].as<std::string>();
+    if (value["auth"]) provider.auth = value["auth"].as<std::string>();
+    if (value["enabled"]) provider.enabled = value["enabled"].as<bool>();
+    if (value["allow_anonymous"]) provider.allow_anonymous = value["allow_anonymous"].as<bool>();
+    if (value["thinking"]) provider.thinking = value["thinking"].as<bool>();
+    if (value["reasoning_effort"])
+      provider.reasoning_effort = value["reasoning_effort"].as<std::string>();
+    if (value["max_output_tokens"])
+      provider.max_output_tokens = value["max_output_tokens"].as<std::int64_t>();
+    if (value["max_attempts"])
+      provider.max_attempts = value["max_attempts"].as<std::int64_t>();
+    if (value["retry_backoff_ms"])
+      provider.retry_backoff_ms = value["retry_backoff_ms"].as<std::int64_t>();
+    if (!protocols.contains(provider.protocol))
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+          source.string() + ": unsupported model protocol for " + id));
+    if (!auth_modes.contains(provider.auth))
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+          source.string() + ": unsupported auth mode for " + id));
+    if (provider.model.empty() || (provider.protocol != "local" && provider.endpoint.empty()))
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+          source.string() + ": model and endpoint are required for provider " + id));
+    if (provider.protocol != "local" && !provider.endpoint.starts_with("https://") &&
+        !loopback_endpoint(provider.endpoint))
+      return tl::unexpected(make_error(ErrorCode::permission_denied,
+          source.string() + ": provider endpoint must use HTTPS or loopback HTTP"));
+    if (provider.allow_anonymous && !loopback_endpoint(provider.endpoint) &&
+        provider.auth != "none")
+      return tl::unexpected(make_error(ErrorCode::permission_denied,
+          source.string() + ": anonymous remote providers must explicitly use auth: none"));
+    if (provider.auth != "none" && provider.protocol != "local" &&
+        !provider.allow_anonymous && provider.secret_ref.empty())
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+          source.string() + ": secret_ref is required for provider " + id));
+    if (provider.protocol != "local" && provider.auth != "none" &&
+        provider.secret_ref != "model-provider/" + id)
+      return tl::unexpected(make_error(ErrorCode::permission_denied,
+          source.string() + ": provider SecretRef must be scoped to its own id"));
+    if (provider.secret_ref.find('\0') != std::string::npos || provider.secret_ref.size() > 240)
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+          source.string() + ": invalid SecretRef for provider " + id));
+    if (provider.max_output_tokens <= 0 || provider.max_output_tokens > 1'000'000 ||
+        provider.max_attempts <= 0 || provider.max_attempts > 10 ||
+        provider.retry_backoff_ms < 0 || provider.retry_backoff_ms > 60'000)
+      return tl::unexpected(make_error(ErrorCode::invalid_argument,
+          source.string() + ": provider retry/token limits are outside the allowed range"));
+    config.model_providers[id] = std::move(provider);
+  }
+  return {};
+}
+
 Result<void> merge_config_file(RuntimeConfig& config, const std::filesystem::path& source) {
   if (!std::filesystem::exists(source)) return {};
   try {
@@ -154,7 +246,8 @@ Result<void> merge_config_file(RuntimeConfig& config, const std::filesystem::pat
     if (!root.IsMap())
       return tl::unexpected(make_error(ErrorCode::schema_mismatch,
                                        source.string() + " must contain a YAML map"));
-    if (auto result = reject_unknown(root, {"logging", "engine", "security", "ui", "fallen"}, source);
+    if (auto result = reject_unknown(root,
+        {"logging", "engine", "security", "ui", "fallen", "models"}, source);
         !result) return result;
     if (const auto logging = root["logging"]) {
       if (auto result = reject_unknown(logging, {"level"}, source); !result) return result;
@@ -191,6 +284,10 @@ Result<void> merge_config_file(RuntimeConfig& config, const std::filesystem::pat
                                 source.parent_path() == config.paths.project;
       auto result = parse_fallen_policy(project_file ? config.project_policy : config.user_policy,
                                         fallen, source);
+      if (!result) return result;
+    }
+    if (const auto models = root["models"]) {
+      auto result = parse_model_providers(config, models, source);
       if (!result) return result;
     }
     if (config.photon_window == 0 || config.photon_window > 100'000 ||
@@ -392,6 +489,9 @@ Result<RuntimeConfig> load_config(const std::optional<std::filesystem::path>& wo
   if (!paths) return tl::unexpected(paths.error());
   RuntimeConfig config;
   config.paths = *paths;
+  config.model_providers.emplace("local", ModelProviderConfig{
+      .id = "local", .protocol = "local", .endpoint = "builtin://rhea",
+      .model = "local-deterministic", .auth = "none", .allow_anonymous = true});
   for (const auto& short_id : official_lens_order()) {
     config.light_path.push_back(DesiredLens{
         .id = "org.tokmon.lens." + short_id,
@@ -403,6 +503,10 @@ Result<RuntimeConfig> load_config(const std::optional<std::filesystem::path>& wo
     return tl::unexpected(result.error());
   if (auto result = merge_config_file(config, config.paths.project / "config.yaml"); !result)
     return tl::unexpected(result.error());
+  const auto selected = config.model_providers.find(config.default_model_provider);
+  if (selected == config.model_providers.end() || !selected->second.enabled)
+    return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+        "models.default must name an enabled configured provider"));
   if (auto result = merge_light_path(config.light_path, config.paths.user / "light-path.yaml"); !result)
     return tl::unexpected(result.error());
   if (auto result = merge_light_path(config.light_path, config.paths.project / "light-path.yaml"); !result)

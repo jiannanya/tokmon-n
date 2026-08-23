@@ -439,7 +439,7 @@ lemon:
 
 ### 9.1 功能职责
 
-- `RHE-F-001`：提供统一 provider adapter，首发至少覆盖 OpenAI、Anthropic、DeepSeek、Gemini 和本地 deterministic provider；
+- `RHE-F-001`：把平台 id 与线协议分离，提供 `openai-compatible`、Anthropic、Gemini 和本地 deterministic adapter；DeepSeek、OpenAI、OpenRouter 与自建网关都是配置实例，不在 Rhea 中形成厂商特判；
 - `RHE-F-002`：显像模型目录、上下文窗口、能力、价格、速率限制、地区和健康度；
 - `RHE-F-003`：把 provider 流统一解析为 reasoning、content、tool-call、usage 和 terminal event；
 - `RHE-F-004`：支持取消、deadline、首 token 超时、空闲流超时和总超时；

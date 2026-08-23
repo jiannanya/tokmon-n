@@ -201,6 +201,29 @@ TEST_CASE("local model recognizes a conversational arithmetic request and select
   }));
 }
 
+TEST_CASE("Janus forwards a platform-neutral protocol envelope to Rhea") {
+  const auto lens = tokmon::make_builtin_lens("janus");
+  tokmon::Photon input{.sequence = 1, .id = "input-provider", .ray = "ray-provider",
+      .kind = "user.input", .schema = "tokmon.user.input.v1",
+      .payload = tokmon::cbor::object({{"text", "hello"},
+          {"provider", "private-cloud"}, {"protocol", "openai-compatible"},
+          {"endpoint", "https://models.example.test/v1/chat/completions"},
+          {"model", "custom-model"}, {"secret_ref", "model-provider/private-cloud"},
+          {"auth", "bearer"}, {"thinking", true}, {"max_output_tokens", 8192}}),
+      .epoch = 7, .hash = std::string(64, 'a')};
+  tokmon::SurfaceBuilder surface(lens->manifest().id);
+  REQUIRE(lens->view(tokmon::PhotonWindow({input}), surface));
+  REQUIRE(surface.proposals().size() == 1);
+  const auto& parameters = surface.proposals().front().parameters;
+  REQUIRE(tokmon::cbor::find(parameters, "provider")->as_string() == "private-cloud");
+  REQUIRE(tokmon::cbor::find(parameters, "protocol")->as_string() ==
+          "openai-compatible");
+  REQUIRE(tokmon::cbor::find(parameters, "model")->as_string() == "custom-model");
+  REQUIRE(tokmon::cbor::find(parameters, "secret_ref")->as_string() ==
+          "model-provider/private-cloud");
+  REQUIRE(tokmon::cbor::find(parameters, "api_key") == nullptr);
+}
+
 TEST_CASE("Styx executes argv without a shell and captures bounded output") {
   const auto root = lens_temporary_directory("styx");
   const auto lens = tokmon::make_builtin_lens("styx");
@@ -523,7 +546,8 @@ TEST_CASE("Rhea streams an OpenAI-compatible provider and retries transient fail
   const auto lens = tokmon::make_builtin_lens("rhea");
   RecordingHost host;
   auto result = refract(lens, "model.call", "tokmon.model.call.v1",
-      tokmon::cbor::object({{"provider", "openai"}, {"model", "fixture-model"},
+      tokmon::cbor::object({{"provider", "fixture-cloud"},
+          {"protocol", "openai-compatible"}, {"model", "fixture-model"},
           {"prompt", "hello"},
           {"endpoint", "http://127.0.0.1:" + port + "/v1/chat/completions"},
           {"allow_anonymous", true}, {"max_attempts", 2},
@@ -542,6 +566,8 @@ TEST_CASE("Rhea streams an OpenAI-compatible provider and retries transient fail
       [](const auto& draft) { return draft.kind == "assistant.message"; });
   REQUIRE(answer != host.drafts.end());
   REQUIRE(tokmon::cbor::find(answer->payload, "text")->as_string() == "hello world");
+  REQUIRE(tokmon::cbor::find(answer->payload, "provider")->as_string() ==
+          "fixture-cloud");
   const auto usage = std::find_if(host.drafts.begin(), host.drafts.end(),
       [](const auto& draft) { return draft.kind == "model.usage"; });
   REQUIRE(usage != host.drafts.end());

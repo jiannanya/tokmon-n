@@ -1,5 +1,7 @@
 # Tokmon Desktop UI、进程生命周期与端到端实现验收报告
 
+> 后续更新：真实多平台模型配置、系统凭据库与 Rhea 联网链路已完成，见 [MODEL-PROVIDER-IMPLEMENTATION-REPORT.md](MODEL-PROVIDER-IMPLEMENTATION-REPORT.md)。本报告中“provider 暂用 mock”和 79 项测试统计仅记录当时验收快照。
+
 > 产品题记：**A Lens to Them All**  
 > 实现语言：C++20 + Slint C++  
 > 配置格式：YAML  

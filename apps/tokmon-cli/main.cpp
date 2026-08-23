@@ -1,4 +1,5 @@
 #include <atomic>
+#include <algorithm>
 #include <array>
 #include <filesystem>
 #include <fstream>
@@ -14,6 +15,9 @@
 #if defined(_WIN32)
 #include <windows.h>
 #include <shellapi.h>
+#else
+#include <termios.h>
+#include <unistd.h>
 #endif
 
 #include "tokmon/tokmon.hpp"
@@ -79,17 +83,60 @@ Usage:
   tokmon daemon start            Start it now (normally automatic)
   tokmon daemon stop             Gracefully stop it after active work drains
   tokmon config paths            Print resolved .tokmon directories
+  tokmon model list              List configured platforms (credentials redacted)
+  tokmon model configure <id> --protocol <wire> --endpoint <url> --model <name>
+                                [--auth <mode>] [--default] [--thinking]
+  tokmon model use <id>          Select the project default platform
+  tokmon model secret set <id>   Read a key with terminal echo disabled
+  tokmon model secret delete <id>
+  tokmon model test <id> [text]  Run a real Fact → Lens → Act model request
 
 Options:
   --workspace <path>             Select project-level .tokmon directory
   --format human|jsonl|cbor      Stable human or machine output
   --output <file>                Write command output to a file
   --deadline-ms <milliseconds>   Attach a request deadline
+  --provider <id>                Use a configured platform for run/chat
   --no-color                     Disable decoration (accepted for CI)
 
 All stateful commands attach to or automatically start the workspace tokmond.
 The shared daemon remains alive when a CLI or desktop client exits.
 )HELP";
+}
+
+std::optional<std::string> option_value(const std::vector<std::string>& arguments,
+                                        const std::string_view name) {
+  for (std::size_t index = 0; index + 1 < arguments.size(); ++index)
+    if (arguments[index] == name) return arguments[index + 1];
+  return std::nullopt;
+}
+
+bool has_option(const std::vector<std::string>& arguments, const std::string_view name) {
+  return std::ranges::find(arguments, name) != arguments.end();
+}
+
+tokmon::Result<std::string> read_secret() {
+  std::cerr << "API key (input hidden): ";
+#if defined(_WIN32)
+  const auto input = GetStdHandle(STD_INPUT_HANDLE);
+  DWORD original = 0;
+  const bool terminal = input != INVALID_HANDLE_VALUE && GetConsoleMode(input, &original);
+  if (terminal) SetConsoleMode(input, original & ~ENABLE_ECHO_INPUT);
+  std::string value;
+  const bool read = static_cast<bool>(std::getline(std::cin, value));
+  if (terminal) { SetConsoleMode(input, original); std::cerr << '\n'; }
+#else
+  termios original{};
+  const bool terminal = ::isatty(STDIN_FILENO) && ::tcgetattr(STDIN_FILENO, &original) == 0;
+  if (terminal) { auto hidden = original; hidden.c_lflag &= ~ECHO; ::tcsetattr(STDIN_FILENO, TCSAFLUSH, &hidden); }
+  std::string value;
+  const bool read = static_cast<bool>(std::getline(std::cin, value));
+  if (terminal) { ::tcsetattr(STDIN_FILENO, TCSAFLUSH, &original); std::cerr << '\n'; }
+#endif
+  if (!read || value.empty())
+    return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::invalid_argument,
+                                             "API key input was empty"));
+  return value;
 }
 
 std::filesystem::path sibling_daemon(const char* argv0) {
@@ -216,6 +263,25 @@ void print_lenses(const tokmon::SnowMessage& response) {
   }
 }
 
+void print_providers(const tokmon::SnowMessage& response, std::ostream& output) {
+  const auto* providers = tokmon::cbor::find(response.payload, "providers");
+  const auto* selected = tokmon::cbor::find(response.payload, "default");
+  if (!providers || !providers->as_array()) return;
+  output << "DEFAULT\tID\tPROTOCOL\tMODEL\tCREDENTIAL\tENDPOINT\n";
+  for (const auto& provider : *providers->as_array()) {
+    const auto text = [&provider](const char* key) {
+      const auto* field = tokmon::cbor::find(provider, key);
+      return field ? std::string(field->as_string()) : std::string{};
+    };
+    const auto* credential = tokmon::cbor::find(provider, "credential_present");
+    const auto id = text("id");
+    output << (selected && selected->as_string() == id ? "*" : "") << '\t'
+           << id << '\t' << text("protocol") << '\t' << text("model") << '\t'
+           << (credential && credential->as_bool() ? "ready" : "missing") << '\t'
+           << text("endpoint") << '\n';
+  }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -247,6 +313,7 @@ int main(int argc, char** argv) {
   std::optional<std::filesystem::path> output_path;
   OutputFormat output_format = OutputFormat::human;
   std::int64_t deadline_ms = 0;
+  std::string selected_provider;
   for (auto iterator = arguments.begin(); iterator != arguments.end();) {
     if (*iterator == "--workspace" && std::next(iterator) != arguments.end()) {
       workspace = *std::next(iterator);
@@ -265,6 +332,9 @@ int main(int argc, char** argv) {
       try { deadline_ms = std::stoll(*std::next(iterator)); }
       catch (...) { std::cerr << "invalid deadline\n"; return 2; }
       if (deadline_ms <= 0) { std::cerr << "deadline must be positive\n"; return 2; }
+      iterator = arguments.erase(iterator, std::next(iterator, 2));
+    } else if (*iterator == "--provider" && std::next(iterator) != arguments.end()) {
+      selected_provider = *std::next(iterator);
       iterator = arguments.erase(iterator, std::next(iterator, 2));
     } else if (*iterator == "--no-color") {
       iterator = arguments.erase(iterator);
@@ -341,6 +411,94 @@ int main(int argc, char** argv) {
   tokmon::SnowClient client(endpoint);
 
   if (arguments[0] == "stdio") return run_stdio(client);
+  if (arguments[0] == "model" && arguments.size() > 1 && arguments[1] == "list") {
+    auto response = intent(client, tokmon::cbor::object({{"action", "model.providers"}}));
+    if (!response) { print_error(response.error()); return 1; }
+    if (output_format == OutputFormat::human) print_providers(*response, *output);
+    else write_value(*output, response->payload, output_format);
+    return 0;
+  }
+  if (arguments[0] == "model" && arguments.size() > 2 && arguments[1] == "configure") {
+    const auto endpoint_option = option_value(arguments, "--endpoint");
+    const auto model_option = option_value(arguments, "--model");
+    if (!endpoint_option || !model_option) {
+      std::cerr << "model configure requires --endpoint and --model\n"; return 2;
+    }
+    tokmon::cbor::Value payload = tokmon::cbor::object({
+        {"action", "model.provider.configure"}, {"id", arguments[2]},
+        {"protocol", option_value(arguments, "--protocol").value_or("openai-compatible")},
+        {"endpoint", *endpoint_option}, {"model", *model_option},
+        {"auth", option_value(arguments, "--auth").value_or("protocol-default")},
+        {"default", has_option(arguments, "--default")},
+        {"allow_anonymous", has_option(arguments, "--anonymous")},
+        {"thinking", has_option(arguments, "--thinking")},
+        {"reasoning_effort", option_value(arguments, "--reasoning-effort").value_or("")}});
+    const auto integer_option = [&arguments, &payload](const char* option, const char* field,
+                                                       const std::int64_t fallback) -> bool {
+      const auto value = option_value(arguments, option);
+      if (!value) { (*payload.as_map())[field] = fallback; return true; }
+      try { (*payload.as_map())[field] = static_cast<std::int64_t>(std::stoll(*value)); return true; }
+      catch (...) { std::cerr << "invalid numeric option " << option << '\n'; return false; }
+    };
+    if (!integer_option("--max-output-tokens", "max_output_tokens", 4096) ||
+        !integer_option("--max-attempts", "max_attempts", 2) ||
+        !integer_option("--retry-backoff-ms", "retry_backoff_ms", 250)) return 2;
+    auto response = intent(client, std::move(payload));
+    if (!response) { print_error(response.error()); return 1; }
+    if (output_format == OutputFormat::human)
+      *output << "configured provider " << arguments[2]
+              << "; API key is not stored in YAML\n";
+    else write_value(*output, response->payload, output_format);
+    return 0;
+  }
+  if (arguments[0] == "model" && arguments.size() > 2 && arguments[1] == "use") {
+    auto response = intent(client, tokmon::cbor::object({
+        {"action", "model.provider.use"}, {"id", arguments[2]}}));
+    if (!response) { print_error(response.error()); return 1; }
+    if (output_format == OutputFormat::human)
+      *output << "default provider is now " << arguments[2] << '\n';
+    else write_value(*output, response->payload, output_format);
+    return 0;
+  }
+  if (arguments[0] == "model" && arguments.size() > 3 && arguments[1] == "secret" &&
+      (arguments[2] == "set" || arguments[2] == "delete")) {
+    tokmon::cbor::Value payload = tokmon::cbor::object({
+        {"action", arguments[2] == "set" ? "model.provider.secret.set"
+                                           : "model.provider.secret.delete"},
+        {"id", arguments[3]}});
+    std::string secret_value;
+    if (arguments[2] == "set") {
+      auto secret = read_secret();
+      if (!secret) { print_error(secret.error()); return 2; }
+      secret_value = std::move(*secret);
+      (*payload.as_map())["secret"] = secret_value;
+    }
+    auto response = intent(client, std::move(payload));
+    std::fill(secret_value.begin(), secret_value.end(), '\0');
+    if (!response) { print_error(response.error()); return 1; }
+    if (output_format == OutputFormat::human)
+      *output << (arguments[2] == "set" ? "credential stored in the operating-system vault\n"
+                                        : "credential deleted\n");
+    else write_value(*output, response->payload, output_format);
+    return 0;
+  }
+  if (arguments[0] == "model" && arguments.size() > 2 && arguments[1] == "test") {
+    const auto text = arguments.size() > 3 ? join(arguments, 3) : std::string{};
+    auto response = intent(client, tokmon::cbor::object({
+        {"action", "model.provider.test"}, {"provider", arguments[2]},
+        {"text", text}, {"deadline_ms", deadline_ms}}));
+    if (!response) { print_error(response.error()); return 1; }
+    auto photons = response_photons(*response);
+    if (!photons) { print_error(photons.error()); return 1; }
+    bool failed = false;
+    for (const auto& photon : *photons) {
+      if (photon.kind == "model.failed" || photon.kind == "act.failed") failed = true;
+      if (output_format != OutputFormat::human || photon.kind == "assistant.message" ||
+          photon.kind == "model.usage" || photon.kind == "model.failed")
+        print_photon(*output, photon, output_format);
+    }
+    return failed ? 1 : 0;
+  }
   if (arguments[0] == "run") {
     const auto message = join(arguments, 1);
     std::string input = message;
@@ -348,8 +506,10 @@ int main(int argc, char** argv) {
       std::ostringstream buffer; buffer << std::cin.rdbuf(); input = buffer.str();
     }
     if (input.empty()) { std::cerr << "run requires a message or stdin\n"; return 2; }
-    auto response = intent(client, tokmon::cbor::object({{"action", "chat"},
-        {"text", input}, {"deadline_ms", deadline_ms}}));
+    auto payload = tokmon::cbor::object({{"action", "chat"},
+        {"text", input}, {"deadline_ms", deadline_ms}});
+    if (!selected_provider.empty()) (*payload.as_map())["provider"] = selected_provider;
+    auto response = intent(client, std::move(payload));
     if (!response) { print_error(response.error()); return 1; }
     auto photons = response_photons(*response);
     if (!photons) { print_error(photons.error()); return 1; }
@@ -373,8 +533,10 @@ int main(int argc, char** argv) {
         line.clear();
         continue;
       }
-      auto response = intent(client, tokmon::cbor::object({{"action", "chat"},
-          {"text", line}, {"ray", active_ray}, {"deadline_ms", deadline_ms}}));
+      auto payload = tokmon::cbor::object({{"action", "chat"},
+          {"text", line}, {"ray", active_ray}, {"deadline_ms", deadline_ms}});
+      if (!selected_provider.empty()) (*payload.as_map())["provider"] = selected_provider;
+      auto response = intent(client, std::move(payload));
       if (!response) { print_error(response.error()); continue; }
       if (const auto* ray = tokmon::cbor::find(response->payload, "ray"))
         active_ray = std::string(ray->as_string());

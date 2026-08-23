@@ -266,7 +266,8 @@ TEST_CASE("calculator executes the complete Fact Lens Act photon loop") {
   tokmon::TokmonRuntime runtime;
   REQUIRE(runtime.open(root / "workspace", "tokmon-tests"));
   auto ray = runtime.submit("请计算 128 * 4", tokmon::cbor::object({
-      {"model", "desktop-model-choice"}, {"access_mode", "受限访问"},
+      {"provider", "local"}, {"protocol", "local"},
+      {"model", "local-deterministic"}, {"access_mode", "受限访问"},
       {"effort", "最高"}}));
   REQUIRE(ray);
   auto beats = runtime.advance(*ray);
@@ -286,7 +287,7 @@ TEST_CASE("calculator executes the complete Fact Lens Act photon loop") {
   });
   REQUIRE(input != photons->end());
   REQUIRE(tokmon::cbor::find(input->payload, "model")->as_string() ==
-          "desktop-model-choice");
+          "local-deterministic");
   REQUIRE(has_kind("model.reasoning-chunk"));
   REQUIRE(photons->back().kind == "ray.darkened");
   const auto first_tail = photons->back().sequence;
@@ -544,6 +545,71 @@ TEST_CASE("unknown YAML fields are rejected without publishing a path") {
   auto config = tokmon::load_config(workspace);
   REQUIRE_FALSE(config);
   REQUIRE(config.error().code == tokmon::ErrorCode::schema_mismatch);
+}
+
+TEST_CASE("model platforms merge by id while credentials remain SecretRefs") {
+  const auto root = temporary_directory("model-config");
+  UserProfileGuard profile(root / "home");
+  const auto workspace = root / "workspace";
+  std::filesystem::create_directories(root / "home" / ".tokmon");
+  std::filesystem::create_directories(workspace / ".tokmon");
+  {
+    std::ofstream user(root / "home" / ".tokmon" / "config.yaml");
+    user << "models:\n"
+            "  default: private-cloud\n"
+            "  providers:\n"
+            "    private-cloud:\n"
+            "      protocol: openai-compatible\n"
+            "      endpoint: https://models.example.test/v1/chat/completions\n"
+            "      model: base-model\n"
+            "      secret_ref: model-provider/private-cloud\n"
+            "      auth: bearer\n";
+  }
+  {
+    std::ofstream project(workspace / ".tokmon" / "config.yaml");
+    project << "models:\n"
+               "  providers:\n"
+               "    private-cloud:\n"
+               "      model: project-model\n"
+               "      thinking: true\n";
+  }
+  auto config = tokmon::load_config(workspace);
+  REQUIRE(config);
+  REQUIRE(config->default_model_provider == "private-cloud");
+  const auto& provider = config->model_providers.at("private-cloud");
+  REQUIRE(provider.protocol == "openai-compatible");
+  REQUIRE(provider.model == "project-model");
+  REQUIRE(provider.endpoint == "https://models.example.test/v1/chat/completions");
+  REQUIRE(provider.secret_ref == "model-provider/private-cloud");
+  REQUIRE(provider.thinking);
+}
+
+TEST_CASE("model configuration rejects plaintext keys and insecure remote endpoints") {
+  const auto root = temporary_directory("model-config-reject");
+  UserProfileGuard profile(root / "home");
+  const auto workspace = root / "workspace";
+  std::filesystem::create_directories(workspace / ".tokmon");
+  const auto file = workspace / ".tokmon" / "config.yaml";
+  {
+    std::ofstream output(file);
+    output << "models:\n  providers:\n    unsafe:\n"
+              "      protocol: openai-compatible\n"
+              "      endpoint: https://example.test/v1/chat/completions\n"
+              "      model: test\n      api_key: plaintext-is-forbidden\n";
+  }
+  auto plaintext = tokmon::load_config(workspace);
+  REQUIRE_FALSE(plaintext);
+  REQUIRE(plaintext.error().code == tokmon::ErrorCode::schema_mismatch);
+  {
+    std::ofstream output(file, std::ios::trunc);
+    output << "models:\n  providers:\n    unsafe:\n"
+              "      protocol: openai-compatible\n"
+              "      endpoint: http://models.example.test/v1/chat/completions\n"
+              "      model: test\n      secret_ref: model-provider/unsafe\n";
+  }
+  auto insecure = tokmon::load_config(workspace);
+  REQUIRE_FALSE(insecure);
+  REQUIRE(insecure.error().code == tokmon::ErrorCode::permission_denied);
 }
 
 TEST_CASE("workspace Snow endpoints are isolated and daemon health is probeable") {
