@@ -7,6 +7,7 @@
 #include <cwctype>
 #include <deque>
 #include <filesystem>
+#include <functional>
 #include <iomanip>
 #include <limits>
 #include <memory>
@@ -581,7 +582,8 @@ std::vector<CodeLine> code_lines_from(const std::vector<tokmon::Photon>& photons
 void refresh_navigation(
     const std::shared_ptr<slint::VectorModel<NavigationItem>>& model,
     const std::shared_ptr<std::vector<NavigationItem>>& items,
-    std::string query) {
+    std::string query,
+    const slint::ComponentWeakHandle<MainWindow>& window = {}) {
   for (auto& character : query)
     character = static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
 
@@ -593,6 +595,7 @@ void refresh_navigation(
     return title.find(query) != std::string::npos;
   };
 
+  int visible_sessions = 0;
   model->clear();
   for (std::size_t row = 0; row < items->size(); ++row) {
     bool shown = true;
@@ -612,8 +615,131 @@ void refresh_navigation(
            ++child)
         shown = matches((*items)[child]);
     }
-    if (shown) model->push_back((*items)[row]);
+    if (shown) {
+      model->push_back((*items)[row]);
+      if ((*items)[row].kind == "session") ++visible_sessions;
+    }
   }
+  if (window.lock()) {
+    auto weak = window;
+    const auto count = query.empty() ? 0 : visible_sessions;
+    (void)slint::invoke_from_event_loop([weak, count] {
+      if (auto locked = weak.lock()) (*locked)->set_search_session_count(count);
+    });
+  }
+}
+
+std::string path_basename_utf8(const std::string_view value) {
+  std::string clean(value);
+  while (!clean.empty() && (clean.back() == '/' || clean.back() == '\\'))
+    clean.pop_back();
+  const auto pos = clean.find_last_of("/\\");
+  return pos == std::string::npos ? clean : clean.substr(pos + 1);
+}
+
+std::string short_workspace_label(const std::filesystem::path& workspace,
+                                  const std::filesystem::path& root_workspace) {
+  auto text = path_to_utf8(workspace);
+  auto root_text = path_to_utf8(root_workspace);
+  if (!root_text.empty()) {
+    auto prefix = root_text;
+    while (!prefix.empty() && (prefix.back() == '/' || prefix.back() == '\\'))
+      prefix.pop_back();
+    if (text.size() > prefix.size() && text.starts_with(prefix)) {
+      auto rest = text.substr(prefix.size());
+      while (!rest.empty() && (rest.front() == '/' || rest.front() == '\\'))
+        rest.erase(rest.begin());
+      if (rest.empty()) return "~/";
+      return "~/" + rest;
+    }
+  }
+  return text;
+}
+
+std::string git_branch_label(const std::filesystem::path& workspace) {
+  std::error_code error;
+  const auto head = workspace / ".git" / "HEAD";
+  if (!std::filesystem::is_regular_file(head, error)) return {};
+  std::ifstream stream(head, std::ios::binary);
+  if (!stream) return {};
+  std::string line;
+  std::getline(stream, line);
+  const auto prefix = std::string_view("ref: refs/heads/");
+  if (line.starts_with(prefix)) return std::string(line.substr(prefix.size()));
+  if (line.size() >= 12) return line.substr(0, 12);
+  return {};
+}
+
+int count_indexed_files(const std::filesystem::path& workspace) {
+  int files = 0;
+  std::error_code error;
+  std::function<void(const std::filesystem::path&, int)> scan =
+      [&](const std::filesystem::path& directory, int depth) {
+        if (depth > 3 || files > 4'096) return;
+        for (std::filesystem::directory_iterator it(directory, error), end;
+             it != end && !error; it.increment(error)) {
+          const auto& entry = *it;
+          std::error_code entry_error;
+          if (entry.is_directory(entry_error)) {
+            const auto name = entry.path().filename().string();
+            if (name == ".git" || name == "node_modules" ||
+                name == ".tokmon" || name == "build")
+              continue;
+            scan(entry.path(), depth + 1);
+          } else if (entry.is_regular_file(entry_error)) {
+            ++files;
+            if (files > 4'096) return;
+          }
+        }
+      };
+  scan(workspace, 1);
+  return files;
+}
+
+struct SessionFile final {
+  std::string name;
+  std::string path;
+  std::string content;
+  bool written{false};
+};
+
+SessionFile session_file_from_photon(const tokmon::Photon& photon) {
+  SessionFile file;
+  const auto* field = tokmon::cbor::find(photon.payload, "path");
+  file.path = field ? std::string(field->as_string()) : std::string{};
+  file.name = path_basename_utf8(file.path);
+  if (const auto* content = tokmon::cbor::find(photon.payload, "content");
+      content && std::holds_alternative<std::string>(content->data))
+    file.content = std::string(content->as_string());
+  else if (const auto* text = tokmon::cbor::find(photon.payload, "text");
+           text && std::holds_alternative<std::string>(text->data) &&
+               (photon.kind == "fs.written" || photon.kind == "fs.created" ||
+                photon.kind == "artifact.previewed"))
+    file.content = std::string(text->as_string());
+  file.written = photon.kind == "fs.written" || photon.kind == "fs.created";
+  return file;
+}
+
+std::vector<CodeLine> code_lines_from_text(const std::string& content) {
+  std::vector<CodeLine> result;
+  std::istringstream input(content);
+  std::string text;
+  for (std::size_t index = 0; std::getline(input, text) && index < 20'000u; ++index) {
+    CodeLine line;
+    line.number = static_cast<int>(index + 1u);
+    line.text = display_string(text);
+    const auto first = text.find_first_not_of(" \t");
+    line.tone = first != std::string::npos && text[first] == '#' ? "comment" : "normal";
+    result.push_back(std::move(line));
+  }
+  if (result.empty()) {
+    CodeLine single;
+    single.number = 1;
+    single.text = display_string(content.empty() ? "// 当前会话尚无文件投影。" : content);
+    single.tone = "normal";
+    result.push_back(std::move(single));
+  }
+  return result;
 }
 
 NavigationItem make_navigation_item(const std::filesystem::path& assets,
@@ -1044,6 +1170,136 @@ class UiSnowController final {
     });
   }
 
+  [[nodiscard]] const std::filesystem::path& current_workspace() const noexcept {
+    return current_workspace_;
+  }
+
+  void select_session_file(const int index) {
+    std::string name;
+    std::string content;
+    int added_lines = 0;
+    std::vector<CodeLine> preview;
+    {
+      std::scoped_lock lock(files_mutex_);
+      if (index < 0 || index >= static_cast<int>(session_files_.size())) return;
+      const auto& chosen = session_files_[static_cast<std::size_t>(index)];
+      name = chosen.name;
+      content = chosen.content;
+      added_lines = chosen.written
+          ? static_cast<int>(std::count(chosen.content.begin(),
+                                        chosen.content.end(), '\n')) + 1
+          : 0;
+      full_preview_lines_ = code_lines_from_text(content);
+      preview = full_preview_lines_;
+    }
+    auto window = window_;
+    (void)slint::invoke_from_event_loop(
+        [window, preview = std::move(preview), name, content, added_lines]() mutable {
+          auto preview_model = std::make_shared<slint::VectorModel<CodeLine>>();
+          for (auto& line : preview) preview_model->push_back(std::move(line));
+          if (auto locked = window.lock()) {
+            auto handle = *locked;
+            handle->set_selected_file_name(display_string(name));
+            handle->set_preview_content(display_string(content));
+            handle->set_file_added_lines(added_lines);
+            handle->set_preview_lines(preview_model);
+            handle->set_preview_search(slint::SharedString{});
+          }
+        });
+  }
+
+  void filter_preview_lines(std::string query) {
+    for (auto& character : query)
+      character = static_cast<char>(
+          std::tolower(static_cast<unsigned char>(character)));
+    std::vector<CodeLine> preview;
+    {
+      std::scoped_lock lock(files_mutex_);
+      for (const auto& line : full_preview_lines_) {
+        if (query.empty()) {
+          preview.push_back(line);
+          continue;
+        }
+        auto text = std::string(line.text);
+        for (auto& character : text)
+          character = static_cast<char>(
+              std::tolower(static_cast<unsigned char>(character)));
+        if (text.find(query) != std::string::npos) preview.push_back(line);
+      }
+    }
+    auto window = window_;
+    (void)slint::invoke_from_event_loop(
+        [window, preview = std::move(preview)]() mutable {
+          auto preview_model = std::make_shared<slint::VectorModel<CodeLine>>();
+          for (auto& line : preview) preview_model->push_back(std::move(line));
+          if (auto locked = window.lock())
+            (*locked)->set_preview_lines(preview_model);
+        });
+  }
+
+  void notify_copied() {
+    auto window = window_;
+    (void)slint::invoke_from_event_loop([window] {
+      if (auto locked = window.lock())
+        (*locked)->set_status_text("内容已复制到剪贴板");
+    });
+  }
+
+  void publish_workspace_info() {
+    auto window = window_;
+    const auto workspace = current_workspace_;
+    const auto root = navigation_workspace_;
+    const auto project = path_basename_utf8(path_to_utf8(workspace));
+    const auto short_label = short_workspace_label(workspace, root);
+    const auto branch = git_branch_label(workspace);
+    const auto indexed = count_indexed_files(workspace);
+    std::vector<slint::SharedString> groups;
+    std::vector<ProjectFile> presets;
+    for (std::size_t index = 0; index < navigation_->size(); ++index) {
+      const auto& item = (*navigation_)[index];
+      if (std::string(item.kind) == "group") {
+        bool has_projects = false;
+        for (auto next = index + 1;
+             next < navigation_->size() && (*navigation_)[next].indent > item.indent;
+             ++next)
+          if (std::string((*navigation_)[next].kind) == "project") has_projects = true;
+        if (has_projects) groups.push_back(item.title);
+      }
+      if (std::string(item.kind) == "project" &&
+          !std::string(item.workspace).empty()) {
+        ProjectFile preset;
+        preset.name = item.title;
+        preset.path = display_string(std::string(item.workspace));
+        for (auto previous = index; previous > 0;) {
+          --previous;
+          if ((*navigation_)[previous].indent >= item.indent) continue;
+          if (std::string((*navigation_)[previous].kind) == "group")
+            preset.group_title = (*navigation_)[previous].title;
+          break;
+        }
+        presets.push_back(std::move(preset));
+      }
+    }
+    (void)slint::invoke_from_event_loop(
+        [window, project, short_label, branch, indexed,
+         groups = std::move(groups), presets = std::move(presets)]() mutable {
+          if (auto locked = window.lock()) {
+            auto handle = *locked;
+            handle->set_workspace_project(display_string(project));
+            handle->set_workspace_short_path(display_string(short_label));
+            handle->set_workspace_branch(display_string(branch));
+            handle->set_workspace_has_git(!branch.empty());
+            handle->set_workspace_indexed_files(indexed);
+            auto group_model =
+                std::make_shared<slint::VectorModel<slint::SharedString>>();
+            for (auto& group : groups) group_model->push_back(std::move(group));
+            handle->set_group_options(group_model);
+            auto preset_model = std::make_shared<slint::VectorModel<ProjectFile>>();
+            for (auto& preset : presets) preset_model->push_back(std::move(preset));
+            handle->set_workspace_presets(preset_model);
+          }
+        });
+  }
  private:
   struct Command {
     std::string kind;
@@ -1132,6 +1388,53 @@ class UiSnowController final {
     return {};
   }
 
+  void publish_session_files(const bool select_first) {
+    auto window = window_;
+    std::vector<ProjectFile> files;
+    std::vector<CodeLine> preview;
+    std::string selected_name;
+    std::string selected_content;
+    int added_lines = 0;
+    {
+      std::scoped_lock lock(files_mutex_);
+      files.reserve(session_files_.size());
+      for (const auto& file : session_files_)
+        files.push_back(ProjectFile{
+            display_string(file.name), display_string(file.path), {}});
+      if (!session_files_.empty()) {
+        const auto& chosen = session_files_.front();
+        selected_name = chosen.name;
+        selected_content = chosen.content;
+        added_lines = chosen.written
+            ? static_cast<int>(std::count(chosen.content.begin(),
+                                          chosen.content.end(), '\n')) + 1
+            : 0;
+      }
+      full_preview_lines_ = code_lines_from_text(selected_content);
+      preview = full_preview_lines_;
+    }
+    (void)slint::invoke_from_event_loop(
+        [window, files = std::move(files), preview = std::move(preview),
+         selected_name, selected_content, added_lines, select_first]() mutable {
+          auto files_model = std::make_shared<slint::VectorModel<ProjectFile>>();
+          for (auto& file : files) files_model->push_back(std::move(file));
+          auto preview_model = std::make_shared<slint::VectorModel<CodeLine>>();
+          for (auto& line : preview) preview_model->push_back(std::move(line));
+          if (auto locked = window.lock()) {
+            auto handle = *locked;
+            handle->set_project_files(files_model);
+            handle->set_preview_lines(preview_model);
+            if (select_first || !selected_name.empty()) {
+              handle->set_selected_file_name(display_string(selected_name));
+              handle->set_preview_content(display_string(selected_content));
+              handle->set_file_added_lines(added_lines);
+            }
+            if (select_first && files_model->row_count() == 0)
+              handle->set_selected_file_name(slint::SharedString{});
+          }
+        });
+  }
+
   void apply_photons(std::vector<tokmon::Photon> incoming, const bool replace) {
     if (replace) photons_.clear();
     for (auto& photon : incoming) {
@@ -1146,6 +1449,38 @@ class UiSnowController final {
     auto workflow_items = conversation_workflow_from(photons_);
     const auto trace = trace_summary_from(photons_);
     auto lines = code_lines_from(photons_);
+    {
+      std::scoped_lock lock(files_mutex_);
+      session_files_.clear();
+      for (auto iterator = photons_.rbegin(); iterator != photons_.rend(); ++iterator) {
+        const auto kind = std::string(iterator->kind);
+        if (!kind.starts_with("fs.") && kind != "artifact.previewed") continue;
+        auto file = session_file_from_photon(*iterator);
+        if (file.name.empty()) continue;
+        bool merged = false;
+        for (auto& existing : session_files_) {
+          if (existing.path != file.path) continue;
+          if (!file.content.empty()) existing.content = file.content;
+          existing.written = existing.written || file.written;
+          merged = true;
+          break;
+        }
+        if (!merged) session_files_.push_back(std::move(file));
+        if (session_files_.size() >= 24u) break;
+      }
+      for (auto& file : session_files_) {
+        if (!file.content.empty() || file.path.empty()) continue;
+        std::error_code error;
+        std::ifstream stream(path_from_utf8(file.path), std::ios::binary);
+        if (stream && std::filesystem::exists(path_from_utf8(file.path), error)) {
+          std::string text((std::istreambuf_iterator<char>(stream)),
+                           std::istreambuf_iterator<char>());
+          if (text.size() <= 262'144u) file.content = std::move(text);
+        }
+      }
+    }
+    publish_session_files(false);
+    publish_trace_view();
     auto timeline = timeline_;
     auto workflow = conversation_workflow_;
     auto code = code_;
@@ -1203,6 +1538,13 @@ class UiSnowController final {
             if (replace || !user_message.empty())
              handle->set_last_message(display_string(user_message));
            handle->set_status_text(display_string(state));
+            handle->set_chat_empty(items.empty() && workflow_items.empty() &&
+                                   assistant.empty());
+            if (!user_message.empty()) handle->set_workspace_locked(true);
+            handle->set_chat_time(items.empty()
+                                      ? slint::SharedString{}
+                                      : slint::SharedString(
+                                            std::string(items.front().time)));
             handle->set_trace_duration(display_string(trace.duration));
             handle->set_workflow_duration(display_string(trace.turn_duration));
             handle->set_trace_turns(trace.turns);
@@ -1313,6 +1655,7 @@ class UiSnowController final {
       }
       handle->set_settings_status("已从项目级 .tokmon/config.yaml 载入");
     });
+    publish_workspace_info();
   }
 
   void apply_providers(const tokmon::cbor::Value& payload) {
@@ -1518,6 +1861,11 @@ class UiSnowController final {
     active_ray_.clear();
     photons_.clear();
     last_error_.clear();
+    {
+      std::scoped_lock lock(files_mutex_);
+      session_files_.clear();
+      full_preview_lines_.clear();
+    }
 
     auto timeline = timeline_;
     auto workflow = conversation_workflow_;
@@ -1535,11 +1883,15 @@ class UiSnowController final {
         handle->set_assistant_text("");
         handle->set_last_message("");
         handle->set_status_text("等待输入");
+        handle->set_chat_empty(true);
+        handle->set_chat_time("");
+        handle->set_workspace_locked(false);
         handle->set_setting_workspace(display);
         handle->set_settings_status("已切换工作空间；正在载入项目级 .tokmon/config.yaml");
         handle->set_daemon_state(state);
       }
     });
+    publish_workspace_info();
     load_settings(false);
     load_providers();
     return true;
@@ -1578,14 +1930,27 @@ class UiSnowController final {
         }
         active_ray_.clear();
         photons_.clear();
+        {
+          std::scoped_lock lock(files_mutex_);
+          session_files_.clear();
+          full_preview_lines_.clear();
+        }
+        publish_session_files(true);
         auto timeline = timeline_; auto workflow = conversation_workflow_; auto code = code_;
         auto window = window_;
         (void)slint::invoke_from_event_loop([timeline, workflow, code, window] {
           timeline->clear(); workflow->clear(); code->clear();
           if (auto locked = window.lock()) {
-            (*locked)->set_assistant_text("");
-            (*locked)->set_last_message("");
-            (*locked)->set_status_text("等待输入");
+            auto handle = *locked;
+            handle->set_assistant_text("");
+            handle->set_last_message("");
+            handle->set_chat_time("");
+            handle->set_status_text("等待输入");
+            handle->set_chat_empty(true);
+            handle->set_workspace_locked(false);
+            handle->set_selected_file_name("");
+            handle->set_file_added_lines(0);
+            handle->set_preview_content("");
           }
         });
         if (command.kind == "new-session" || command.text.empty()) continue;
@@ -1760,6 +2125,9 @@ class UiSnowController final {
   std::shared_ptr<slint::VectorModel<GanttSegment>> gantt_;
   std::shared_ptr<slint::VectorModel<NavigationItem>> navigation_model_;
   std::shared_ptr<std::vector<NavigationItem>> navigation_;
+  std::mutex files_mutex_;
+  std::vector<SessionFile> session_files_;
+  std::vector<CodeLine> full_preview_lines_;
   std::filesystem::path assets_;
   slint::ComponentWeakHandle<MainWindow> window_;
   std::mutex mutex_;
@@ -1959,11 +2327,48 @@ int main(int argc, char** argv) {
         }) + 1);
     const auto workspace = navigation_workspace_at(
         *navigation_state, project, navigation_workspace);
-    window->set_create_navigation_kind("session");
+    window->set_create_navigation_kind("会话");
     window->set_create_navigation_name(display_string(title));
     window->set_create_navigation_workspace(display_string(path_to_utf8(workspace)));
+    window->set_create_navigation_group(slint::SharedString{});
     window->set_create_navigation_error("");
     window->set_create_navigation_open(true);
+  });
+  window->on_quick_create([nav_model, navigation_state, window,
+                           navigation_workspace](int index) {
+    if (index < 0 || index >= static_cast<int>(nav_model->row_count())) return;
+    const auto clicked = *nav_model->row_data(index);
+    const auto found = std::ranges::find(*navigation_state, clicked.id,
+                                         &NavigationItem::id);
+    if (found == navigation_state->end()) return;
+    const auto state_index = static_cast<std::size_t>(
+        std::distance(navigation_state->begin(), found));
+    const auto workspace = navigation_workspace_at(
+        *navigation_state, state_index, navigation_workspace);
+    slint::SharedString group;
+    for (auto previous = state_index; previous > 0;) {
+      --previous;
+      if ((*navigation_state)[previous].indent >= found->indent) continue;
+      if (std::string((*navigation_state)[previous].kind) == "group") {
+        group = (*navigation_state)[previous].title;
+        break;
+      }
+    }
+    const auto title = "新会话 " + std::to_string(
+        std::ranges::count_if(*navigation_state, [](const NavigationItem& item) {
+          return item.kind == "session";
+        }) + 1);
+    window->set_create_navigation_kind("会话");
+    window->set_create_navigation_name(display_string(title));
+    window->set_create_navigation_workspace(display_string(path_to_utf8(workspace)));
+    window->set_create_navigation_group(group);
+    window->set_create_navigation_error("");
+    window->set_create_navigation_open(true);
+  });
+  window->on_clear_search([nav_model, navigation_state, window] {
+    window->set_search_text(slint::SharedString{});
+    refresh_navigation(nav_model, navigation_state, {},
+                       slint::ComponentWeakHandle<MainWindow>(window));
   });
   window->on_select_navigation([nav_model, navigation_state, window, &controller,
                                  navigation_workspace](int index) {
@@ -1983,7 +2388,8 @@ int main(int argc, char** argv) {
     const auto workspace = navigation_workspace_at(
         *navigation_state, state_index, navigation_workspace);
     refresh_navigation(nav_model, navigation_state,
-                       std::string(window->get_search_text()));
+                       std::string(window->get_search_text()),
+                       slint::ComponentWeakHandle<MainWindow>(window));
     controller.save_navigation();
     if (kind == "session") {
       window->set_session_title(title);
@@ -1997,8 +2403,10 @@ int main(int argc, char** argv) {
       controller.new_session(target);
     }
   });
-  window->on_search_changed([nav_model, navigation_state](const slint::SharedString& text) {
-    refresh_navigation(nav_model, navigation_state, std::string(text));
+  window->on_search_changed([nav_model, navigation_state, window](
+                                const slint::SharedString& text) {
+    refresh_navigation(nav_model, navigation_state, std::string(text),
+                       slint::ComponentWeakHandle<MainWindow>(window));
   });
   window->on_add_navigation([nav_model, navigation_state, assets, window] {
     NavigationItem item;
@@ -2015,38 +2423,121 @@ int main(int argc, char** argv) {
     item.workspace = window->get_setting_workspace();
     navigation_state->push_back(std::move(item));
     refresh_navigation(nav_model, navigation_state,
-                       std::string(window->get_search_text()));
+                       std::string(window->get_search_text()),
+                       slint::ComponentWeakHandle<MainWindow>(window));
   });
+  window->on_identify_project([](const slint::SharedString& path_value) {
+    return display_string(path_basename_utf8(std::string(path_value)));
+  });
+  window->on_project_in_group(
+      [navigation_state](const slint::SharedString& group_value,
+                         const slint::SharedString& path_value) -> bool {
+        const auto group = std::string(group_value);
+        const auto name = path_basename_utf8(std::string(path_value));
+        if (name.empty()) return false;
+        std::size_t index = 0;
+        while (index < navigation_state->size()) {
+          const auto& item = (*navigation_state)[index];
+          if (std::string(item.kind) == "group" && std::string(item.title) == group) {
+            for (auto next = index + 1;
+                 next < navigation_state->size() &&
+                 (*navigation_state)[next].indent > item.indent;
+                 ++next) {
+              if (std::string((*navigation_state)[next].kind) != "project") continue;
+              const auto project_title =
+                  path_basename_utf8(std::string((*navigation_state)[next].workspace));
+              if (std::string((*navigation_state)[next].title) == name ||
+                  project_title == name)
+                return true;
+            }
+            return false;
+          }
+          ++index;
+        }
+        return false;
+      });
   window->on_create_navigation([nav_model, navigation_state, assets, window, &controller,
                                  navigation_workspace](
       const slint::SharedString& kind_value, const slint::SharedString& title_value,
+      const slint::SharedString& group_value,
       const slint::SharedString& workspace_value) -> bool {
-    const auto kind = std::string(kind_value);
+    const auto kind = std::string(kind_value) == "会话" ? "session"
+        : std::string(kind_value) == "项目" ? "project"
+        : std::string(kind_value) == "分组" ? "group" : std::string(kind_value);
     const auto title = std::string(title_value);
+    const auto requested_group = std::string(group_value);
     if ((kind != "group" && kind != "project" && kind != "session") ||
         title.empty() || title.size() > 256) {
       window->set_create_navigation_error("名称必须为 1–256 个字符");
       return false;
     }
     std::size_t parent = navigation_state->size();
-    if (kind == "project") {
-      for (std::size_t index = 0; index < navigation_state->size(); ++index) {
-        if (!(*navigation_state)[index].selected) continue;
-        parent = navigation_ancestor_at(*navigation_state, index, "group");
-        break;
-      }
-      if (parent == navigation_state->size())
+    std::size_t host_group = navigation_state->size();
+    const auto locate_group = [&](const std::string_view preferred)
+        -> std::size_t {
+      if (!preferred.empty())
         for (std::size_t index = 0; index < navigation_state->size(); ++index)
-          if ((*navigation_state)[index].kind == "group") { parent = index; break; }
-    } else if (kind == "session") {
-      for (std::size_t index = 0; index < navigation_state->size(); ++index) {
-        if (!(*navigation_state)[index].selected) continue;
-        parent = navigation_ancestor_at(*navigation_state, index, "project");
-        break;
+          if (std::string((*navigation_state)[index].kind) == "group" &&
+              std::string((*navigation_state)[index].title) == preferred)
+            return index;
+      for (std::size_t index = 0; index < navigation_state->size(); ++index)
+        if ((*navigation_state)[index].kind == "group") return index;
+      return navigation_state->size();
+    };
+    if (kind == "group") {
+      parent = navigation_state->size();
+    } else if (kind == "project") {
+      host_group = locate_group(requested_group);
+      parent = host_group;
+    } else {
+      // The session attaches to an existing project of the chosen group whose
+      // workspace matches the requested directory; otherwise a fresh project
+      // is created under that group first.
+      host_group = locate_group(requested_group);
+      std::string normalized_requested;
+      if (auto normalized = normalize_workspace_path(
+              std::string(workspace_value), navigation_workspace))
+        normalized_requested = path_to_utf8(*normalized);
+      const auto project_name =
+          path_basename_utf8(normalized_requested.empty()
+                                 ? std::string(workspace_value)
+                                 : normalized_requested);
+      if (host_group != navigation_state->size()) {
+        for (auto next = host_group + 1;
+             next < navigation_state->size() &&
+             (*navigation_state)[next].indent > (*navigation_state)[host_group].indent;
+             ++next) {
+          if (std::string((*navigation_state)[next].kind) != "project") continue;
+          const auto stored = std::string((*navigation_state)[next].workspace);
+          const auto candidate_name =
+              path_basename_utf8(stored.empty()
+                                     ? std::string((*navigation_state)[next].title)
+                                     : stored);
+          if ((!stored.empty() && !normalized_requested.empty() &&
+               same_workspace(path_from_utf8(stored),
+                              path_from_utf8(normalized_requested))) ||
+              candidate_name == project_name) {
+            parent = next;
+            break;
+          }
+        }
+        if (parent == navigation_state->size() && !project_name.empty()) {
+          for (auto& item : *navigation_state) item.selected = false;
+          auto hosting = make_navigation_item(assets, tokmon::make_id("navigation"),
+              "project", project_name,
+              (*navigation_state)[host_group].indent + 1, true, true, {},
+              normalized_requested);
+          std::size_t insertion = host_group + 1;
+          while (insertion < navigation_state->size() &&
+                 (*navigation_state)[insertion].indent >
+                     (*navigation_state)[host_group].indent)
+            ++insertion;
+          navigation_state->insert(navigation_state->begin() +
+              static_cast<std::ptrdiff_t>(insertion), std::move(hosting));
+          host_group = insertion;
+        }
       }
-      if (parent == navigation_state->size())
-        for (std::size_t index = 0; index < navigation_state->size(); ++index)
-          if ((*navigation_state)[index].kind == "project") { parent = index; break; }
+      if (parent == navigation_state->size()) parent = host_group;
     }
 
     std::filesystem::path workspace = navigation_workspace;
@@ -2068,11 +2559,16 @@ int main(int argc, char** argv) {
       workspace = *normalized;
       if (kind == "project") {
         stored_workspace = path_to_utf8(workspace);
-      } else {
-        const auto inherited = navigation_workspace_at(
-            *navigation_state, parent, navigation_workspace);
-        if (!same_workspace(workspace, inherited))
-          stored_workspace = path_to_utf8(workspace);
+      } else if (kind == "session") {
+        if (parent != navigation_state->size() &&
+            std::string((*navigation_state)[parent].kind) == "project")
+          stored_workspace = std::string((*navigation_state)[parent].workspace);
+        else {
+          const auto inherited = navigation_workspace_at(
+              *navigation_state, parent, navigation_workspace);
+          if (!same_workspace(workspace, inherited))
+            stored_workspace = path_to_utf8(workspace);
+        }
       }
     }
     for (auto& item : *navigation_state) item.selected = false;
@@ -2090,9 +2586,9 @@ int main(int argc, char** argv) {
     }
     navigation_state->insert(navigation_state->begin() +
         static_cast<std::ptrdiff_t>(insertion), std::move(created));
-    refresh_navigation(nav_model, navigation_state, std::string(window->get_search_text()));
-    if (kind == "session") window->set_session_title(display_string(title));
-    else if (kind == "project") window->set_session_title(display_string(title));
+    refresh_navigation(nav_model, navigation_state, std::string(window->get_search_text()),
+                       slint::ComponentWeakHandle<MainWindow>(window));
+    window->set_session_title(display_string(title));
     controller.save_navigation();
     if (kind != "group") {
       const auto target = path_to_utf8(workspace);
@@ -2107,7 +2603,8 @@ int main(int argc, char** argv) {
     if (title.empty() || title.size() > 256) return;
     for (auto& item : *navigation_state)
       if (item.selected && item.kind == "session") { item.title = title_value; break; }
-    refresh_navigation(nav_model, navigation_state, std::string(window->get_search_text()));
+    refresh_navigation(nav_model, navigation_state, std::string(window->get_search_text()),
+                       slint::ComponentWeakHandle<MainWindow>(window));
     controller.save_navigation();
     controller.slash_command("/rename " + title,
         std::string(window->get_setting_provider()), std::string(window->get_model_name()),
@@ -2115,6 +2612,27 @@ int main(int argc, char** argv) {
   });
   window->on_choose_attachment([](bool directory) {
     return display_string(choose_attachment(directory));
+  });
+  window->on_open_change_workspace([&controller, window] {
+    window->set_change_workspace_path(
+        display_string(path_to_utf8(controller.current_workspace())));
+    window->set_change_workspace_open(true);
+  });
+  window->on_confirm_change_workspace(
+      [&controller](const slint::SharedString& path_value) {
+        const auto target = std::string(path_value);
+        if (target.empty()) return;
+        controller.switch_workspace(target);
+      });
+  window->on_select_project_file([&controller](int index) {
+    controller.select_session_file(index);
+  });
+  window->on_copy_text([&controller](const slint::SharedString& text) {
+    copy_to_clipboard(std::string_view(text));
+    controller.notify_copied();
+  });
+  window->on_filter_preview([&controller](const slint::SharedString& query) {
+    controller.filter_preview_lines(std::string(query));
   });
   window->on_cancel_settings([&controller] {
     controller.load_settings();
