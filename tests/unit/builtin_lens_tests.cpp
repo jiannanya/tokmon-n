@@ -182,6 +182,25 @@ TEST_CASE("every built-in Lens executes a declared refraction scenario") {
   }
 }
 
+TEST_CASE("local model recognizes a conversational arithmetic request and selects a real Lens") {
+  const auto lens = tokmon::make_builtin_lens("rhea");
+  RecordingHost host;
+  auto result = refract(lens, "model.call", "tokmon.model.call.v1",
+      tokmon::cbor::object({{"model", "local-deterministic"},
+          {"prompt", "请帮我计算 6 * 7，然后告诉我结果"}}), host);
+  REQUIRE(result);
+  const auto call = std::ranges::find_if(host.drafts, [](const auto& draft) {
+    return draft.kind == "model.tool-call";
+  });
+  REQUIRE(call != host.drafts.end());
+  const auto* arguments = tokmon::cbor::find(call->payload, "arguments");
+  REQUIRE(arguments != nullptr);
+  REQUIRE(tokmon::cbor::find(*arguments, "expression")->as_string() == "6 * 7");
+  REQUIRE(std::ranges::any_of(host.drafts, [](const auto& draft) {
+    return draft.kind == "model.reasoning-chunk";
+  }));
+}
+
 TEST_CASE("Styx executes argv without a shell and captures bounded output") {
   const auto root = lens_temporary_directory("styx");
   const auto lens = tokmon::make_builtin_lens("styx");
@@ -354,7 +373,7 @@ TEST_CASE("Snow CLI stdio carries concurrent stream events and closes in order")
   auto paths = tokmon::resolve_paths(root);
   REQUIRE(paths);
   tokmon::SnowServer server;
-  auto started = server.start(tokmon::default_snow_endpoint(paths->run),
+  auto started = server.start(tokmon::workspace_snow_endpoint(paths->run, root),
       [](const tokmon::SnowMessage& request) {
         if (request.kind == tokmon::SnowMessageKind::close)
           return tokmon::SnowMessage{.kind = tokmon::SnowMessageKind::closed,
@@ -403,6 +422,7 @@ TEST_CASE("Snow CLI stdio carries concurrent stream events and closes in order")
     REQUIRE(message);
     messages.push_back(std::move(*message));
   }
+  CAPTURE(output->stdout_text);
   REQUIRE(messages.size() == 4);
   REQUIRE(messages.back().kind == tokmon::SnowMessageKind::closed);
   REQUIRE(messages.back().request_id == 43);

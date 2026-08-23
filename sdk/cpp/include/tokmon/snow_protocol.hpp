@@ -32,6 +32,7 @@ struct SnowMessage {
 };
 
 [[nodiscard]] std::string_view to_string(SnowMessageKind kind) noexcept;
+[[nodiscard]] std::uint64_t next_snow_request_id();
 [[nodiscard]] cbor::Value to_cbor(const SnowMessage& message);
 [[nodiscard]] Result<SnowMessage> snow_message_from_cbor(const cbor::Value& value);
 

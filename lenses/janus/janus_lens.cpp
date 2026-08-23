@@ -102,10 +102,18 @@ Result<void> JanusLens::view(const PhotonWindow& photons, SurfaceBuilder& surfac
       {"input", input->payload},
       {"tool_result", result_ready ? result->payload : cbor::Value(nullptr)}})));
   const auto tool_schema_hash = sha256_hex("calculate@tokmon.math.calculate.v1");
+  const auto* selected_model = cbor::find(input->payload, "model");
+  const auto* access_mode = cbor::find(input->payload, "access_mode");
+  const auto* effort = cbor::find(input->payload, "effort");
   auto act = propose(source, "model.call", "tokmon.model.call.v1",
       "org.tokmon.lens.rhea", cbor::object({
           {"prompt", steering && steering->sequence > input->sequence ? text(*steering) : text(*input)},
           {"model", "local-deterministic"},
+          {"requested_model", selected_model ? std::string(selected_model->as_string())
+                                               : std::string("local-deterministic")},
+          {"access_mode", access_mode ? std::string(access_mode->as_string())
+                                       : std::string("完全访问")},
+          {"effort", effort ? std::string(effort->as_string()) : std::string("标准")},
           {"input_photon", input->id},
           {"after_tool_result", result_ready},
           {"model_surface_hash", model_surface_hash},

@@ -1,5 +1,6 @@
 #include "tokmon/snow_transport.hpp"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstring>
@@ -200,7 +201,9 @@ std::filesystem::path default_snow_endpoint(const std::filesystem::path& run_dir
 #endif
 }
 
-SnowClient::SnowClient(std::filesystem::path endpoint) : endpoint_(std::move(endpoint)) {}
+SnowClient::SnowClient(std::filesystem::path endpoint,
+                       const std::chrono::milliseconds connect_timeout)
+    : endpoint_(std::move(endpoint)), connect_timeout_(connect_timeout) {}
 
 Result<SnowMessage> SnowClient::request(const SnowMessage& message) const {
   return request_stream(message, {});
@@ -210,10 +213,13 @@ Result<SnowMessage> SnowClient::request_stream(const SnowMessage& message,
     const std::function<Result<void>(const SnowMessage&)>& on_stream) const {
 #if defined(_WIN32)
   const auto endpoint = endpoint_.wstring();
-  const auto connect_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  const auto connect_deadline = std::chrono::steady_clock::now() + connect_timeout_;
   Channel channel = invalid_channel;
   while (std::chrono::steady_clock::now() < connect_deadline) {
-    if (WaitNamedPipeW(endpoint.c_str(), 100)) {
+    const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+        connect_deadline - std::chrono::steady_clock::now());
+    const auto wait_ms = static_cast<DWORD>(std::clamp<std::int64_t>(remaining.count(), 1, 100));
+    if (WaitNamedPipeW(endpoint.c_str(), wait_ms)) {
       channel = CreateFileW(endpoint.c_str(), GENERIC_READ | GENERIC_WRITE, 0,
           nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
       if (channel != invalid_channel) break;

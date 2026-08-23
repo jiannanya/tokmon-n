@@ -5,6 +5,7 @@
 > 报告日期：2026-08-23  
 > 设计基线：[DESIGN.md](./DESIGN.md)  
 > 内置透镜详设：[BUILTIN-LENSES-DESIGN.md](./BUILTIN-LENSES-DESIGN.md)
+> UI、进程生命周期与端到端验收：[UI-DESKTOP-IMPLEMENTATION-REPORT.md](./UI-DESKTOP-IMPLEMENTATION-REPORT.md)
 
 ## 1. 本次交付结论
 
@@ -12,7 +13,7 @@
 
 Windows 当前目标构建已完成：
 
-- 核心与透镜测试：`77/77` 通过；
+- 核心、透镜、Snow 与生命周期测试：`79/79` 通过；
 - Slint 桌面目标：编译、链接成功；
 - 安装冒烟：成功，安装树共 81 个文件；
 - 动态透镜：20 个 DLL 全部生成；
@@ -113,10 +114,12 @@ Worker Protocol 使用 4-byte 大端长度 + canonical CBOR frame。C++ host 会
 - `tokmond`：唯一持有 `TokmonRuntime` 和 Photon append gate 的 daemon；
 - `tokmon`：Snow CLI 客户端，不拥有事实状态；
 - `tokmon-desktop`：Slint/Termon projection 客户端；
-- `tokmon-launcher`：启动与交接桌面进程；
+- `tokmon-launcher`：仅作为可选兼容快捷入口，不是 CLI 或桌面的前置进程；
 - `tokmon-lens-worker`：受管 C ABI、Node.js、CPython Lens 进程边界。
 
 会话支持同一 ray 的多轮追加。CLI `/new` 和桌面“新会话”只让下一输入创建新 ray。Snow chat 支持 `deadline_ms`；deadline 到达时取消 ray，在途进程先 cooperative stop，再终止进程树。
+
+`tokmon` 与 `tokmon-desktop` 都会先探测按工作区隔离的 Snow endpoint；不存在时由当前可执行文件定位同目录 `tokmond`，以后台无窗口方式拉起并等待 ready。客户端退出不终止共享 daemon；显式执行 `tokmon daemon stop` 才会发送 `daemon.shutdown` 并等待优雅停机。daemon 通过 Windows named mutex 或 POSIX `flock` 拒绝同 endpoint 的第二实例。
 
 Termon 不再用硬编码 timeline/code model 作为事实来源。桌面端先消费 snapshot/cursor delta；发送 chat 后再请求该 ray 的 `SurfaceSnapshot`，从 Termon 的 `ui.trajectory` 重建活动会话投影。
 
@@ -136,11 +139,11 @@ YAML loader 拒绝未知字段、未知 runtime、非法资源上限、缺失 en
 ### 8.1 核心构建和全量测试
 
 ```powershell
-cmake --build build/verify-tests --parallel 4
-ctest --test-dir build/verify-tests --output-on-failure
+cmake --build build/windows-msvc-ui-debug --target tokmond tokmon tokmon-desktop tokmon-tests -j 4
+ctest --test-dir build/windows-msvc-ui-debug --output-on-failure -C Debug
 ```
 
-结果：`77/77` 通过，`0` 失败，总耗时约 12.51 秒。
+结果：`79/79` 通过，`0` 失败，总耗时约 12.80 秒。
 
 测试包含：
 
@@ -191,7 +194,7 @@ cmake --install build/windows-msvc-ui-debug --prefix build/install-smoke
 - 当前完整编译与现实系统测试在 Windows 上执行。Cista 当前使用 Windows Credential Manager；非 Windows credential backend 保持明确 `unsupported`，不会退化成明文文件。
 - Chora 敏感 Blob 在 Windows 使用 DPAPI；非 Windows 未配置 envelope backend 时明确拒绝敏感写入。
 
-这些限制不影响本次 Windows 目标的 77 项测试与 Slint 构建，但若把“完成”定义为所有 OS/所有可选外部后端都做现场验收，则仍需相应平台或 daemon 环境。由于这些后端会 fail closed，缺少环境不会导致较弱隔离被冒充为成功。
+这些限制不影响本次 Windows 目标的 79 项测试与 Slint 构建，但若把“完成”定义为所有 OS/所有可选外部后端都做现场验收，则仍需相应平台或 daemon 环境。由于这些后端会 fail closed，缺少环境不会导致较弱隔离被冒充为成功。
 
 ## 10. 关键文件索引
 

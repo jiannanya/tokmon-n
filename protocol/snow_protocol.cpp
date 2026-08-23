@@ -1,6 +1,20 @@
 #include "tokmon/snow_protocol.hpp"
 
+#include <atomic>
+#include <random>
+
 namespace tokmon {
+
+std::uint64_t next_snow_request_id() {
+  static const std::uint64_t prefix = [] {
+    std::random_device random;
+    return (static_cast<std::uint64_t>(random()) << 32u) |
+           static_cast<std::uint64_t>(random());
+  }();
+  static std::atomic_uint64_t sequence{1};
+  const auto value = prefix ^ sequence.fetch_add(1, std::memory_order_relaxed);
+  return value == 0 ? sequence.fetch_add(1, std::memory_order_relaxed) : value;
+}
 
 std::string_view to_string(const SnowMessageKind kind) noexcept {
   switch (kind) {

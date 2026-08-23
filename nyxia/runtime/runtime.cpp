@@ -747,17 +747,24 @@ Result<void> TokmonRuntime::reconcile() {
 }
 
 Result<RayId> TokmonRuntime::submit(std::string input) {
+  return submit(std::move(input), cbor::Value::Map{});
+}
+Result<RayId> TokmonRuntime::submit(std::string input, cbor::Value context) {
   if (!engine_) return tl::unexpected(make_error(ErrorCode::invalid_state, "runtime is not open"));
-  return engine_->begin(std::move(input));
+  return engine_->begin(std::move(input), 0, std::move(context));
 }
 Result<RayId> TokmonRuntime::submit_to(const RayId& ray, std::string input) {
+  return submit_to(ray, std::move(input), cbor::Value::Map{});
+}
+Result<RayId> TokmonRuntime::submit_to(const RayId& ray, std::string input,
+                                       cbor::Value context) {
   if (!engine_) return tl::unexpected(make_error(ErrorCode::invalid_state, "runtime is not open"));
   auto history = store_.read_ray(ray);
   if (!history) return tl::unexpected(history.error());
   if (history->empty())
     return tl::unexpected(make_error(ErrorCode::not_found,
                                      "cannot continue an unknown ray"));
-  auto appended = engine_->continue_ray(ray, std::move(input));
+  auto appended = engine_->continue_ray(ray, std::move(input), 0, std::move(context));
   if (!appended) return tl::unexpected(appended.error());
   return ray;
 }

@@ -74,6 +74,7 @@ add_library(tokmon_core STATIC
   lenses/common/secret_store.cpp
   lenses/common/schema_validator.cpp
   protocol/snow_protocol.cpp
+  protocol/daemon_lifecycle.cpp
   protocol/snow_transport.cpp)
 
 target_include_directories(tokmon_core

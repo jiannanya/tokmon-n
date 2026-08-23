@@ -215,15 +215,16 @@ void RayTracingEngine::cancel_ray(const RayId& ray) noexcept {
   (void)beams_.stop_ray(ray);
 }
 
-Result<RayId> RayTracingEngine::begin(std::string input, MountEpoch epoch) {
+Result<RayId> RayTracingEngine::begin(std::string input, MountEpoch epoch,
+                                      cbor::Value context) {
   const auto ray = make_id("ray");
-  auto photon = continue_ray(ray, std::move(input), epoch);
+  auto photon = continue_ray(ray, std::move(input), epoch, std::move(context));
   if (!photon) return tl::unexpected(photon.error());
   return ray;
 }
 
 Result<Photon> RayTracingEngine::continue_ray(const RayId& ray, std::string input,
-                                               MountEpoch epoch) {
+                                               MountEpoch epoch, cbor::Value context) {
   if (ray.empty() || input.empty())
     return tl::unexpected(make_error(ErrorCode::invalid_argument,
                                      "ray and user input must be non-empty"));
@@ -234,9 +235,11 @@ Result<Photon> RayTracingEngine::continue_ray(const RayId& ray, std::string inpu
                                        "a cancelled ray cannot accept new input"));
   }
   if (epoch == 0) epoch = path_.snapshot()->epoch;
+  if (!context.as_map()) context = cbor::Value::Map{};
+  (*context.as_map())["text"] = std::move(input);
   return emit(PhotonDraft{.ray = ray, .kind = "user.input",
       .schema = "tokmon.user.input.v1",
-      .payload = cbor::object({{"text", std::move(input)}}), .epoch = epoch});
+      .payload = std::move(context), .epoch = epoch});
 }
 
 void RayTracingEngine::request_stop() noexcept {

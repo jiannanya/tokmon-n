@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <map>
+#include <optional>
 #include <thread>
 
 #include "lenses/common/http_client.hpp"
@@ -60,16 +61,27 @@ double number_field(const cbor::Value& value, const std::string_view key) {
   return 0.0;
 }
 
-bool arithmetic_expression(std::string value) {
-  value.erase(std::remove_if(value.begin(), value.end(),
-      [](const unsigned char character) { return std::isspace(character) != 0; }), value.end());
-  const auto op = value.find_first_of("+-*/", 1);
-  if (op == std::string::npos) return false;
-  char* end = nullptr;
-  (void)std::strtod(value.substr(0, op).c_str(), &end);
-  if (end == nullptr || *end != '\0') return false;
-  (void)std::strtod(value.substr(op + 1).c_str(), &end);
-  return end != nullptr && *end == '\0';
+std::optional<std::string> arithmetic_expression(const std::string& value) {
+  for (std::size_t start = 0; start < value.size(); ++start) {
+    const auto character = static_cast<unsigned char>(value[start]);
+    if (std::isdigit(character) == 0 && value[start] != '.' && value[start] != '-' &&
+        value[start] != '+') continue;
+    char* left_end = nullptr;
+    (void)std::strtod(value.c_str() + start, &left_end);
+    if (!left_end || left_end == value.c_str() + start) continue;
+    auto* operation = left_end;
+    while (*operation != '\0' && std::isspace(static_cast<unsigned char>(*operation)) != 0)
+      ++operation;
+    if (*operation != '+' && *operation != '-' && *operation != '*' && *operation != '/')
+      continue;
+    auto* right = operation + 1;
+    while (*right != '\0' && std::isspace(static_cast<unsigned char>(*right)) != 0) ++right;
+    char* right_end = nullptr;
+    (void)std::strtod(right, &right_end);
+    if (!right_end || right_end == right) continue;
+    return value.substr(start, static_cast<std::size_t>(right_end - value.c_str()) - start);
+  }
+  return std::nullopt;
 }
 
 bool local_endpoint(const std::string_view endpoint) {
@@ -404,10 +416,14 @@ Result<RefractionResult> RheaLens::refract(const PhotonWindow& photons, const Ac
               (value ? cbor::diagnostic(*value) : std::string("未知"))},
                         {"model", model}, {"provider", "local"}})); !result)
         return tl::unexpected(result.error());
-    } else if (arithmetic_expression(prompt)) {
+    } else if (const auto expression = arithmetic_expression(prompt)) {
+      if (auto result = append("model.reasoning-chunk", "tokmon.model.reasoning.v1",
+          cbor::object({{"text", "识别到算术意图，正在组合 calculate 透镜能力。"},
+                        {"index", 0}})); !result)
+        return tl::unexpected(result.error());
       if (auto result = append("model.tool-call", "tokmon.model.tool-call.v1",
           cbor::object({{"tool", "calculate"}, {"schema", "tokmon.math.calculate.v1"},
-                        {"arguments", cbor::object({{"expression", prompt}})}})); !result)
+                        {"arguments", cbor::object({{"expression", *expression}})}})); !result)
         return tl::unexpected(result.error());
     } else if (auto result = append("assistant.message", "tokmon.assistant.message.v1",
         cbor::object({{"text", "已通过 A Lens to Them All 光路处理：" + prompt},

@@ -71,6 +71,85 @@ component MenuOption inherits Rectangle {
     option-touch := TouchArea { clicked => { root.chosen(); } }
 }
 
+component SettingsNavigationRow inherits Rectangle {
+    in property <string> label;
+    in property <string> glyph;
+    in property <bool> active: false;
+    callback chosen;
+    height: 38px;
+    border-radius: 8px;
+    background: active ? #fef3d6 : nav-touch.has-hover ? #f5f5f4 : transparent;
+    Text {
+        x: 12px; width: 22px; height: parent.height;
+        text: root.glyph; color: root.active ? #c2410c : #78716c;
+        font-size: 14px; vertical-alignment: center; horizontal-alignment: center;
+    }
+    Text {
+        x: 43px; width: parent.width - 55px; height: parent.height;
+        text: root.label; color: root.active ? #855702 : #44403c;
+        font-size: 12px; font-weight: root.active ? 700 : 500;
+        vertical-alignment: center;
+    }
+    nav-touch := TouchArea { clicked => { root.chosen(); } }
+}
+
+component SettingsSwitch inherits Rectangle {
+    in-out property <bool> checked: false;
+    callback toggled(bool);
+    width: 40px; height: 22px; border-radius: 11px;
+    background: checked ? #f59e0b : #d6d3d1;
+    Rectangle {
+        x: root.checked ? 20px : 2px; y: 2px;
+        width: 18px; height: 18px; border-radius: 9px;
+        background: white; drop-shadow-blur: 2px; drop-shadow-color: #00000020;
+    }
+    TouchArea {
+        clicked => { root.checked = !root.checked; root.toggled(root.checked); }
+    }
+}
+
+component SettingsChoice inherits Rectangle {
+    in property <string> label;
+    in property <bool> active: false;
+    callback chosen;
+    height: 32px;
+    border-radius: 7px;
+    border-width: 1px;
+    border-color: active ? #f5c86b : #e7e5e4;
+    background: active ? #fef3d6 : choice-touch.has-hover ? #fafaf9 : white;
+    Text {
+        width: parent.width; height: parent.height; text: root.label;
+        color: root.active ? #855702 : #57534e; font-size: 10.5px;
+        font-weight: root.active ? 700 : 500;
+        horizontal-alignment: center; vertical-alignment: center; overflow: elide;
+    }
+    choice-touch := TouchArea { clicked => { root.chosen(); } }
+}
+
+component SettingsValueRow inherits Rectangle {
+    in property <string> title;
+    in property <string> detail;
+    in property <string> value;
+    callback chosen;
+    height: 64px;
+    background: row-touch.has-hover ? #fafaf9 : transparent;
+    border-width: 1px; border-color: #f0eee8;
+    Text {
+        x: 14px; y: 10px; width: parent.width - 180px; height: 18px;
+        text: root.title; color: #292524; font-size: 11px; font-weight: 600;
+    }
+    Text {
+        x: 14px; y: 31px; width: parent.width - 180px; height: 17px;
+        text: root.detail; color: #a8a29e; font-size: 9.5px; overflow: elide;
+    }
+    Text {
+        x: parent.width - 160px; y: 0px; width: 138px; height: parent.height;
+        text: root.value + "  ›"; color: #57534e; font-size: 10.5px;
+        horizontal-alignment: right; vertical-alignment: center; overflow: elide;
+    }
+    row-touch := TouchArea { clicked => { root.chosen(); } }
+}
+
 component SidebarRow inherits Rectangle {
     in property <NavigationItem> item;
     callback selected;
@@ -210,6 +289,8 @@ export component MainWindow inherits Window {
     in-out property <string> effort: "最高";
     in-out property <string> composer-text;
     in-out property <string> last-message: "使用 faster-whisper 模型对音频文件进行转录，输出带时间戳的字幕（Segmentation 模式）。";
+    in-out property <string> assistant-text: "已理解你的需求，我将沿当前光路组合所需透镜，并把执行结果实时投影到这里。";
+    in-out property <string> daemon-state: "后台服务已连接";
     in-out property <bool> sidebar-visible: true;
     in-out property <bool> code-visible: true;
     in-out property <bool> trajectory-selected: true;
@@ -228,12 +309,42 @@ export component MainWindow inherits Window {
     in-out property <bool> window-maximized: false;
     in-out property <length> sidebar-width: 240px;
     in-out property <length> code-panel-width: 440px;
+    in-out property <int> settings-page: 0;
+    in-out property <string> settings-search;
+    in-out property <string> setting-language: "简体中文";
+    in-out property <string> setting-startup: "上次打开的会话";
+    in-out property <bool> setting-autosave: true;
+    in-out property <string> setting-provider: "Tokmon 官方";
+    in-out property <string> setting-main-model: "local-deterministic";
+    in-out property <string> setting-reasoning: "标准";
+    in-out property <string> setting-command-approval: "按需确认";
+    in-out property <bool> setting-network: true;
+    in-out property <bool> setting-high-risk: true;
+    in-out property <string> setting-workspace: ".";
+    in-out property <string> setting-index-mode: "标准";
+    in-out property <bool> setting-workspace-sync: true;
+    in-out property <bool> setting-git: true;
+    in-out property <bool> setting-notifications: true;
+    in-out property <bool> setting-desktop-notifications: true;
+    in-out property <bool> setting-message-alerts: true;
+    in-out property <bool> setting-quiet-hours: false;
+    in-out property <bool> setting-dark-theme: false;
+    in-out property <int> setting-accent: 0;
+    in-out property <string> setting-density: "舒适";
+    in-out property <int> setting-font-scale: 100;
+    in-out property <int> shortcut-editing: -1;
+    in-out property <string> setting-nickname: "Jiandong Chen";
+    in-out property <string> setting-email: "jiandong.chen@tokmon.ai";
+    in-out property <bool> setting-cloud-sync: true;
+    in-out property <string> settings-status: "项目级 · .tokmon/config.yaml";
     callback send-message(string);
     callback new-session;
     callback select-navigation(int);
     callback search-changed(string);
     callback add-navigation;
     callback reconcile;
+    callback save-settings;
+    callback reset-settings;
     callback drag-window;
     callback minimize-window;
     callback toggle-maximize-window;
@@ -554,7 +665,7 @@ export component MainWindow inherits Window {
                         }
                         Text {
                             x: 56px; y: 169px; width: parent.width - 76px; height: 32px;
-                            text: "已理解你的需求，我将使用 faster-whisper 进行音频转录，并输出带时间戳的字幕文件。我会分步骤完成任务并实时向你汇报进度。";
+                            text: root.assistant-text;
                             color: #44403c; font-size: 10.5px; wrap: word-wrap;
                         }
                         Rectangle {
@@ -604,7 +715,7 @@ export component MainWindow inherits Window {
                                 }
                             }
                             Text {
-                                text: "已理解你的需求。Tokmon 将沿当前 LightPath 推进任务，并把每个 Fact 与 Act 结果追加到因果光子流。";
+                                text: root.assistant-text;
                                 color: #44403c; font-size: 12px; wrap: word-wrap;
                             }
                         }
@@ -909,57 +1020,328 @@ export component MainWindow inherits Window {
     }
 
     if root.settings-open: Rectangle {
-        x: 0px; y: 0px;
-        width: parent.width;
-        height: parent.height;
-        background: #0000003d;
+        x: 0px; y: 0px; width: parent.width; height: parent.height;
+        background: #1c19174f;
         TouchArea { clicked => { root.settings-open = false; } }
-        Rectangle {
-            width: min(parent.width - 40px, 430px); height: 328px;
-            x: (parent.width - self.width) / 2; y: max(20px, (parent.height - self.height) / 2);
-            border-radius: 14px; background: #ffffff;
+        settings-dialog := Rectangle {
+            width: min(parent.width - 40px, 1120px);
+            height: min(parent.height - 40px, 720px);
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            border-radius: 16px; clip: true; background: white;
             border-width: 1px; border-color: #e7e5e4;
-            drop-shadow-blur: 18px; drop-shadow-color: #0000002c;
-            Text { x: 20px; y: 17px; text: "设置"; color: #292524; font-size: 15px; font-weight: 700; }
-            ToolIcon { x: parent.width - 38px; y: 10px; source: @image-url("../assets/figma/icon-39.svg"); clicked => { root.settings-open = false; } }
-            Rectangle { x: 20px; y: 54px; width: parent.width - 40px; height: 1px; background: #e7e5e4; }
-            Text { x: 20px; y: 72px; text: "界面布局"; color: #78716c; font-size: 10.5px; font-weight: 600; }
+            drop-shadow-blur: 24px; drop-shadow-color: #0000003a;
+
             Rectangle {
-                x: 20px; y: 99px; width: parent.width - 40px; height: 42px;
-                Text { text: "显示侧边栏"; color: #44403c; font-size: 11px; vertical-alignment: center; }
-                Rectangle {
-                    x: parent.width - 43px; y: 10px; width: 36px; height: 21px; border-radius: 11px;
-                    background: root.sidebar-visible ? #f59e0b : #d6d3d1;
-                    Rectangle { x: root.sidebar-visible ? 18px : 2px; y: 2px; width: 17px; height: 17px; border-radius: 9px; background: white; }
-                    TouchArea { clicked => { root.sidebar-visible = !root.sidebar-visible; } }
+                x: 0px; y: 0px; width: parent.width; height: 56px;
+                background: #ffffff; border-width: 1px; border-color: #f0eee8;
+                Text {
+                    x: 22px; width: 120px; height: parent.height;
+                    text: "设置"; color: #292524; font-size: 16px; font-weight: 700;
+                    vertical-alignment: center;
+                }
+                Text {
+                    x: 92px; width: parent.width - 160px; height: parent.height;
+                    text: root.settings-status; color: #a8a29e; font-size: 9.5px;
+                    vertical-alignment: center;
+                }
+                ToolIcon {
+                    x: parent.width - 42px; y: 15px;
+                    source: @image-url("../assets/figma/icon-39.svg");
+                    clicked => { root.settings-open = false; }
                 }
             }
+
             Rectangle {
-                x: 20px; y: 145px; width: parent.width - 40px; height: 42px;
-                Text { text: "显示代码审阅面板"; color: #44403c; font-size: 11px; vertical-alignment: center; }
+                x: 0px; y: 56px; width: 220px; height: parent.height - 112px;
+                background: #fafaf9; border-width: 1px; border-color: #f0eee8;
                 Rectangle {
-                    x: parent.width - 43px; y: 10px; width: 36px; height: 21px; border-radius: 11px;
-                    background: root.code-visible ? #f59e0b : #d6d3d1;
-                    Rectangle { x: root.code-visible ? 18px : 2px; y: 2px; width: 17px; height: 17px; border-radius: 9px; background: white; }
-                    TouchArea { clicked => { root.code-visible = !root.code-visible; } }
+                    x: 14px; y: 14px; width: parent.width - 28px; height: 34px;
+                    border-radius: 9px; background: #f0eee8;
+                    Image { x: 10px; y: 9px; width: 15px; height: 15px; source: @image-url("../assets/figma/icon-03.svg"); }
+                    LineEdit {
+                        x: 31px; y: 1px; width: parent.width - 36px; height: 32px;
+                        placeholder-text: "搜索设置项"; font-size: 10.5px;
+                        text <=> root.settings-search;
+                    }
+                }
+                VerticalLayout {
+                    x: 12px; y: 62px; width: parent.width - 24px; height: 312px; spacing: 1px;
+                    SettingsNavigationRow { glyph: "⚙"; label: "通用"; active: root.settings-page == 0; chosen => { root.settings-page = 0; } }
+                    SettingsNavigationRow { glyph: "◇"; label: "智能体与模型"; active: root.settings-page == 1; chosen => { root.settings-page = 1; } }
+                    SettingsNavigationRow { glyph: "◈"; label: "权限与安全"; active: root.settings-page == 2; chosen => { root.settings-page = 2; } }
+                    SettingsNavigationRow { glyph: "▣"; label: "工作区"; active: root.settings-page == 3; chosen => { root.settings-page = 3; } }
+                    SettingsNavigationRow { glyph: "◉"; label: "通知"; active: root.settings-page == 4; chosen => { root.settings-page = 4; } }
+                    SettingsNavigationRow { glyph: "◐"; label: "外观"; active: root.settings-page == 5; chosen => { root.settings-page = 5; } }
+                    SettingsNavigationRow { glyph: "⌘"; label: "快捷键"; active: root.settings-page == 6; chosen => { root.settings-page = 6; } }
+                    SettingsNavigationRow { glyph: "◎"; label: "账户"; active: root.settings-page == 7; chosen => { root.settings-page = 7; } }
+                }
+                Rectangle {
+                    x: 14px; y: parent.height - 51px; width: parent.width - 28px; height: 36px;
+                    border-radius: 8px; background: #fff7ed;
+                    StatusDot { x: 10px; y: 14px; tone: "success"; }
+                    Text {
+                        x: 25px; width: parent.width - 34px; height: parent.height;
+                        text: root.daemon-state; color: #78716c; font-size: 9.5px;
+                        vertical-alignment: center; overflow: elide;
+                    }
                 }
             }
-            Rectangle {
-                x: 20px; y: 191px; width: parent.width - 40px; height: 42px;
-                Text { text: "默认展开任务步骤"; color: #44403c; font-size: 11px; vertical-alignment: center; }
-                Rectangle {
-                    x: parent.width - 43px; y: 10px; width: 36px; height: 21px; border-radius: 11px;
-                    background: root.task-expanded ? #f59e0b : #d6d3d1;
-                    Rectangle { x: root.task-expanded ? 18px : 2px; y: 2px; width: 17px; height: 17px; border-radius: 9px; background: white; }
-                    TouchArea { clicked => { root.task-expanded = !root.task-expanded; } }
+
+            settings-content := Rectangle {
+                x: 220px; y: 56px; width: parent.width - 450px; height: parent.height - 112px;
+                background: white;
+                Text {
+                    x: 28px; y: 23px; width: parent.width - 56px; height: 25px;
+                    text: root.settings-page == 0 ? "通用设置" :
+                          root.settings-page == 1 ? "智能体与模型" :
+                          root.settings-page == 2 ? "权限与安全" :
+                          root.settings-page == 3 ? "工作区" :
+                          root.settings-page == 4 ? "通知" :
+                          root.settings-page == 5 ? "外观" :
+                          root.settings-page == 6 ? "快捷键" : "账户";
+                    color: #292524; font-size: 15px; font-weight: 700;
+                }
+                Text {
+                    x: 28px; y: 50px; width: parent.width - 56px; height: 18px;
+                    text: root.settings-page == 0 ? "管理语言、启动行为、保存与更新偏好" :
+                          root.settings-page == 1 ? "选择默认智能体、模型提供方与推理强度" :
+                          root.settings-page == 2 ? "控制文件、命令、网络与高风险操作" :
+                          root.settings-page == 3 ? "配置当前项目的索引、同步和 Git 集成" :
+                          root.settings-page == 4 ? "决定 Tokmon 何时以及如何提醒你" :
+                          root.settings-page == 5 ? "调整主题、强调色、密度和字号" :
+                          root.settings-page == 6 ? "查看并重新录制常用操作的快捷键" : "管理个人信息、方案与云同步";
+                    color: #a8a29e; font-size: 9.5px;
+                }
+                Rectangle { x: 28px; y: 79px; width: parent.width - 56px; height: 1px; background: #f0eee8; }
+
+                if root.settings-page == 0: Rectangle {
+                    x: 28px; y: 94px; width: parent.width - 56px; height: parent.height - 110px;
+                    SettingsValueRow { x: 0px; y: 0px; width: parent.width; title: "应用语言"; detail: "设置界面与系统消息使用的语言"; value: root.setting-language; chosen => { root.setting-language = root.setting-language == "简体中文" ? "English" : "简体中文"; } }
+                    SettingsValueRow { x: 0px; y: 70px; width: parent.width; title: "启动时打开"; detail: "Tokmon Desktop 启动后的默认位置"; value: root.setting-startup; chosen => { root.setting-startup = root.setting-startup == "首页" ? "上次打开的会话" : "首页"; } }
+                    Rectangle {
+                        x: 0px; y: 140px; width: parent.width; height: 64px; border-width: 1px; border-color: #f0eee8;
+                        Text { x: 14px; y: 10px; text: "自动保存"; color: #292524; font-size: 11px; font-weight: 600; }
+                        Text { x: 14px; y: 31px; text: "每 5 分钟保存会话和工作区状态"; color: #a8a29e; font-size: 9.5px; }
+                        SettingsSwitch { x: parent.width - 54px; y: 20px; checked: root.setting-autosave; toggled(value) => { root.setting-autosave = value; } }
+                    }
+                    SettingsValueRow { x: 0px; y: 210px; width: parent.width; title: "更新通道"; detail: "稳定版提供经过完整验证的更新"; value: "稳定版"; }
+                }
+
+                if root.settings-page == 1: Rectangle {
+                    x: 28px; y: 94px; width: parent.width - 56px; height: parent.height - 110px;
+                    SettingsValueRow { x: 0px; y: 0px; width: parent.width; title: "默认智能体"; detail: "新会话默认使用的任务角色"; value: "代码助手"; }
+                    SettingsValueRow { x: 0px; y: 70px; width: parent.width; title: "模型提供方"; detail: "官方托管或你自己的兼容端点"; value: root.setting-provider; chosen => { root.setting-provider = root.setting-provider == "Tokmon 官方" ? "自定义" : "Tokmon 官方"; } }
+                    SettingsValueRow { x: 0px; y: 140px; width: parent.width; title: "主模型"; detail: "用于计划、对话和工具选择"; value: root.setting-main-model; chosen => { root.setting-main-model = root.setting-main-model == "local-deterministic" ? "faster-whisper-large-v3-turbo" : "local-deterministic"; } }
+                    Text { x: 14px; y: 224px; text: "推理强度"; color: #292524; font-size: 11px; font-weight: 600; }
+                    HorizontalLayout {
+                        x: 14px; y: 249px; width: parent.width - 28px; height: 32px; spacing: 8px;
+                        SettingsChoice { horizontal-stretch: 1; label: "低"; active: root.setting-reasoning == "低"; chosen => { root.setting-reasoning = "低"; } }
+                        SettingsChoice { horizontal-stretch: 1; label: "标准"; active: root.setting-reasoning == "标准"; chosen => { root.setting-reasoning = "标准"; } }
+                        SettingsChoice { horizontal-stretch: 1; label: "高"; active: root.setting-reasoning == "高"; chosen => { root.setting-reasoning = "高"; } }
+                    }
+                }
+
+                if root.settings-page == 2: Rectangle {
+                    x: 28px; y: 94px; width: parent.width - 56px; height: parent.height - 110px;
+                    SettingsValueRow { x: 0px; y: 0px; width: parent.width; title: "文件访问"; detail: "仅访问当前工作区与已授权目录"; value: "受信路径"; }
+                    SettingsValueRow { x: 0px; y: 70px; width: parent.width; title: "命令审批"; detail: "控制命令执行前是否需要确认"; value: root.setting-command-approval; chosen => { root.setting-command-approval = root.setting-command-approval == "自动执行" ? "按需确认" : root.setting-command-approval == "按需确认" ? "禁止执行" : "自动执行"; } }
+                    Rectangle {
+                        x: 0px; y: 140px; width: parent.width; height: 64px; border-width: 1px; border-color: #f0eee8;
+                        Text { x: 14px; y: 10px; text: "网络访问"; color: #292524; font-size: 11px; font-weight: 600; }
+                        Text { x: 14px; y: 31px; text: "允许透镜访问已授权的网络端点"; color: #a8a29e; font-size: 9.5px; }
+                        SettingsSwitch { x: parent.width - 54px; y: 20px; checked: root.setting-network; toggled(value) => { root.setting-network = value; } }
+                    }
+                    Rectangle {
+                        x: 0px; y: 210px; width: parent.width; height: 64px; border-width: 1px; border-color: #f0eee8;
+                        Text { x: 14px; y: 10px; text: "高风险操作二次确认"; color: #292524; font-size: 11px; font-weight: 600; }
+                        Text { x: 14px; y: 31px; text: "外部不可逆操作始终要求显式确认"; color: #a8a29e; font-size: 9.5px; }
+                        SettingsSwitch { x: parent.width - 54px; y: 20px; checked: root.setting-high-risk; toggled(value) => { root.setting-high-risk = value; } }
+                    }
+                }
+
+                if root.settings-page == 3: Rectangle {
+                    x: 28px; y: 94px; width: parent.width - 56px; height: parent.height - 110px;
+                    SettingsValueRow { x: 0px; y: 0px; width: parent.width; title: "默认工作区"; detail: "新项目和文件选择器的初始目录"; value: root.setting-workspace; }
+                    SettingsValueRow { x: 0px; y: 70px; width: parent.width; title: "索引模式"; detail: "平衡搜索召回率、速度与磁盘占用"; value: root.setting-index-mode; chosen => { root.setting-index-mode = root.setting-index-mode == "标准" ? "完整" : root.setting-index-mode == "完整" ? "轻量" : "标准"; } }
+                    Rectangle {
+                        x: 0px; y: 140px; width: parent.width; height: 64px; border-width: 1px; border-color: #f0eee8;
+                        Text { x: 14px; y: 10px; text: "自动同步"; color: #292524; font-size: 11px; font-weight: 600; }
+                        Text { x: 14px; y: 31px; text: "文件变更后自动刷新工作区投影"; color: #a8a29e; font-size: 9.5px; }
+                        SettingsSwitch { x: parent.width - 54px; y: 20px; checked: root.setting-workspace-sync; toggled(value) => { root.setting-workspace-sync = value; } }
+                    }
+                    Rectangle {
+                        x: 0px; y: 210px; width: parent.width; height: 64px; border-width: 1px; border-color: #f0eee8;
+                        Text { x: 14px; y: 10px; text: "Git 集成"; color: #292524; font-size: 11px; font-weight: 600; }
+                        Text { x: 14px; y: 31px; text: "显示差异、分支和提交上下文"; color: #a8a29e; font-size: 9.5px; }
+                        SettingsSwitch { x: parent.width - 54px; y: 20px; checked: root.setting-git; toggled(value) => { root.setting-git = value; } }
+                    }
+                }
+
+                if root.settings-page == 4: Rectangle {
+                    x: 28px; y: 94px; width: parent.width - 56px; height: parent.height - 110px;
+                    Rectangle {
+                        x: 0px; y: 0px; width: parent.width; height: 64px; border-width: 1px; border-color: #f0eee8;
+                        Text { x: 14px; y: 10px; text: "启用通知"; color: #292524; font-size: 11px; font-weight: 600; }
+                        Text { x: 14px; y: 31px; text: "允许 Tokmon 发送状态提醒"; color: #a8a29e; font-size: 9.5px; }
+                        SettingsSwitch { x: parent.width - 54px; y: 20px; checked: root.setting-notifications; toggled(value) => { root.setting-notifications = value; } }
+                    }
+                    Rectangle {
+                        x: 0px; y: 70px; width: parent.width; height: 64px; border-width: 1px; border-color: #f0eee8;
+                        Text { x: 14px; y: 10px; text: "桌面通知"; color: #292524; font-size: 11px; font-weight: 600; }
+                        Text { x: 14px; y: 31px; text: "任务完成或需要审批时显示系统通知"; color: #a8a29e; font-size: 9.5px; }
+                        SettingsSwitch { x: parent.width - 54px; y: 20px; checked: root.setting-desktop-notifications; toggled(value) => { root.setting-desktop-notifications = value; } }
+                    }
+                    Rectangle {
+                        x: 0px; y: 140px; width: parent.width; height: 64px; border-width: 1px; border-color: #f0eee8;
+                        Text { x: 14px; y: 10px; text: "消息提醒"; color: #292524; font-size: 11px; font-weight: 600; }
+                        Text { x: 14px; y: 31px; text: "模型回复和工具结果到达时提醒"; color: #a8a29e; font-size: 9.5px; }
+                        SettingsSwitch { x: parent.width - 54px; y: 20px; checked: root.setting-message-alerts; toggled(value) => { root.setting-message-alerts = value; } }
+                    }
+                    Rectangle {
+                        x: 0px; y: 210px; width: parent.width; height: 64px; border-width: 1px; border-color: #f0eee8;
+                        Text { x: 14px; y: 10px; text: "免打扰"; color: #292524; font-size: 11px; font-weight: 600; }
+                        Text { x: 14px; y: 31px; text: "22:00 — 08:00 暂停非关键通知"; color: #a8a29e; font-size: 9.5px; }
+                        SettingsSwitch { x: parent.width - 54px; y: 20px; checked: root.setting-quiet-hours; toggled(value) => { root.setting-quiet-hours = value; } }
+                    }
+                }
+
+                if root.settings-page == 5: Rectangle {
+                    x: 28px; y: 94px; width: parent.width - 56px; height: parent.height - 110px;
+                    Text { x: 14px; y: 5px; text: "主题模式"; color: #292524; font-size: 11px; font-weight: 600; }
+                    HorizontalLayout {
+                        x: 14px; y: 30px; width: parent.width - 28px; height: 32px; spacing: 8px;
+                        SettingsChoice { horizontal-stretch: 1; label: "浅色"; active: !root.setting-dark-theme; chosen => { root.setting-dark-theme = false; } }
+                        SettingsChoice { horizontal-stretch: 1; label: "深色"; active: root.setting-dark-theme; chosen => { root.setting-dark-theme = true; } }
+                    }
+                    Text { x: 14px; y: 88px; text: "强调色"; color: #292524; font-size: 11px; font-weight: 600; }
+                    HorizontalLayout {
+                        x: 14px; y: 114px; width: 220px; height: 30px; spacing: 10px;
+                        for color[index] in [#f59e0b, #ef4444, #8b5cf6, #3b82f6, #22c55e, #78716c]: Rectangle {
+                            width: 28px; height: 28px; border-radius: 14px; background: color;
+                            border-width: root.setting-accent == index ? 3px : 0px; border-color: #292524;
+                            TouchArea { clicked => { root.setting-accent = index; } }
+                        }
+                    }
+                    Text { x: 14px; y: 173px; text: "界面密度"; color: #292524; font-size: 11px; font-weight: 600; }
+                    HorizontalLayout {
+                        x: 14px; y: 198px; width: parent.width - 28px; height: 32px; spacing: 8px;
+                        SettingsChoice { horizontal-stretch: 1; label: "紧凑"; active: root.setting-density == "紧凑"; chosen => { root.setting-density = "紧凑"; } }
+                        SettingsChoice { horizontal-stretch: 1; label: "舒适"; active: root.setting-density == "舒适"; chosen => { root.setting-density = "舒适"; } }
+                        SettingsChoice { horizontal-stretch: 1; label: "宽松"; active: root.setting-density == "宽松"; chosen => { root.setting-density = "宽松"; } }
+                    }
+                    SettingsValueRow { x: 0px; y: 249px; width: parent.width; title: "字体大小"; detail: "界面文本相对系统字号"; value: root.setting-font-scale + "%"; chosen => { root.setting-font-scale = root.setting-font-scale >= 125 ? 90 : root.setting-font-scale + 10; } }
+                }
+
+                if root.settings-page == 6: Rectangle {
+                    x: 28px; y: 94px; width: parent.width - 56px; height: parent.height - 110px;
+                    SettingsValueRow { x: 0px; y: 0px; width: parent.width; title: "新建会话"; detail: "创建一个空白因果光线"; value: root.shortcut-editing == 0 ? "请按下快捷键…" : "Ctrl + N"; chosen => { root.shortcut-editing = 0; } }
+                    SettingsValueRow { x: 0px; y: 70px; width: parent.width; title: "打开设置"; detail: "显示当前设置弹窗"; value: root.shortcut-editing == 1 ? "请按下快捷键…" : "Ctrl + ,"; chosen => { root.shortcut-editing = 1; } }
+                    SettingsValueRow { x: 0px; y: 140px; width: parent.width; title: "发送消息"; detail: "提交输入并推进当前光线"; value: root.shortcut-editing == 2 ? "请按下快捷键…" : "Enter"; chosen => { root.shortcut-editing = 2; } }
+                    SettingsValueRow { x: 0px; y: 210px; width: parent.width; title: "命令面板"; detail: "搜索全部可用动作"; value: root.shortcut-editing == 3 ? "请按下快捷键…" : "Ctrl + Shift + P"; chosen => { root.shortcut-editing = 3; } }
+                }
+
+                if root.settings-page == 7: Rectangle {
+                    x: 28px; y: 94px; width: parent.width - 56px; height: parent.height - 110px;
+                    Rectangle { x: 14px; y: 6px; width: 58px; height: 58px; border-radius: 29px; background: #fef3d6;
+                        Text { text: "JC"; color: #855702; font-size: 17px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                    Text { x: 88px; y: 12px; text: root.setting-nickname; color: #292524; font-size: 13px; font-weight: 700; }
+                    Text { x: 88px; y: 36px; text: root.setting-email; color: #a8a29e; font-size: 9.5px; }
+                    Text { x: 14px; y: 92px; text: "昵称"; color: #292524; font-size: 11px; font-weight: 600; }
+                    LineEdit { x: 14px; y: 116px; width: parent.width - 28px; height: 36px; text <=> root.setting-nickname; }
+                    Text { x: 14px; y: 174px; text: "登录邮箱"; color: #292524; font-size: 11px; font-weight: 600; }
+                    LineEdit { x: 14px; y: 198px; width: parent.width - 28px; height: 36px; text <=> root.setting-email; }
+                    SettingsValueRow { x: 0px; y: 250px; width: parent.width; title: "当前方案"; detail: "包含模型额度与同步空间"; value: "Pro"; }
+                    Rectangle {
+                        x: 0px; y: 320px; width: parent.width; height: 64px; border-width: 1px; border-color: #f0eee8;
+                        Text { x: 14px; y: 10px; text: "云同步"; color: #292524; font-size: 11px; font-weight: 600; }
+                        Text { x: 14px; y: 31px; text: "在设备间同步偏好和会话索引"; color: #a8a29e; font-size: 9.5px; }
+                        SettingsSwitch { x: parent.width - 54px; y: 20px; checked: root.setting-cloud-sync; toggled(value) => { root.setting-cloud-sync = value; } }
+                    }
                 }
             }
-            Rectangle { x: 20px; y: 244px; width: parent.width - 40px; height: 1px; background: #e7e5e4; }
+
             Rectangle {
-                x: parent.width - 108px; y: 265px; width: 88px; height: 36px;
-                border-radius: 9px; background: #fef3d6; border-width: 1px; border-color: #f5e4ab;
-                Text { text: "完成"; color: #855702; font-size: 11px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                TouchArea { clicked => { root.settings-open = false; } }
+                x: parent.width - 230px; y: 56px; width: 230px; height: parent.height - 112px;
+                background: #fffbeb; border-width: 1px; border-color: #fef3c7;
+                Text {
+                    x: 24px; y: 28px; width: parent.width - 48px; height: 24px;
+                    text: root.settings-page == 0 ? "通用概览" :
+                          root.settings-page == 1 ? "模型概览" :
+                          root.settings-page == 2 ? "安全概览" :
+                          root.settings-page == 3 ? "工作区概览" :
+                          root.settings-page == 4 ? "通知概览" :
+                          root.settings-page == 5 ? "外观概览" :
+                          root.settings-page == 6 ? "快捷键概览" : "账户概览";
+                    color: #855702; font-size: 12px; font-weight: 700;
+                }
+                Rectangle {
+                    x: 24px; y: 67px; width: parent.width - 48px; height: 118px;
+                    border-radius: 12px; background: #ffffffb8;
+                    Text { x: 14px; y: 13px; text: "当前配置"; color: #57534e; font-size: 10px; font-weight: 700; }
+                    Text {
+                        x: 14px; y: 38px; width: parent.width - 28px; height: 66px;
+                        text: root.settings-page == 0 ? root.setting-language + "\n" + root.setting-startup + "\n自动保存：" + (root.setting-autosave ? "开启" : "关闭") :
+                              root.settings-page == 1 ? root.setting-provider + "\n" + root.setting-main-model + "\n推理：" + root.setting-reasoning :
+                              root.settings-page == 2 ? root.setting-command-approval + "\n网络：" + (root.setting-network ? "允许" : "禁止") + "\n二次确认：" + (root.setting-high-risk ? "开启" : "关闭") :
+                              root.settings-page == 3 ? root.setting-workspace + "\n索引：" + root.setting-index-mode + "\nGit：" + (root.setting-git ? "开启" : "关闭") :
+                              root.settings-page == 4 ? "总开关：" + (root.setting-notifications ? "开启" : "关闭") + "\n桌面：" + (root.setting-desktop-notifications ? "开启" : "关闭") + "\n免打扰：" + (root.setting-quiet-hours ? "开启" : "关闭") :
+                              root.settings-page == 5 ? (root.setting-dark-theme ? "深色" : "浅色") + "\n密度：" + root.setting-density + "\n字号：" + root.setting-font-scale + "%" :
+                              root.settings-page == 6 ? "4 个快捷键\n点击任一行可重新录制" : root.setting-nickname + "\n" + root.setting-email + "\nPro";
+                        color: #78716c; font-size: 9.5px; wrap: word-wrap;
+                    }
+                }
+                Text {
+                    x: 24px; y: 211px; width: parent.width - 48px; height: 98px;
+                    text: "设置保存到当前项目的 .tokmon/config.yaml。修改由 tokmond 原子发布，其他客户端可在下一次连接时读取。";
+                    color: #a16207; font-size: 9.5px; wrap: word-wrap;
+                }
+                Rectangle {
+                    x: 24px; y: parent.height - 67px; width: parent.width - 48px; height: 38px;
+                    border-radius: 9px; background: #ffffffa8; border-width: 1px; border-color: #fde68a;
+                    StatusDot { x: 12px; y: 16px; tone: "success"; }
+                    Text { x: 29px; width: parent.width - 38px; height: parent.height; text: "因果流只追加 · 设置可替换"; color: #855702; font-size: 9px; vertical-alignment: center; }
+                }
+            }
+
+            Rectangle {
+                x: 0px; y: parent.height - 56px; width: parent.width; height: 56px;
+                background: #ffffff; border-width: 1px; border-color: #f0eee8;
+                Rectangle {
+                    x: 20px; y: 11px; width: 118px; height: 34px; border-radius: 8px;
+                    background: reset-touch.has-hover ? #f5f5f4 : white;
+                    border-width: 1px; border-color: #e7e5e4;
+                    Text { text: "恢复默认设置"; color: #78716c; font-size: 10.5px; horizontal-alignment: center; vertical-alignment: center; }
+                    reset-touch := TouchArea { clicked => {
+                        root.setting-language = "简体中文"; root.setting-startup = "上次打开的会话";
+                        root.setting-autosave = true; root.setting-provider = "Tokmon 官方";
+                        root.setting-main-model = "local-deterministic"; root.setting-reasoning = "标准";
+                        root.setting-command-approval = "按需确认"; root.setting-network = true;
+                        root.setting-high-risk = true; root.setting-index-mode = "标准";
+                        root.setting-workspace-sync = true; root.setting-git = true;
+                        root.setting-notifications = true; root.setting-desktop-notifications = true;
+                        root.setting-message-alerts = true; root.setting-quiet-hours = false;
+                        root.setting-dark-theme = false; root.setting-accent = 0;
+                        root.setting-density = "舒适"; root.setting-font-scale = 100;
+                        root.setting-cloud-sync = true; root.shortcut-editing = -1;
+                        root.reset-settings();
+                    } }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Rectangle {
+                    x: parent.width - 194px; y: 11px; width: 74px; height: 34px;
+                    border-radius: 8px; background: cancel-touch.has-hover ? #f5f5f4 : white;
+                    border-width: 1px; border-color: #e7e5e4;
+                    Text { text: "取消"; color: #57534e; font-size: 10.5px; horizontal-alignment: center; vertical-alignment: center; }
+                    cancel-touch := TouchArea { clicked => { root.settings-open = false; } }
+                }
+                Rectangle {
+                    x: parent.width - 112px; y: 11px; width: 92px; height: 34px;
+                    border-radius: 8px; background: #f59e0b;
+                    Text { text: "保存更改"; color: white; font-size: 10.5px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                    TouchArea { clicked => { root.save-settings(); root.settings-open = false; } }
+                }
             }
         }
     }

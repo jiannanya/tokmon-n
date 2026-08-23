@@ -13,13 +13,13 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+#include <shellapi.h>
 #endif
 
 #include "tokmon/tokmon.hpp"
 
 namespace {
 
-std::atomic_uint64_t next_request{1};
 enum class OutputFormat { human, jsonl, cbor };
 
 void print_error(const tokmon::Error& error) { std::cerr << error.describe() << '\n'; }
@@ -75,6 +75,9 @@ Usage:
   tokmon lens replace <id> <artifact> [runtime]
   tokmon lens unmount <id>
   tokmon lens reconcile          Re-read .tokmon YAML and atomically swap
+  tokmon daemon status           Check this workspace background service
+  tokmon daemon start            Start it now (normally automatic)
+  tokmon daemon stop             Gracefully stop it after active work drains
   tokmon config paths            Print resolved .tokmon directories
 
 Options:
@@ -84,8 +87,29 @@ Options:
   --deadline-ms <milliseconds>   Attach a request deadline
   --no-color                     Disable decoration (accepted for CI)
 
-tokmond must be running for commands that read or change causal state.
+All stateful commands attach to or automatically start the workspace tokmond.
+The shared daemon remains alive when a CLI or desktop client exits.
 )HELP";
+}
+
+std::filesystem::path sibling_daemon(const char* argv0) {
+  std::error_code error;
+#if defined(_WIN32)
+  std::wstring module(32'768, L'\0');
+  const auto size = GetModuleFileNameW(nullptr, module.data(),
+                                      static_cast<DWORD>(module.size()));
+  if (size > 0 && size < module.size()) {
+    module.resize(size);
+    return std::filesystem::path(module).parent_path() / "tokmond.exe";
+  }
+#endif
+  auto executable = std::filesystem::absolute(argv0, error);
+  if (error) executable = std::filesystem::current_path() / argv0;
+#if defined(_WIN32)
+  return executable.parent_path() / "tokmond.exe";
+#else
+  return executable.parent_path() / "tokmond";
+#endif
 }
 
 int run_stdio(const tokmon::SnowClient& client) {
@@ -150,7 +174,7 @@ tokmon::Result<tokmon::SnowMessage> intent(const tokmon::SnowClient& client,
                                             tokmon::cbor::Value payload,
                                             const std::uint64_t cursor = 0) {
   tokmon::SnowMessage message{.kind = tokmon::SnowMessageKind::intent,
-      .request_id = next_request.fetch_add(1), .cursor = cursor,
+      .request_id = tokmon::next_snow_request_id(), .cursor = cursor,
       .payload = std::move(payload)};
   auto response = client.request(message);
   if (!response) return tl::unexpected(response.error());
@@ -196,11 +220,29 @@ void print_lenses(const tokmon::SnowMessage& response) {
 
 int main(int argc, char** argv) {
 #if defined(_WIN32)
+  (void)argc;
   SetConsoleOutputCP(CP_UTF8);
   SetConsoleCP(CP_UTF8);
 #endif
   std::vector<std::string> arguments;
+#if defined(_WIN32)
+  int wide_count = 0;
+  auto** wide_arguments = CommandLineToArgvW(GetCommandLineW(), &wide_count);
+  if (!wide_arguments) return 2;
+  for (int index = 1; index < wide_count; ++index) {
+    const auto bytes = WideCharToMultiByte(CP_UTF8, 0, wide_arguments[index], -1,
+                                           nullptr, 0, nullptr, nullptr);
+    if (bytes <= 0) { LocalFree(wide_arguments); return 2; }
+    std::string value(static_cast<std::size_t>(bytes), '\0');
+    (void)WideCharToMultiByte(CP_UTF8, 0, wide_arguments[index], -1,
+                              value.data(), bytes, nullptr, nullptr);
+    value.resize(static_cast<std::size_t>(bytes - 1));
+    arguments.push_back(std::move(value));
+  }
+  LocalFree(wide_arguments);
+#else
   for (int index = 1; index < argc; ++index) arguments.emplace_back(argv[index]);
+#endif
   std::optional<std::filesystem::path> workspace;
   std::optional<std::filesystem::path> output_path;
   OutputFormat output_format = OutputFormat::human;
@@ -253,7 +295,50 @@ int main(int argc, char** argv) {
     else write_value(*output, value, output_format);
     return 0;
   }
-  tokmon::SnowClient client(tokmon::default_snow_endpoint(paths->run));
+  const auto endpoint = tokmon::workspace_snow_endpoint(
+      paths->run, paths->project.parent_path());
+  const auto daemon_command = arguments[0] == "daemon";
+  if (daemon_command && arguments.size() > 1 && arguments[1] == "status") {
+    auto available = tokmon::daemon_available(endpoint);
+    if (!available) { print_error(available.error()); return 1; }
+    if (output_format == OutputFormat::human)
+      *output << (*available ? "running" : "stopped") << "\nendpoint="
+              << endpoint.string() << '\n';
+    else write_value(*output, tokmon::cbor::object({{"running", *available},
+        {"endpoint", endpoint.string()},
+        {"workspace", paths->project.parent_path().generic_string()}}), output_format);
+    return *available ? 0 : 1;
+  }
+  if (daemon_command && arguments.size() > 1 && arguments[1] == "stop") {
+    auto available = tokmon::daemon_available(endpoint);
+    if (!available) { print_error(available.error()); return 1; }
+    if (!*available) {
+      if (output_format == OutputFormat::human) *output << "tokmond is already stopped\n";
+      return 0;
+    }
+    auto stopped = tokmon::shutdown_daemon(endpoint);
+    if (!stopped) { print_error(stopped.error()); return 1; }
+    if (output_format == OutputFormat::human) *output << "tokmond stopped gracefully\n";
+    else write_value(*output, tokmon::cbor::object({{"stopped", true}}), output_format);
+    return 0;
+  }
+
+  auto connection = tokmon::ensure_daemon(tokmon::DaemonLaunchOptions{
+      .endpoint = endpoint,
+      .workspace = paths->project.parent_path(),
+      .executable = sibling_daemon(argv[0])});
+  if (!connection) { print_error(connection.error()); return 1; }
+  if (daemon_command && arguments.size() > 1 && arguments[1] == "start") {
+    if (output_format == OutputFormat::human)
+      *output << (connection->started ? "tokmond started" : "tokmond already running")
+              << "\nendpoint=" << endpoint.string() << '\n';
+    else write_value(*output, tokmon::cbor::object({{"running", true},
+        {"started", connection->started}, {"endpoint", endpoint.string()}}), output_format);
+    return 0;
+  }
+  if (daemon_command) { help(); return 2; }
+
+  tokmon::SnowClient client(endpoint);
 
   if (arguments[0] == "stdio") return run_stdio(client);
   if (arguments[0] == "run") {

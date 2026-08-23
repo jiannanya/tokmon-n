@@ -25,9 +25,11 @@ class RayTracingEngine final : public OpticalHost {
 
   Result<SurfaceSnapshot> view(const RayId& ray);
   Result<std::size_t> advance(const RayId& ray, std::size_t max_beats = 32);
-  Result<RayId> begin(std::string input, MountEpoch epoch = 0);
+  Result<RayId> begin(std::string input, MountEpoch epoch = 0,
+                      cbor::Value context = cbor::Value::Map{});
   Result<Photon> continue_ray(const RayId& ray, std::string input,
-                              MountEpoch epoch = 0);
+                              MountEpoch epoch = 0,
+                              cbor::Value context = cbor::Value::Map{});
   void cancel_ray(const RayId& ray) noexcept;
   void request_stop() noexcept;
   void set_admission(std::function<AdmissionDecision(const Act&)> admission);

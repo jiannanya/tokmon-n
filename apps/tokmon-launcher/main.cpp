@@ -24,34 +24,20 @@ int main(int argc, char** argv) {
     return valid ? 0 : 1;
   }
 #if defined(_WIN32)
-  STARTUPINFOW daemon_start{sizeof(daemon_start)};
-  PROCESS_INFORMATION daemon_process{};
-  std::wstring daemon_command = L"\"" + daemon.wstring() + L"\"";
-  if (!CreateProcessW(nullptr, daemon_command.data(), nullptr, nullptr, FALSE,
-                      CREATE_NO_WINDOW, nullptr, directory.c_str(), &daemon_start,
-                      &daemon_process)) {
-    std::cerr << "failed to start tokmond\n"; return 2;
-  }
-  CloseHandle(daemon_process.hThread);
   STARTUPINFOW desktop_start{sizeof(desktop_start)};
   PROCESS_INFORMATION desktop_process{};
   std::wstring desktop_command = L"\"" + desktop.wstring() + L"\"";
   if (!CreateProcessW(nullptr, desktop_command.data(), nullptr, nullptr, FALSE,
                       0, nullptr, directory.c_str(), &desktop_start, &desktop_process)) {
-    TerminateProcess(daemon_process.hProcess, 1);
-    CloseHandle(daemon_process.hProcess);
     std::cerr << "failed to start tokmon-desktop\n"; return 2;
   }
   CloseHandle(desktop_process.hThread);
   WaitForSingleObject(desktop_process.hProcess, INFINITE);
   CloseHandle(desktop_process.hProcess);
-  TerminateProcess(daemon_process.hProcess, 0);
-  CloseHandle(daemon_process.hProcess);
   return 0;
 #else
-  std::cerr << "launcher handoff is currently available on Windows; run tokmond and "
-               "tokmon-desktop directly on this platform\n";
+  std::cerr << "tokmon-launcher is an optional Windows compatibility shortcut; "
+               "run tokmon-desktop directly on this platform\n";
   return 2;
 #endif
 }
-

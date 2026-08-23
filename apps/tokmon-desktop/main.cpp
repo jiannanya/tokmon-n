@@ -25,12 +25,61 @@
 
 namespace {
 
+std::string display_utf8(const std::string_view input) {
+  std::string output;
+  output.reserve(input.size());
+  for (std::size_t index = 0; index < input.size();) {
+    const auto lead = static_cast<unsigned char>(input[index]);
+    std::size_t width = 0;
+    std::uint32_t codepoint = 0;
+    if (lead <= 0x7fu) {
+      width = 1;
+      codepoint = lead;
+    } else if (lead >= 0xc2u && lead <= 0xdfu) {
+      width = 2;
+      codepoint = lead & 0x1fu;
+    } else if (lead >= 0xe0u && lead <= 0xefu) {
+      width = 3;
+      codepoint = lead & 0x0fu;
+    } else if (lead >= 0xf0u && lead <= 0xf4u) {
+      width = 4;
+      codepoint = lead & 0x07u;
+    }
+    bool valid = width != 0 && index + width <= input.size();
+    for (std::size_t offset = 1; valid && offset < width; ++offset) {
+      const auto continuation = static_cast<unsigned char>(input[index + offset]);
+      if ((continuation & 0xc0u) != 0x80u) valid = false;
+      else codepoint = (codepoint << 6u) | (continuation & 0x3fu);
+    }
+    if (valid) {
+      valid = (width != 2 || codepoint >= 0x80u) &&
+              (width != 3 || codepoint >= 0x800u) &&
+              (width != 4 || codepoint >= 0x10000u) &&
+              !(codepoint >= 0xd800u && codepoint <= 0xdfffu) &&
+              codepoint <= 0x10ffffu;
+    }
+    if (valid) {
+      output.append(input.substr(index, width));
+      index += width;
+    } else {
+      output.append("\xef\xbf\xbd");
+      ++index;
+    }
+  }
+  return output;
+}
+
+slint::SharedString display_string(const std::string_view input) {
+  return slint::SharedString(display_utf8(input));
+}
+
 #if defined(_WIN32)
 HWND current_process_window() {
   struct Search {
     DWORD process_id;
     HWND window;
-  } search{GetCurrentProcessId(), nullptr};
+    std::uint64_t largest_area;
+  } search{GetCurrentProcessId(), nullptr, 0};
   EnumWindows(
       [](HWND candidate, LPARAM context) -> BOOL {
         auto* search = reinterpret_cast<Search*>(context);
@@ -38,8 +87,17 @@ HWND current_process_window() {
         GetWindowThreadProcessId(candidate, &process_id);
         if (process_id != search->process_id || !IsWindowVisible(candidate))
           return TRUE;
-        search->window = candidate;
-        return FALSE;
+        RECT bounds{};
+        if (!GetWindowRect(candidate, &bounds)) return TRUE;
+        const auto width = std::max<LONG>(0, bounds.right - bounds.left);
+        const auto height = std::max<LONG>(0, bounds.bottom - bounds.top);
+        const auto area = static_cast<std::uint64_t>(width) *
+                          static_cast<std::uint64_t>(height);
+        if (area > search->largest_area) {
+          search->largest_area = area;
+          search->window = candidate;
+        }
+        return TRUE;
       },
       reinterpret_cast<LPARAM>(&search));
   return search.window;
@@ -62,9 +120,9 @@ slint::SharedString time_label(const std::int64_t unix_ms) {
 TimelineItem timeline_item(const tokmon::Photon& photon) {
   TimelineItem item;
   item.time = time_label(photon.committed_at_ms);
-  item.kind = photon.kind;
-  item.title = photon.kind;
-  item.detail = tokmon::cbor::diagnostic(photon.payload);
+  item.kind = display_string(photon.kind);
+  item.title = display_string(photon.kind);
+  item.detail = display_string(tokmon::cbor::diagnostic(photon.payload));
   item.progress = -1;
   if (photon.kind == "act.failed" || photon.kind == "act.rejected") item.tone = "danger";
   else if (photon.kind == "act.completed" || photon.kind == "assistant.message" ||
@@ -91,13 +149,29 @@ std::vector<CodeLine> code_lines_from(const std::vector<tokmon::Photon>& photons
       break;
     }
   }
+  if (content.empty()) content = R"PY(from pathlib import Path
+from faster_whisper import WhisperModel
+
+def transcribe(audio: Path, output: Path) -> None:
+    model = WhisperModel("large-v3-turbo", device="cuda")
+    segments, info = model.transcribe(str(audio), beam_size=5)
+    lines: list[str] = []
+    for index, segment in enumerate(segments, start=1):
+        lines.extend([
+            str(index),
+            f"{segment.start:.3f} --> {segment.end:.3f}",
+            segment.text.strip(),
+            "",
+        ])
+    output.write_text("\n".join(lines), encoding="utf-8")
+)PY";
   std::vector<CodeLine> result;
   std::istringstream input(content);
   std::string text;
   for (std::size_t index = 0; std::getline(input, text) && index < 20'000u; ++index) {
     CodeLine line;
     line.number = static_cast<int>(index + 1u);
-    line.text = text;
+    line.text = display_string(text);
     const auto first = text.find_first_not_of(" \t");
     line.tone = first != std::string::npos && text[first] == '#' ? "comment" : "normal";
     result.push_back(std::move(line));
@@ -147,9 +221,10 @@ class UiSnowController final {
  public:
   UiSnowController(std::filesystem::path endpoint,
                    std::shared_ptr<slint::VectorModel<TimelineItem>> timeline,
-                   std::shared_ptr<slint::VectorModel<CodeLine>> code)
+                   std::shared_ptr<slint::VectorModel<CodeLine>> code,
+                   slint::ComponentWeakHandle<MainWindow> window)
       : endpoint_(std::move(endpoint)), timeline_(std::move(timeline)),
-        code_(std::move(code)),
+        code_(std::move(code)), window_(std::move(window)),
         worker_([this](std::stop_token stop) { run(stop); }) {}
 
   ~UiSnowController() {
@@ -157,13 +232,29 @@ class UiSnowController final {
     condition_.notify_all();
   }
 
-  void chat(std::string text) { enqueue(Command{"chat", std::move(text)}); }
+  void chat(std::string text, std::string model, std::string access_mode,
+            std::string effort) {
+    Command command{"chat", std::move(text)};
+    command.payload = tokmon::cbor::object({{"model", std::move(model)},
+        {"access_mode", std::move(access_mode)}, {"effort", std::move(effort)}});
+    enqueue(std::move(command));
+  }
   void snapshot() { enqueue(Command{"snapshot", {}}); }
   void reconcile() { enqueue(Command{"reconcile", {}}); }
   void new_session() { enqueue(Command{"new-session", {}}); }
+  void load_settings() { enqueue(Command{"settings-load", {}}); }
+  void save_settings(tokmon::cbor::Value values) {
+    Command command{"settings-save", {}};
+    command.payload = std::move(values);
+    enqueue(std::move(command));
+  }
 
  private:
-  struct Command { std::string kind; std::string text; };
+  struct Command {
+    std::string kind;
+    std::string text;
+    tokmon::cbor::Value payload;
+  };
 
   void enqueue(Command command) {
     {
@@ -235,21 +326,113 @@ class UiSnowController final {
     auto lines = code_lines_from(photons_);
     auto timeline = timeline_;
     auto code = code_;
+    auto window = window_;
+    std::string assistant;
+    std::string state = "正在沿光路执行";
+    for (auto iterator = photons_.rbegin(); iterator != photons_.rend(); ++iterator) {
+      if (assistant.empty() && iterator->kind == "assistant.message") {
+        if (const auto* text = tokmon::cbor::find(iterator->payload, "text"))
+          assistant = std::string(text->as_string());
+      }
+      if (iterator->kind == "ray.darkened" || iterator->kind == "act.completed") {
+        state = "审阅完成";
+        break;
+      }
+    }
+    if (assistant.empty())
+      for (auto iterator = photons_.rbegin(); iterator != photons_.rend(); ++iterator)
+        if (iterator->kind == "tool.result") {
+          assistant = "真实工具已执行：" + tokmon::cbor::diagnostic(iterator->payload);
+          break;
+        }
     (void)slint::invoke_from_event_loop(
-        [timeline, code, items = std::move(items), lines = std::move(lines)]() mutable {
+        [timeline, code, window, items = std::move(items), lines = std::move(lines),
+         assistant = std::move(assistant), state = std::move(state)]() mutable {
           timeline->clear();
           for (auto& item : items) timeline->push_back(std::move(item));
           code->clear();
           for (auto& line : lines) code->push_back(std::move(line));
+          if (auto locked = window.lock()) {
+            auto handle = *locked;
+            if (!assistant.empty()) handle->set_assistant_text(display_string(assistant));
+            handle->set_status_text(display_string(state));
+            handle->set_daemon_state("后台服务已连接");
+          }
         });
+  }
+
+  void apply_settings(tokmon::cbor::Value values) {
+    auto window = window_;
+    (void)slint::invoke_from_event_loop([window, values = std::move(values)] {
+      auto locked = window.lock();
+      if (!locked || !values.as_map()) return;
+      auto handle = *locked;
+      const auto string_value = [&values](const char* key)
+          -> std::optional<slint::SharedString> {
+        const auto* field = tokmon::cbor::find(values, key);
+        if (!field || !std::holds_alternative<std::string>(field->data)) return std::nullopt;
+        return display_string(field->as_string());
+      };
+      const auto bool_value = [&values](const char* key) -> std::optional<bool> {
+        const auto* field = tokmon::cbor::find(values, key);
+        if (!field || !std::holds_alternative<bool>(field->data)) return std::nullopt;
+        return field->as_bool();
+      };
+      const auto int_value = [&values](const char* key) -> std::optional<int> {
+        const auto* field = tokmon::cbor::find(values, key);
+        if (!field || !std::holds_alternative<std::int64_t>(field->data)) return std::nullopt;
+        return static_cast<int>(field->as_integer());
+      };
+      if (auto value = string_value("language")) handle->set_setting_language(*value);
+      if (auto value = string_value("startup")) handle->set_setting_startup(*value);
+      if (auto value = bool_value("autosave")) handle->set_setting_autosave(*value);
+      if (auto value = string_value("provider")) handle->set_setting_provider(*value);
+      if (auto value = string_value("main_model")) {
+        handle->set_setting_main_model(*value); handle->set_model_name(*value);
+      }
+      if (auto value = string_value("reasoning")) handle->set_setting_reasoning(*value);
+      if (auto value = string_value("command_approval")) handle->set_setting_command_approval(*value);
+      if (auto value = bool_value("network")) handle->set_setting_network(*value);
+      if (auto value = bool_value("high_risk_confirmation")) handle->set_setting_high_risk(*value);
+      if (auto value = string_value("workspace")) handle->set_setting_workspace(*value);
+      if (auto value = string_value("index_mode")) handle->set_setting_index_mode(*value);
+      if (auto value = bool_value("workspace_sync")) handle->set_setting_workspace_sync(*value);
+      if (auto value = bool_value("git")) handle->set_setting_git(*value);
+      if (auto value = bool_value("notifications")) handle->set_setting_notifications(*value);
+      if (auto value = bool_value("desktop_notifications")) handle->set_setting_desktop_notifications(*value);
+      if (auto value = bool_value("message_alerts")) handle->set_setting_message_alerts(*value);
+      if (auto value = bool_value("quiet_hours")) handle->set_setting_quiet_hours(*value);
+      if (auto value = bool_value("dark_theme")) handle->set_setting_dark_theme(*value);
+      if (auto value = int_value("accent")) handle->set_setting_accent(*value);
+      if (auto value = string_value("density")) handle->set_setting_density(*value);
+      if (auto value = int_value("font_scale")) handle->set_setting_font_scale(*value);
+      if (auto value = string_value("nickname")) handle->set_setting_nickname(*value);
+      if (auto value = string_value("email")) handle->set_setting_email(*value);
+      if (auto value = bool_value("cloud_sync")) handle->set_setting_cloud_sync(*value);
+      if (auto value = bool_value("sidebar_visible")) handle->set_sidebar_visible(*value);
+      if (auto value = bool_value("code_visible")) handle->set_code_visible(*value);
+      if (auto value = bool_value("task_expanded")) handle->set_task_expanded(*value);
+      handle->set_settings_status("已从项目级 .tokmon/config.yaml 载入");
+    });
+  }
+
+  void update_daemon_state(const slint::SharedString& state) {
+    auto window = window_;
+    (void)slint::invoke_from_event_loop([window, state] {
+      if (auto locked = window.lock()) {
+        auto handle = *locked;
+        handle->set_daemon_state(state);
+      }
+    });
   }
 
   void show_error(std::string message) {
     TimelineItem item;
     item.time = "now"; item.kind = "snow.error";
-    item.title = "tokmond 连接失败"; item.detail = std::move(message);
+    item.title = "tokmond 连接失败"; item.detail = display_string(message);
     item.progress = -1; item.tone = "danger";
     auto model = timeline_;
+    update_daemon_state("后台服务连接失败");
     (void)slint::invoke_from_event_loop([model, item = std::move(item)]() mutable {
       model->push_back(std::move(item));
     });
@@ -279,16 +462,24 @@ class UiSnowController final {
         continue;
       }
       tokmon::SnowMessage request;
-      request.request_id = next_request_.fetch_add(1, std::memory_order_relaxed);
+      request.request_id = tokmon::next_snow_request_id();
       if (command.kind == "snapshot") {
         request.kind = tokmon::SnowMessageKind::snapshot_request;
         request.cursor = cursor_;
       } else {
         request.kind = tokmon::SnowMessageKind::intent;
-        request.payload = command.kind == "chat"
-            ? tokmon::cbor::object({{"action", "chat"}, {"text", command.text},
-                                     {"ray", active_ray_}})
-            : tokmon::cbor::object({{"action", "lens.reconcile"}});
+        if (command.kind == "chat") {
+          request.payload = tokmon::cbor::object({{"action", "chat"},
+              {"text", command.text}, {"ray", active_ray_}});
+          if (const auto* selection = command.payload.as_map())
+            for (const auto& [key, value] : *selection)
+              (*request.payload.as_map())[key] = value;
+        } else if (command.kind == "settings-load")
+          request.payload = tokmon::cbor::object({{"action", "settings.get"}});
+        else if (command.kind == "settings-save")
+          request.payload = tokmon::cbor::object({{"action", "settings.save"},
+              {"values", std::move(command.payload)}});
+        else request.payload = tokmon::cbor::object({{"action", "lens.reconcile"}});
       }
       tokmon::SnowClient client(endpoint_);
       auto response = client.request(request);
@@ -298,12 +489,28 @@ class UiSnowController final {
         continue;
       }
       last_error_.clear();
+      update_daemon_state("后台服务已连接");
       if (response->kind == tokmon::SnowMessageKind::error) {
         const auto* message = tokmon::cbor::find(response->payload, "message");
         show_error(message ? std::string(message->as_string()) : "tokmond 拒绝了请求");
         continue;
       }
       cursor_ = std::max(cursor_, response->cursor);
+      if (command.kind == "settings-load") {
+        if (const auto* values = tokmon::cbor::find(response->payload, "values"))
+          apply_settings(*values);
+        continue;
+      }
+      if (command.kind == "settings-save") {
+        auto window = window_;
+        (void)slint::invoke_from_event_loop([window] {
+          if (auto locked = window.lock()) {
+            auto handle = *locked;
+            handle->set_settings_status("已原子保存到项目级 .tokmon/config.yaml");
+          }
+        });
+        continue;
+      }
       if (command.kind == "reconcile") continue;
       if (command.kind == "chat")
         if (const auto* ray = tokmon::cbor::find(response->payload, "ray"))
@@ -314,7 +521,7 @@ class UiSnowController final {
       if (command.kind == "chat" && !active_ray_.empty()) {
         tokmon::SnowMessage surface_request;
         surface_request.kind = tokmon::SnowMessageKind::intent;
-        surface_request.request_id = next_request_.fetch_add(1, std::memory_order_relaxed);
+        surface_request.request_id = tokmon::next_snow_request_id();
         surface_request.cursor = cursor_;
         surface_request.payload = tokmon::cbor::object(
             {{"action", "surface"}, {"ray", active_ray_}});
@@ -331,10 +538,10 @@ class UiSnowController final {
   std::filesystem::path endpoint_;
   std::shared_ptr<slint::VectorModel<TimelineItem>> timeline_;
   std::shared_ptr<slint::VectorModel<CodeLine>> code_;
+  slint::ComponentWeakHandle<MainWindow> window_;
   std::mutex mutex_;
   std::condition_variable_any condition_;
   std::deque<Command> commands_;
-  std::atomic_uint64_t next_request_{1};
   std::uint64_t cursor_{0};
   tokmon::RayId active_ray_;
   std::vector<tokmon::Photon> photons_;
@@ -345,13 +552,55 @@ class UiSnowController final {
 }  // namespace
 
 int main(int argc, char** argv) {
-  auto paths = tokmon::resolve_paths(std::nullopt);
+  std::optional<std::filesystem::path> workspace;
+  bool open_settings = false;
+  int settings_page = 0;
+  for (int index = 1; index < argc; ++index) {
+    if (std::string_view(argv[index]) == "--workspace" && index + 1 < argc)
+      workspace = argv[++index];
+    else if (std::string_view(argv[index]) == "--open-settings") open_settings = true;
+    else if (std::string_view(argv[index]) == "--settings-page" && index + 1 < argc) {
+      try { settings_page = std::clamp(std::stoi(argv[++index]), 0, 7); }
+      catch (...) { settings_page = 0; }
+    }
+  }
+  auto paths = tokmon::resolve_paths(workspace);
   if (!paths) return 2;
-  auto window = MainWindow::create();
 
   std::error_code path_error;
   auto executable = argc > 0 ? std::filesystem::absolute(argv[0], path_error)
                              : std::filesystem::current_path();
+#if defined(_WIN32)
+  std::wstring module(32'768, L'\0');
+  const auto module_size = GetModuleFileNameW(nullptr, module.data(),
+                                              static_cast<DWORD>(module.size()));
+  if (module_size > 0 && module_size < module.size()) {
+    module.resize(module_size);
+    executable = std::filesystem::path(module);
+  }
+#endif
+  const auto endpoint = tokmon::workspace_snow_endpoint(
+      paths->run, paths->project.parent_path());
+  auto connected = tokmon::ensure_daemon(tokmon::DaemonLaunchOptions{
+      .endpoint = endpoint,
+      .workspace = paths->project.parent_path(),
+#if defined(_WIN32)
+      .executable = executable.parent_path() / "tokmond.exe"
+#else
+      .executable = executable.parent_path() / "tokmond"
+#endif
+  });
+  if (!connected) {
+#if defined(_WIN32)
+    const auto description = connected.error().describe();
+    const auto message = std::wstring(description.begin(), description.end());
+    MessageBoxW(nullptr, message.c_str(), L"Tokmon 无法启动", MB_OK | MB_ICONERROR);
+#endif
+    return 2;
+  }
+  auto window = MainWindow::create();
+  window->set_settings_page(settings_page);
+  window->set_settings_open(open_settings);
   auto assets = executable.parent_path() / "assets" / "figma";
   if (!std::filesystem::exists(assets))
     assets = std::filesystem::current_path() / "apps" / "tokmon-desktop" /
@@ -387,13 +636,18 @@ int main(int argc, char** argv) {
   refresh_navigation(nav_model, navigation_state, {});
   auto timeline_model = std::make_shared<slint::VectorModel<TimelineItem>>();
   auto code_model = std::make_shared<slint::VectorModel<CodeLine>>();
+  for (auto& line : code_lines_from({})) code_model->push_back(std::move(line));
   window->set_navigation(nav_model);
   window->set_timeline(timeline_model);
   window->set_code_lines(code_model);
-  UiSnowController controller(tokmon::default_snow_endpoint(paths->run), timeline_model,
-                              code_model);
+  window->set_setting_workspace(
+      slint::SharedString(paths->project.parent_path().generic_string()));
+  window->set_daemon_state(connected->started ? "后台服务已自动启动" : "后台服务已连接");
+  UiSnowController controller(endpoint, timeline_model, code_model,
+                              slint::ComponentWeakHandle<MainWindow>(window));
   controller.snapshot();
-  window->on_send_message([&controller, timeline_model](const slint::SharedString& text) {
+  controller.load_settings();
+  window->on_send_message([&controller, timeline_model, window](const slint::SharedString& text) {
     TimelineItem item;
     item.time = time_label(std::chrono::duration_cast<std::chrono::milliseconds>(
                                std::chrono::system_clock::now().time_since_epoch())
@@ -405,7 +659,9 @@ int main(int argc, char** argv) {
     item.tone = "warning";
     item.progress = -1;
     timeline_model->push_back(std::move(item));
-    controller.chat(std::string(text));
+    controller.chat(std::string(text), std::string(window->get_model_name()),
+                    std::string(window->get_access_mode()),
+                    std::string(window->get_effort()));
   });
   window->on_new_session([&controller] { controller.new_session(); });
   window->on_select_navigation([nav_model, navigation_state, window](int index) {
@@ -441,6 +697,41 @@ int main(int argc, char** argv) {
                        std::string(window->get_search_text()));
   });
   window->on_reconcile([&controller] { controller.reconcile(); });
+  window->on_save_settings([window, &controller] {
+    controller.save_settings(tokmon::cbor::object({
+        {"language", std::string(window->get_setting_language())},
+        {"startup", std::string(window->get_setting_startup())},
+        {"autosave", window->get_setting_autosave()},
+        {"provider", std::string(window->get_setting_provider())},
+        {"main_model", std::string(window->get_setting_main_model())},
+        {"reasoning", std::string(window->get_setting_reasoning())},
+        {"command_approval", std::string(window->get_setting_command_approval())},
+        {"network", window->get_setting_network()},
+        {"high_risk_confirmation", window->get_setting_high_risk()},
+        {"workspace", std::string(window->get_setting_workspace())},
+        {"index_mode", std::string(window->get_setting_index_mode())},
+        {"workspace_sync", window->get_setting_workspace_sync()},
+        {"git", window->get_setting_git()},
+        {"notifications", window->get_setting_notifications()},
+        {"desktop_notifications", window->get_setting_desktop_notifications()},
+        {"message_alerts", window->get_setting_message_alerts()},
+        {"quiet_hours", window->get_setting_quiet_hours()},
+        {"dark_theme", window->get_setting_dark_theme()},
+        {"accent", static_cast<std::int64_t>(window->get_setting_accent())},
+        {"density", std::string(window->get_setting_density())},
+        {"font_scale", static_cast<std::int64_t>(window->get_setting_font_scale())},
+        {"nickname", std::string(window->get_setting_nickname())},
+        {"email", std::string(window->get_setting_email())},
+        {"cloud_sync", window->get_setting_cloud_sync()},
+        {"sidebar_visible", window->get_sidebar_visible()},
+        {"code_visible", window->get_code_visible()},
+        {"task_expanded", window->get_task_expanded()}}));
+    window->set_model_name(window->get_setting_main_model());
+    window->set_settings_status("正在通过 tokmond 原子保存…");
+  });
+  window->on_reset_settings([window] {
+    window->set_settings_status("已恢复默认值；点击“保存更改”后写入");
+  });
   window->on_drag_window([] {
 #if defined(_WIN32)
     if (const auto hwnd = current_process_window()) {

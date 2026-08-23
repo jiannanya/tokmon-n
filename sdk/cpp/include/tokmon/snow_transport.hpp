@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <chrono>
 
 #include "tokmon/snow_protocol.hpp"
 
@@ -28,13 +29,15 @@ struct SnowFrameHeader {
 
 class SnowClient final {
  public:
-  explicit SnowClient(std::filesystem::path endpoint);
+  explicit SnowClient(std::filesystem::path endpoint,
+      std::chrono::milliseconds connect_timeout = std::chrono::seconds(3));
   [[nodiscard]] Result<SnowMessage> request(const SnowMessage& message) const;
   [[nodiscard]] Result<SnowMessage> request_stream(const SnowMessage& message,
       const std::function<Result<void>(const SnowMessage&)>& on_stream) const;
 
  private:
   std::filesystem::path endpoint_;
+  std::chrono::milliseconds connect_timeout_;
 };
 
 class SnowServer final {

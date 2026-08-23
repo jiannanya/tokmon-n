@@ -5,6 +5,7 @@
 #include "tokmon/c_abi_loader.hpp"
 #include "tokmon/cbor.hpp"
 #include "tokmon/config.hpp"
+#include "tokmon/daemon_lifecycle.hpp"
 #include "tokmon/engine.hpp"
 #include "tokmon/error.hpp"
 #include "tokmon/hash.hpp"

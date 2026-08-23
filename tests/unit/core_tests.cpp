@@ -265,7 +265,9 @@ TEST_CASE("calculator executes the complete Fact Lens Act photon loop") {
   UserProfileGuard profile(root / "home");
   tokmon::TokmonRuntime runtime;
   REQUIRE(runtime.open(root / "workspace", "tokmon-tests"));
-  auto ray = runtime.submit("128 * 4");
+  auto ray = runtime.submit("请计算 128 * 4", tokmon::cbor::object({
+      {"model", "desktop-model-choice"}, {"access_mode", "受限访问"},
+      {"effort", "最高"}}));
   REQUIRE(ray);
   auto beats = runtime.advance(*ray);
   REQUIRE(beats);
@@ -279,6 +281,13 @@ TEST_CASE("calculator executes the complete Fact Lens Act photon loop") {
   REQUIRE(has_kind("model.tool-call"));
   REQUIRE(has_kind("tool.result"));
   REQUIRE(has_kind("assistant.message"));
+  const auto input = std::ranges::find_if(*photons, [](const tokmon::Photon& photon) {
+    return photon.kind == "user.input";
+  });
+  REQUIRE(input != photons->end());
+  REQUIRE(tokmon::cbor::find(input->payload, "model")->as_string() ==
+          "desktop-model-choice");
+  REQUIRE(has_kind("model.reasoning-chunk"));
   REQUIRE(photons->back().kind == "ray.darkened");
   const auto first_tail = photons->back().sequence;
   auto continued = runtime.submit_to(*ray, "3 + 7");
@@ -535,4 +544,32 @@ TEST_CASE("unknown YAML fields are rejected without publishing a path") {
   auto config = tokmon::load_config(workspace);
   REQUIRE_FALSE(config);
   REQUIRE(config.error().code == tokmon::ErrorCode::schema_mismatch);
+}
+
+TEST_CASE("workspace Snow endpoints are isolated and daemon health is probeable") {
+  const auto root = temporary_directory("workspace-daemon-endpoints");
+  const auto first = tokmon::workspace_snow_endpoint(root / "run", root / "one");
+  const auto second = tokmon::workspace_snow_endpoint(root / "run", root / "two");
+  REQUIRE(first != second);
+
+  tokmon::SnowServer server;
+  REQUIRE(server.start(first, [](const tokmon::SnowMessage& request) {
+    return tokmon::SnowMessage{.kind = tokmon::SnowMessageKind::pong,
+        .request_id = request.request_id, .cursor = request.cursor,
+        .payload = tokmon::cbor::object({{"healthy", true}})};
+  }));
+  tokmon::Result<bool> available = false;
+  for (int attempt = 0; attempt < 20 && (!available || !*available); ++attempt) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    available = tokmon::daemon_available(first);
+  }
+  REQUIRE(available);
+  REQUIRE(*available);
+  auto other = tokmon::daemon_available(second);
+  REQUIRE(other);
+  REQUIRE_FALSE(*other);
+  server.stop();
+  available = tokmon::daemon_available(first);
+  REQUIRE(available);
+  REQUIRE_FALSE(*available);
 }
