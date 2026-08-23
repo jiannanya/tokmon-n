@@ -127,11 +127,18 @@ set(TOKMON_LENS_NAMES
 set(TOKMON_LENS_TARGETS)
 
 foreach(lens IN LISTS TOKMON_LENS_NAMES)
-  string(REPLACE "-" "_" lens_symbol "${lens}")
+  string(SUBSTRING "${lens}" 0 1 lens_class_initial)
+  string(TOUPPER "${lens_class_initial}" lens_class_initial)
+  string(SUBSTRING "${lens}" 1 -1 lens_class_suffix)
+  set(lens_class "${lens_class_initial}${lens_class_suffix}Lens")
   add_library(tokmon-lens-${lens} SHARED lenses/common/named_lens_entry.cpp)
+  target_include_directories(tokmon-lens-${lens} PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}")
   target_link_libraries(tokmon-lens-${lens} PRIVATE tokmon_core)
   target_compile_definitions(tokmon-lens-${lens} PRIVATE
-    TOKMON_LENS_SHORT_ID="${lens}")
+    TOKMON_LENS_SHORT_ID="${lens}"
+    TOKMON_LENS_HEADER="lenses/${lens}/${lens}_lens.hpp"
+    TOKMON_LENS_TYPE=tokmon::builtin::${lens_class})
   set_target_properties(tokmon-lens-${lens} PROPERTIES
     PREFIX ""
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/lenses"

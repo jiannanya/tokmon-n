@@ -6,7 +6,15 @@
 #include <stop_token>
 #include <vector>
 
-#include "tokmon/builtin_lens.hpp"
+#ifndef TOKMON_LENS_HEADER
+#error "TOKMON_LENS_HEADER must name the concrete built-in Lens header"
+#endif
+
+#ifndef TOKMON_LENS_TYPE
+#error "TOKMON_LENS_TYPE must name the concrete built-in Lens type"
+#endif
+
+#include TOKMON_LENS_HEADER
 
 #ifndef TOKMON_LENS_SHORT_ID
 #define TOKMON_LENS_SHORT_ID "unknown"
@@ -15,9 +23,10 @@
 namespace {
 
 using namespace tokmon;
+using SelectedLens = TOKMON_LENS_TYPE;
 
 struct Instance {
-  std::shared_ptr<ILens> lens{make_builtin_lens(TOKMON_LENS_SHORT_ID)};
+  std::shared_ptr<ILens> lens{std::make_shared<SelectedLens>()};
   std::stop_source stop;
 };
 
@@ -172,8 +181,10 @@ void destroy_instance(void* raw) { delete static_cast<Instance*>(raw); }
 }  // namespace
 
 extern "C" TOKMON_LENS_EXPORT TokmonLensApiV1 tokmon_lens_entry_v1(void) {
-  static const auto manifest = tokmon::cbor::encode(
-      manifest_value(tokmon::builtin_lens_manifest(TOKMON_LENS_SHORT_ID)));
+  static const auto manifest = [] {
+    const SelectedLens lens;
+    return tokmon::cbor::encode(manifest_value(lens.manifest()));
+  }();
   return TokmonLensApiV1{
       TOKMON_LENS_ABI_MAJOR, TOKMON_LENS_ABI_MINOR,
       TokmonBytesV1{manifest.data(), manifest.size()}, &create_instance,
