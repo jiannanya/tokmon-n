@@ -159,6 +159,11 @@ if(TOKMON_BUILD_UI)
   endif()
   slint_target_sources(tokmon-desktop
     apps/tokmon-desktop/ui/tokmon.slint)
+  # The desktop entry includes the generated Slint header directly. Keep the
+  # object dependency explicit on MSVC as localized /showIncludes output may
+  # otherwise leave main.cpp built against an older generated component ABI.
+  set_property(SOURCE apps/tokmon-desktop/main.cpp APPEND PROPERTY
+    OBJECT_DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/tokmon.h")
   set_target_properties(tokmon-desktop PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
   add_custom_command(TARGET tokmon-desktop POST_BUILD

@@ -147,6 +147,7 @@ export global Icons {
     out property<image> bell: @image-url("../assets/figma/icon-45.svg");
     out property<image> contrast: @image-url("../assets/figma/icon-46.svg");
     out property<image> keyboard: @image-url("../assets/figma/icon-47.svg");
+    out property<image> sparkles: @image-url("../assets/figma/icon-48.svg");
 }
 
 component ToolIcon inherits Rectangle {
@@ -666,12 +667,14 @@ component WorkflowStepRow inherits Rectangle {
                             vertical-alignment: center;
                         }
                     }
-                    if root.item.detail != "" : Text {
+                    if root.item.detail != "" : HorizontalLayout {
                         padding-left: 22px;
-                        text: root.item.detail;
-                        font-size: 11.5px;
-                        color: #166534;
-                        wrap: word-wrap;
+                        Text {
+                            text: root.item.detail;
+                            font-size: 11.5px;
+                            color: #166534;
+                            wrap: word-wrap;
+                        }
                     }
                 }
             }
@@ -825,6 +828,9 @@ export component MainWindow inherits Window {
     min-width: 1040px;
     min-height: 680px;
     background: Palette.app-bg;
+    // Slint currently resolves one family here without the browser's CSS
+    // fallback chain. YaHei UI keeps Chinese glyph coverage while retaining
+    // Windows-native UI metrics for mixed Chinese/Latin labels.
     default-font-family: "Microsoft YaHei UI";
 
     in property <[NavigationItem]> navigation;
@@ -939,6 +945,7 @@ export component MainWindow inherits Window {
     in-out property <bool> attachment-menu-open: false;
     in-out property <bool> trace-filter-open: false;
     in-out property <bool> context-popover-open: false;
+    in-out property <bool> copy-notice-visible: false;
     in-out property <bool> change-workspace-open: false;
     in-out property <bool> window-maximized: false;
     in-out property <bool> slash-menu-visible: false;
@@ -1023,58 +1030,23 @@ export component MainWindow inherits Window {
             root.trace-input-tokens * 100 / (root.trace-input-tokens + root.trace-output-tokens)
     }
 
+    Timer {
+        interval: 2s;
+        running: root.copy-notice-visible;
+        triggered => { root.copy-notice-visible = false; }
+    }
 
     VerticalLayout {
-        Rectangle {
-            height: 32px;
-            background: Palette.surface;
-            HorizontalLayout {
-                padding-left: 12px;
-                padding-right: 6px;
-                spacing: 8px;
-                alignment: start;
-                Image {
-                    source: Icons.logo;
-                    width: 16px;
-                    height: 16px;
-                    y: (parent.height - 16px) / 2;
-                }
-                Text {
-                    text: "Tokmon";
-                    font-size: 12px;
-                    font-weight: 600;
-                    color: Palette.dim;
-                    vertical-alignment: center;
-                }
-                Text {
-                    text: root.daemon-state;
-                    font-size: 11px;
-                    color: Palette.faint;
-                    vertical-alignment: center;
-                }
-                Rectangle { horizontal-stretch: 1; }
-                ToolIcon { source: Icons.minus; icon-size: 14px; clicked => { root.minimize-window() } }
-                ToolIcon { source: Icons.stop; icon-size: 12px; clicked => { root.toggle-maximize-window() } }
-                ToolIcon { source: Icons.close; icon-size: 14px; clicked => { root.close-window() } }
-            }
-            TouchArea {
-                moved => { root.drag-window() }
-                clicked => { hs.focus(); }
-            }
-            Rectangle {
-                y: parent.height - 0.67px;
-                height: 0.67px;
-                width: parent.width;
-                background: Palette.hairline;
-            }
-        }
         HorizontalLayout {
             Rectangle {
                 visible: root.sidebar-visible;
-                width: root.sidebar-width;
+                width: root.sidebar-visible ? root.sidebar-width : 0px;
+                clip: true;
                 background: #F9F9F8;
                 VerticalLayout {
-                    padding-top: 14px;
+                    // 46px pinned header followed by the 12px padded scroll content.
+                    // The header/content boundary is drawn by the absolute hairline below.
+                    padding-top: 9px;
                     padding-bottom: 0px;
                     padding-left: 12px;
                     padding-right: 12px;
@@ -1083,7 +1055,7 @@ export component MainWindow inherits Window {
                         VerticalLayout {
                             HorizontalLayout {
                                 padding-top: 2px;
-                                padding-bottom: 18px;
+                                padding-bottom: 23px;
                                 padding-left: 4px;
                                 padding-right: 2px;
                                 alignment: space-between;
@@ -1098,17 +1070,12 @@ export component MainWindow inherits Window {
                                     }
                                     Text {
                                         text: "Tokmon";
-                                        font-size: 18px;
+                                        font-size: 17px;
                                         font-weight: 700;
                                         letter-spacing: -0.3px;
                                         color: Palette.ink;
                                         vertical-alignment: center;
                                     }
-                                }
-                                ToolIcon {
-                                    source: Icons.panel-left;
-                                    icon-size: 16px;
-                                    clicked => { root.sidebar-visible = false }
                                 }
                             }
                             Rectangle {
@@ -1144,6 +1111,7 @@ export component MainWindow inherits Window {
                                     mouse-cursor: pointer;
                                 }
                             }
+                            Rectangle { height: 14px; }
                             Rectangle {
                                 height: 32px;
                                 border-radius: 12px;
@@ -1168,11 +1136,12 @@ export component MainWindow inherits Window {
                                     x: 36px;
                                     height: parent.height;
                                     vertical-alignment: center;
-                                    text: "搜索项目或会话...";
+                                    text: "搜索会话、项目或分组...";
                                     font-size: 12.5px;
                                     color: Palette.faint;
                                 }
                             }
+                            Rectangle { height: 14px; }
                             HorizontalLayout {
                                 padding-left: 8px; padding-right: 8px; padding-top: 4px; padding-bottom: 4px;
                                 alignment: space-between;
@@ -1184,9 +1153,9 @@ export component MainWindow inherits Window {
                                     color: Palette.dim;
                                     vertical-alignment: center;
                                 }
-                                HorizontalLayout {
+                                if root.search-text != "" : HorizontalLayout {
                                     spacing: 6px;
-                                    if root.search-text != "" : Rectangle {
+                                    Rectangle {
                                         height: 17px;
                                         border-radius: 4px;
                                         background: #FEF8F4;
@@ -1203,11 +1172,6 @@ export component MainWindow inherits Window {
                                                 vertical-alignment: center;
                                             }
                                         }
-                                    }
-                                    ToolIcon {
-                                        source: Icons.plus-dim;
-                                        icon-size: 14px;
-                                        clicked => { root.add-navigation() }
                                     }
                                 }
                             }
@@ -1313,17 +1277,50 @@ export component MainWindow inherits Window {
                         }
                     }
                 }
+                Rectangle {
+                    y: 46px;
+                    height: 0.67px;
+                    width: parent.width;
+                    background: Palette.border;
+                }
             }
             Rectangle {
                 visible: root.sidebar-visible;
-                width: 6px;
-                background: sbt.has-hover || sbt.pressed ? Palette.hairline : transparent;
+                width: root.sidebar-visible ? 1px : 0px;
+                background: Palette.border;
+                z: 10;
                 sbt := TouchArea {
+                    x: -2px;
+                    width: 5px;
                     moved => {
                         root.sidebar-width = Math.max(196px, Math.min(380px,
                             root.sidebar-width + (self.mouse-x - self.pressed-x)));
                     }
                     mouse-cursor: ew-resize;
+                }
+                Rectangle {
+                    x: -8px;
+                    y: 10px;
+                    width: 24px;
+                    height: 24px;
+                    border-radius: 6px;
+                    background: white;
+                    border-width: 0.67px;
+                    border-color: #E5E2DA;
+                    drop-shadow-color: Palette.shadow;
+                    drop-shadow-offset-y: 1px;
+                    z: 10;
+                    Image {
+                        source: Icons.panel-left;
+                        width: 14px;
+                        height: 14px;
+                        x: 5px;
+                        y: 5px;
+                    }
+                    TouchArea {
+                        clicked => { root.sidebar-visible = false }
+                        mouse-cursor: pointer;
+                    }
                 }
             }
             Rectangle {
@@ -1332,8 +1329,12 @@ export component MainWindow inherits Window {
                     Rectangle {
                         height: 46px;
                         background: rgba(250, 250, 249, 0.94);
+                        TouchArea {
+                            moved => { root.drag-window() }
+                            clicked => { hs.focus(); }
+                        }
                         HorizontalLayout {
-                            padding-left: 16px;
+                            padding-left: root.sidebar-visible ? 16px : 40px;
                             padding-right: 16px;
                             alignment: space-between;
                         HorizontalLayout {
@@ -1363,26 +1364,41 @@ export component MainWindow inherits Window {
                         HorizontalLayout {
                             spacing: 4px;
                             alignment: end;
-                            Text {
-                                text: root.status-text;
-                                font-size: 11px;
-                                color: Palette.faint;
-                                vertical-alignment: center;
-                            }
                             ToolIcon {
                                 source: Icons.panel-right;
                                 icon-size: 16px;
                                 clicked => { root.code-visible = !root.code-visible }
                             }
-                            ToolIcon {
-                                source: Icons.gear;
-                                icon-size: 16px;
-                                clicked => {
-                                    root.settings-searched("");
-                                    root.settings-open = true;
-                                }
+                            if !root.code-visible : HorizontalLayout {
+                                spacing: 0px;
+                                ToolIcon { source: Icons.minus; icon-size: 14px; clicked => { root.minimize-window() } }
+                                ToolIcon { source: Icons.stop; icon-size: 12px; clicked => { root.toggle-maximize-window() } }
+                                ToolIcon { source: Icons.close; icon-size: 14px; clicked => { root.close-window() } }
                             }
                         }
+                        }
+                        if !root.sidebar-visible : Rectangle {
+                            x: 6px;
+                            y: 10px;
+                            width: 24px;
+                            height: 24px;
+                            border-radius: 6px;
+                            background: #FEF8F4;
+                            border-width: 0.67px;
+                            border-color: Palette.accent-border;
+                            drop-shadow-color: Palette.shadow;
+                            drop-shadow-offset-y: 1px;
+                            Image {
+                                source: Icons.panel-left;
+                                width: 14px;
+                                height: 14px;
+                                x: 5px;
+                                y: 5px;
+                            }
+                            TouchArea {
+                                clicked => { root.sidebar-visible = true }
+                                mouse-cursor: pointer;
+                            }
                         }
                     }
                     Rectangle {
@@ -2745,14 +2761,33 @@ if root.trajectory-selected : Rectangle {
 
             Rectangle {
                 visible: root.code-visible;
-                width: root.code-panel-width;
+                width: root.code-visible ? 1px : 0px;
+                background: Palette.border;
+                cpt := TouchArea {
+                    x: -2px;
+                    width: 5px;
+                    moved => {
+                        root.code-panel-width = Math.max(320px, Math.min(560px,
+                            root.code-panel-width - (self.mouse-x - self.pressed-x)));
+                    }
+                    mouse-cursor: ew-resize;
+                }
+            }
+            Rectangle {
+                visible: root.code-visible;
+                width: root.code-visible ? root.code-panel-width : 0px;
+                clip: true;
                 background: Palette.white;
                 VerticalLayout {
                     HorizontalLayout {
-                        height: 42px;
+                        height: 46px;
                         padding-left: 16px;
-                        padding-right: 8px;
+                        padding-right: 4px;
                         alignment: space-between;
+                        TouchArea {
+                            moved => { root.drag-window() }
+                            clicked => { hs.focus(); }
+                        }
                         HorizontalLayout {
                             spacing: 16px;
                             alignment: start;
@@ -2800,17 +2835,10 @@ if root.trajectory-selected : Rectangle {
                             }
                         }
                         HorizontalLayout {
-                            spacing: 2px;
-                            ToolIcon {
-                                source: Icons.dots;
-                                icon-size: 14px;
-                                clicked => { root.code-menu-open = !root.code-menu-open; }
-                            }
-                            ToolIcon {
-                                source: Icons.close;
-                                icon-size: 14px;
-                                clicked => { root.code-visible = false; }
-                            }
+                            spacing: 0px;
+                            ToolIcon { source: Icons.minus; icon-size: 14px; clicked => { root.minimize-window() } }
+                            ToolIcon { source: Icons.stop; icon-size: 12px; clicked => { root.toggle-maximize-window() } }
+                            ToolIcon { source: Icons.close; icon-size: 14px; clicked => { root.close-window() } }
                         }
                     }
                     if !root.file-preview-selected : Rectangle {
@@ -2946,6 +2974,29 @@ if root.trajectory-selected : Rectangle {
                         VerticalLayout {
                             padding: 12px;
                             spacing: 10px;
+                            if root.copy-notice-visible : Rectangle {
+                                height: 34px;
+                                border-radius: 8px;
+                                background: Palette.green-bg;
+                                border-width: 0.67px;
+                                border-color: Palette.green-line;
+                                HorizontalLayout {
+                                    padding-left: 9px;
+                                    padding-right: 7px;
+                                    alignment: space-between;
+                                    Text {
+                                        text: "✓ 已成功复制全条字幕内容！";
+                                        font-size: 12px;
+                                        color: Palette.green-ink;
+                                        vertical-alignment: center;
+                                    }
+                                    ToolIcon {
+                                        source: Icons.close;
+                                        icon-size: 12px;
+                                        clicked => { root.copy-notice-visible = false }
+                                    }
+                                }
+                            }
                             HorizontalLayout {
                                 alignment: space-between;
                                 Text {
@@ -2969,7 +3020,10 @@ if root.trajectory-selected : Rectangle {
                                         Text { text: "复制内容"; font-size: 11px; font-weight: 500; color: Palette.mid; vertical-alignment: center; }
                                     }
                                     TouchArea {
-                                        clicked => { root.copy-text(root.preview-content) }
+                                        clicked => {
+                                            root.copy-text(root.preview-content);
+                                            root.copy-notice-visible = true;
+                                        }
                                         mouse-cursor: pointer;
                                     }
                                 }
@@ -3140,18 +3194,6 @@ if root.trajectory-selected : Rectangle {
                     TouchArea { clicked => { root.code-menu-open = false } }
                 }
             }
-        Rectangle {
-            width: root.code-visible ? 6px : 0px;
-            background: cpt.has-hover || cpt.pressed ? Palette.hairline : transparent;
-            cpt := TouchArea {
-                enabled: root.code-visible;
-                moved => {
-                    root.code-panel-width = Math.max(320px, Math.min(560px,
-                        root.code-panel-width - (self.mouse-x - self.pressed-x)));
-                }
-                mouse-cursor: ew-resize;
-            }
-        }
         }
     }
     hs := FocusScope {
@@ -3202,7 +3244,7 @@ if root.trajectory-selected : Rectangle {
         }
         Rectangle {
             width: 520px;
-            y: parent.height / 2 - self.preferred-height / 2 - 40px;
+            y: parent.height / 2 - self.preferred-height / 2;
             x: parent.width / 2 - self.width / 2;
             border-radius: 16px;
             background: Palette.white;
@@ -3223,14 +3265,14 @@ if root.trajectory-selected : Rectangle {
                             spacing: 10px;
                             alignment: start;
                             Rectangle {
-                                width: 26px;
-                                height: 26px;
+                                width: 24px;
+                                height: 24px;
                                 border-radius: 8px;
                                 background: #FEF8F4;
                                 border-width: 0.67px;
                                 border-color: #F5D9C3;
                                 Image {
-                                    source: Icons.logo;
+                                    source: Icons.sparkles;
                                     width: 14px;
                                     height: 14px;
                                     x: (parent.width - 14px) / 2;
@@ -3261,11 +3303,6 @@ if root.trajectory-selected : Rectangle {
                 VerticalLayout {
                     padding: 24px;
                     spacing: 16px;
-                    SegTrack {
-                        options: ["分组", "项目", "会话"];
-                        selected: root.create-navigation-kind == "分组" ? 0 : root.create-navigation-kind == "项目" ? 1 : 2;
-                        picked(i, o) => { root.create-navigation-kind = o }
-                    }
                     VerticalLayout {
                         spacing: 6px;
                         Text { text: root.create-navigation-kind == "会话" ? "会话名称" : root.create-navigation-kind == "项目" ? "项目名称" : "分组名称"; font-size: 12px; font-weight: 500; color: Palette.strong; }
