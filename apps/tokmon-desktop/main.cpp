@@ -16,6 +16,7 @@
 #include <string>
 #include <vector>
 #include <thread>
+#include <fstream>
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -706,6 +707,8 @@ class UiSnowController final {
                    std::shared_ptr<slint::VectorModel<TimelineItem>> timeline,
                    std::shared_ptr<slint::VectorModel<TimelineItem>> conversation_workflow,
                    std::shared_ptr<slint::VectorModel<CodeLine>> code,
+                   std::shared_ptr<slint::VectorModel<TraceEvent>> trace_events,
+                   std::shared_ptr<slint::VectorModel<GanttSegment>> gantt,
                    std::shared_ptr<slint::VectorModel<NavigationItem>> navigation_model,
                    std::shared_ptr<std::vector<NavigationItem>> navigation,
                    std::filesystem::path assets,
@@ -714,6 +717,8 @@ class UiSnowController final {
         current_workspace_(workspace), navigation_workspace_(std::move(workspace)),
         daemon_executable_(std::move(daemon_executable)), timeline_(std::move(timeline)),
         conversation_workflow_(std::move(conversation_workflow)), code_(std::move(code)),
+          trace_events_(std::move(trace_events)),
+          gantt_(std::move(gantt)),
         navigation_model_(std::move(navigation_model)),
         navigation_(std::move(navigation)), assets_(std::move(assets)),
         window_(std::move(window)),
@@ -791,6 +796,212 @@ class UiSnowController final {
     Command command{"provider-test", {}};
     command.payload = tokmon::cbor::object({{"provider", std::move(id)}});
     enqueue(std::move(command));
+  }
+
+  void publish_trace_view() {
+    auto window = window_;
+    auto trace_events = trace_events_;
+    auto gantt = gantt_;
+    const auto photons = photons_;
+    (void)slint::invoke_from_event_loop(
+        [window, trace_events, gantt, photons]() mutable {
+          auto locked = window.lock();
+          if (!locked) return;
+          auto handle = *locked;
+          const auto search = display_utf8(std::string_view(handle->get_trace_search()));
+          const auto filter_index = handle->get_trace_filter_index();
+          const auto page = std::max(1, handle->get_trace_page());
+          const auto page_size = std::max(1, handle->get_trace_page_size());
+
+          struct Entry { TraceEvent event; std::int64_t time; std::string kind_l; };
+          std::vector<Entry> all;
+          all.reserve(photons.size());
+          int num = 0;
+          for (const auto& photon : photons) {
+            ++num;
+            TraceEvent ev;
+            ev.num = num;
+            ev.time = time_label(photon.committed_at_ms);
+            const auto kind = std::string(photon.kind);
+            ev.tone = display_string(kind == "user.input" || kind == "user.message" ? "USER"
+                : kind.find("context") != std::string::npos || kind == "system.prompt" ? "CONTEXT"
+                : kind == "assistant.message" || kind == "model.completed" ? "ASSISTANT"
+                : kind.find("failed") != std::string::npos || kind.find("rejected") != std::string::npos ? "ERROR"
+                : kind == "model.tool-call" || kind.starts_with("fs.") || kind.starts_with("process.") || kind == "tool.result" ? "TOOL"
+                : "OTHER");
+            ev.role = display_string(std::string(ev.tone) == "USER" ? "User"
+                : std::string(ev.tone) == "CONTEXT" ? "System"
+                : std::string(ev.tone) == "ASSISTANT" ? "Assistant"
+                : std::string(ev.tone) == "TOOL" ? "Tool" : "-");
+            ev.title = display_string(photon.kind);
+            ev.detail = display_string(bounded_detail(tokmon::cbor::diagnostic(photon.payload), 120));
+            if (const auto* dur = tokmon::cbor::find(photon.payload, "duration_ms"))
+              ev.dur = slint::SharedString(std::to_string(dur->as_integer()) + "ms");
+            else
+              ev.dur = "-";
+            if (photon.kind == "model.usage") {
+              std::int64_t total = 0;
+              if (const auto* v = tokmon::cbor::find(photon.payload, "input_tokens")) total += v->as_integer();
+              if (const auto* v = tokmon::cbor::find(photon.payload, "output_tokens")) total += v->as_integer();
+              ev.tokens = slint::SharedString(std::to_string(total));
+            } else {
+              ev.tokens = "-";
+            }
+            std::string hay = kind + std::string(ev.detail);
+            for (auto& ch : hay) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            bool matches_search = search.empty() ||
+                hay.find(search) != std::string::npos;
+            const auto tone_str = std::string(ev.tone);
+            bool matches_filter =
+                filter_index == 0 ||
+                (filter_index == 1 && tone_str == "USER") ||
+                (filter_index == 2 && tone_str == "CONTEXT") ||
+                (filter_index == 3 && tone_str == "ASSISTANT") ||
+                (filter_index == 4 && tone_str == "TOOL");
+            if (matches_search && matches_filter)
+              all.push_back({std::move(ev), photon.committed_at_ms, kind});
+          }
+          const int total_count = static_cast<int>(all.size());
+          const int pages = std::max(1, (total_count + page_size - 1) / page_size);
+          const int clamped_page = std::min(page, pages);
+          handle->set_trace_total(total_count);
+          handle->set_trace_pages(pages);
+          handle->set_trace_page(clamped_page);
+          const int begin = (clamped_page - 1) * page_size;
+          const int end = std::min(total_count, begin + page_size);
+          trace_events->clear();
+          std::vector<TraceEvent> page_events;
+          for (int i = begin; i < end; ++i) {
+            page_events.push_back(all[i].event);
+          }
+          for (auto& e : page_events) trace_events->push_back(std::move(e));
+
+          // Gantt segments from real timestamps
+          gantt->clear();
+          if (!photons.empty()) {
+            const auto t0 = photons.front().committed_at_ms;
+            const auto t1 = std::max(t0 + 1, photons.back().committed_at_ms);
+            const double span = static_cast<double>(t1 - t0);
+            constexpr double min_frac = 0.02;
+            int count = 0;
+            for (const auto& photon : photons) {
+              if (++count > 200) break;
+              const double start = std::clamp(
+                  static_cast<double>(photon.committed_at_ms - t0) / span, 0.0, 0.98);
+              const auto kind = std::string(photon.kind);
+              int row = 0;
+              slint::Color tint = slint::Color::from_rgb_uint8(0x6B,0x72,0x80);
+              if (kind == "user.input" || kind == "user.message") { row = 0; tint = slint::Color::from_rgb_uint8(0x6B,0x72,0x80); }
+              else if (kind.find("context") != std::string::npos || kind == "system.prompt") { row = 0; tint = slint::Color::from_rgb_uint8(0x3B,0x82,0xF6); }
+              else if (kind == "assistant.message" || kind == "model.completed") { row = 0; tint = slint::Color::from_rgb_uint8(0x22,0xC5,0x5E); }
+              else if (kind.starts_with("model.")) { row = 1; tint = slint::Color::from_rgb_uint8(0xA8,0x55,0xF7); }
+              else { row = 2; tint = slint::Color::from_rgb_uint8(0xF9,0x73,0x16); }
+              GanttSegment seg;
+              seg.row = row;
+              seg.start = static_cast<float>(start);
+              seg.span = static_cast<float>(std::max(min_frac, 1.0 / std::max(1.0, span / 1000)));
+              seg.span = static_cast<float>(std::min(0.98 - start, static_cast<double>(seg.span)));
+              seg.tint = tint;
+              gantt->push_back(seg);
+            }
+          }
+
+          // Time ticks
+          if (!photons.empty()) {
+            const auto total_s = (photons.back().committed_at_ms - photons.front().committed_at_ms) / 1000;
+            std::vector<slint::SharedString> ticks;
+            for (int i = 0; i < 7; ++i) {
+              const auto sec = total_s * i / 6;
+              if (sec < 60) ticks.push_back(slint::SharedString(std::to_string(sec) + "s"));
+              else ticks.push_back(slint::SharedString(std::to_string(sec / 60) + "m " + std::to_string(sec % 60) + "s"));
+            }
+            auto tick_model = std::make_shared<slint::VectorModel<slint::SharedString>>(ticks);
+            handle->set_trace_ticks(tick_model);
+          }
+
+          // Token labels with thousands separators
+          auto group_digits = [](std::int64_t value) {
+            auto str = std::to_string(value);
+            std::string out;
+            int pos = 0;
+            for (auto it = str.rbegin(); it != str.rend(); ++it) {
+              if (pos > 0 && pos % 3 == 0) out += ',';
+              out += *it; ++pos;
+            }
+            return std::string(out.rbegin(), out.rend());
+          };
+          const auto in_toks = static_cast<std::int64_t>(handle->get_trace_input_tokens());
+          const auto out_toks = static_cast<std::int64_t>(handle->get_trace_output_tokens());
+          const auto tot = in_toks + out_toks;
+          handle->set_trace_total_label(display_string(group_digits(tot)));
+          if (tot > 0) {
+            handle->set_trace_prompt_label(display_string(
+                group_digits(in_toks) + " (" + std::to_string(in_toks * 100 / tot) + "%)"));
+            handle->set_trace_completion_label(display_string(
+                group_digits(out_toks) + " (" + std::to_string(out_toks * 100 / tot) + "%)"));
+          }
+
+          // Workflow counters
+          int explored = 0, ran = 0;
+          for (const auto& p : photons) {
+            if (p.kind.starts_with("fs.") || p.kind == "artifact.previewed") ++explored;
+            if (p.kind.starts_with("process.") || p.kind == "tool.result") ++ran;
+          }
+          handle->set_workflow_explored(explored);
+          handle->set_workflow_ran(ran);
+          handle->set_workflow_done(handle->get_trace_result() == "已完成" ? 1 : 0);
+        });
+  }
+
+  void export_trace() {
+    auto window = window_;
+    const auto photons = photons_;
+    const auto workspace = current_workspace_;
+    (void)slint::invoke_from_event_loop([window, photons, workspace] {
+      auto locked = window.lock();
+      if (!locked) return;
+      auto handle = *locked;
+      const auto search = display_utf8(std::string_view(handle->get_trace_search()));
+      const auto filter_index = handle->get_trace_filter_index();
+      try {
+        auto dir = workspace / "exports";
+        std::filesystem::create_directories(dir);
+        const auto now = std::chrono::system_clock::now();
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()).count();
+        auto file = dir / ("tokmon-trace-" + std::to_string(ms) + ".json");
+        std::ofstream out(file, std::ios::binary);
+        if (!out) { handle->set_settings_status("导出失败：无法写入文件"); return; }
+        out << "{\"events\":[";
+        int num = 0; bool first = true;
+        for (const auto& photon : photons) {
+          ++num;
+          const auto kind = std::string(photon.kind);
+          std::string tone = kind == "user.input" || kind == "user.message" ? "USER"
+              : kind.find("context") != std::string::npos ? "CONTEXT"
+              : kind == "assistant.message" || kind == "model.completed" ? "ASSISTANT"
+              : kind.find("failed") != std::string::npos ? "ERROR"
+              : kind == "model.tool-call" || kind.starts_with("fs.") || kind.starts_with("process.") || kind == "tool.result" ? "TOOL"
+              : "OTHER";
+          bool match = filter_index == 0 ||
+              (filter_index == 1 && tone == "USER") || (filter_index == 2 && tone == "CONTEXT") ||
+              (filter_index == 3 && tone == "ASSISTANT") || (filter_index == 4 && tone == "TOOL");
+          if (!match) continue;
+          auto detail = tokmon::cbor::diagnostic(photon.payload);
+          for (auto& ch : detail) if (ch == '"' || ch == '\\') ch = ' ';
+          if (!first) out << ",";
+          first = false;
+          out << "\n{\"num\":" << num << ",\"kind\":\"" << kind << "\",\"tone\":\"" << tone
+              << "\",\"time\":" << photon.committed_at_ms << ",\"detail\":\"" << detail << "\"}";
+        }
+        out << "\n]}\n";
+        out.close();
+        handle->set_settings_status(slint::SharedString(
+            "轨迹已导出: " + std::filesystem::absolute(file).string()));
+      } catch (...) {
+        handle->set_settings_status("轨迹导出失败");
+      }
+    });
   }
 
  private:
@@ -998,7 +1209,8 @@ class UiSnowController final {
       };
       if (auto value = string_value("language")) handle->set_setting_language(*value);
       if (auto value = string_value("startup")) handle->set_setting_startup(*value);
-      if (auto value = bool_value("autosave")) handle->set_setting_autosave(*value);
+      if (auto value = string_value("autosave")) handle->set_setting_autosave(*value);
+      else if (auto value = bool_value("autosave")) handle->set_setting_autosave(display_string(*value ? "5 分钟" : "关闭"));
       if (auto value = string_value("provider")) handle->set_setting_provider(*value);
       if (auto value = string_value("main_model")) {
         handle->set_setting_main_model(*value); handle->set_model_name(*value);
@@ -1014,7 +1226,8 @@ class UiSnowController final {
       if (auto value = bool_value("notifications")) handle->set_setting_notifications(*value);
       if (auto value = bool_value("desktop_notifications")) handle->set_setting_desktop_notifications(*value);
       if (auto value = bool_value("message_alerts")) handle->set_setting_message_alerts(*value);
-      if (auto value = bool_value("quiet_hours")) handle->set_setting_quiet_hours(*value);
+      if (auto value = string_value("quiet_hours")) handle->set_setting_quiet_hours(*value);
+      else if (auto value = bool_value("quiet_hours")) handle->set_setting_quiet_hours(display_string(*value ? "22:00 - 08:00" : "关闭"));
       if (auto value = bool_value("dark_theme")) handle->set_setting_dark_theme(*value);
       if (auto value = int_value("accent")) handle->set_setting_accent(*value);
       if (auto value = string_value("density")) handle->set_setting_density(*value);
@@ -1025,6 +1238,8 @@ class UiSnowController final {
       if (auto value = bool_value("sidebar_visible")) handle->set_sidebar_visible(*value);
       if (auto value = bool_value("code_visible")) handle->set_code_visible(*value);
       if (auto value = bool_value("task_expanded")) handle->set_task_expanded(*value);
+      if (auto value = string_value("update_channel")) handle->set_setting_channel(*value);
+      if (auto value = string_value("file_access")) handle->set_setting_file_access(*value);
       handle->set_setting_workspace(display_string(path_to_utf8(workspace)));
       if (include_navigation) {
         const auto* encoded = tokmon::cbor::find(values, "navigation");
@@ -1500,6 +1715,8 @@ class UiSnowController final {
   std::shared_ptr<slint::VectorModel<TimelineItem>> timeline_;
   std::shared_ptr<slint::VectorModel<TimelineItem>> conversation_workflow_;
   std::shared_ptr<slint::VectorModel<CodeLine>> code_;
+  std::shared_ptr<slint::VectorModel<TraceEvent>> trace_events_;
+  std::shared_ptr<slint::VectorModel<GanttSegment>> gantt_;
   std::shared_ptr<slint::VectorModel<NavigationItem>> navigation_model_;
   std::shared_ptr<std::vector<NavigationItem>> navigation_;
   std::filesystem::path assets_;
@@ -1620,17 +1837,22 @@ int main(int argc, char** argv) {
       std::make_shared<slint::VectorModel<TimelineItem>>();
   auto code_model = std::make_shared<slint::VectorModel<CodeLine>>();
   auto slash_model = std::make_shared<slint::VectorModel<SlashCommandItem>>();
+  auto trace_events_model = std::make_shared<slint::VectorModel<TraceEvent>>();
+  auto gantt_model = std::make_shared<slint::VectorModel<GanttSegment>>();
   for (auto& line : code_lines_from({})) code_model->push_back(std::move(line));
   window->set_navigation(nav_model);
   window->set_timeline(timeline_model);
   window->set_conversation_workflow(conversation_workflow_model);
   window->set_code_lines(code_model);
   window->set_slash_commands(slash_model);
+  window->set_trace_events(trace_events_model);
+  window->set_gantt(gantt_model);
   window->set_setting_workspace(
       display_string(navigation_workspace_text));
   window->set_daemon_state(connected->started ? "后台服务已自动启动" : "后台服务已连接");
   UiSnowController controller(endpoint, navigation_workspace, daemon_executable,
-                               timeline_model, conversation_workflow_model, code_model, nav_model,
+                               timeline_model, conversation_workflow_model, code_model,
+                               trace_events_model, gantt_model, nav_model,
                                navigation_state, assets,
                                slint::ComponentWeakHandle<MainWindow>(window));
   controller.load_settings(true);
@@ -1884,7 +2106,7 @@ int main(int argc, char** argv) {
     controller.save_settings(tokmon::cbor::object({
         {"language", std::string(window->get_setting_language())},
         {"startup", std::string(window->get_setting_startup())},
-        {"autosave", window->get_setting_autosave()},
+        {"autosave", std::string(window->get_setting_autosave())},
         {"provider", std::string(window->get_setting_provider())},
         {"main_model", std::string(window->get_setting_main_model())},
         {"reasoning", std::string(window->get_setting_reasoning())},
@@ -1898,7 +2120,7 @@ int main(int argc, char** argv) {
         {"notifications", window->get_setting_notifications()},
         {"desktop_notifications", window->get_setting_desktop_notifications()},
         {"message_alerts", window->get_setting_message_alerts()},
-        {"quiet_hours", window->get_setting_quiet_hours()},
+        {"quiet_hours", std::string(window->get_setting_quiet_hours())},
         {"dark_theme", window->get_setting_dark_theme()},
         {"accent", static_cast<std::int64_t>(window->get_setting_accent())},
         {"density", std::string(window->get_setting_density())},
@@ -1908,7 +2130,9 @@ int main(int argc, char** argv) {
         {"cloud_sync", window->get_setting_cloud_sync()},
         {"sidebar_visible", window->get_sidebar_visible()},
         {"code_visible", window->get_code_visible()},
-        {"task_expanded", window->get_task_expanded()}}));
+        {"task_expanded", window->get_task_expanded()},
+        {"update_channel", std::string(window->get_setting_channel())},
+        {"file_access", std::string(window->get_setting_file_access())}}));
     controller.select_provider(std::string(window->get_setting_provider()));
     window->set_model_name(window->get_setting_main_model());
     window->set_effort(window->get_setting_reasoning());
@@ -1935,6 +2159,38 @@ int main(int argc, char** argv) {
   });
   window->on_close_window([] {
     slint::quit_event_loop();
+  });
+  window->on_refresh_trace([&controller] {
+    controller.publish_trace_view();
+  });
+  window->on_export_trace([&controller] {
+    controller.export_trace();
+  });
+  window->on_settings_searched([window](const slint::SharedString& text) {
+    const auto query = display_utf8(std::string_view(text));
+    if (query.empty()) return;
+    static const std::pair<int, std::vector<std::string>> table[] = {
+        {0, {"语言", "启动", "自动保存", "更新通道", "通用"}},
+        {1, {"智能体", "模型", "提供方", "推理", "主模型", "协议"}},
+        {2, {"文件访问", "命令审批", "网络", "高风险", "权限", "安全"}},
+        {3, {"工作区", "索引", "同步", "Git", "git"}},
+        {4, {"通知", "桌面", "消息提醒", "免打扰"}},
+        {5, {"外观", "主题", "强调色", "密度", "字体"}},
+        {6, {"快捷键", "新建会话", "发送消息", "命令面板"}},
+        {7, {"账户", "昵称", "邮箱", "方案", "云同步"}},
+    };
+    for (const auto& [page, keywords] : table) {
+      for (const auto& keyword : keywords) {
+        if (keyword.find(query) != std::string::npos ||
+            query.find(keyword) != std::string::npos) {
+          window->set_settings_page(page);
+          window->set_settings_status(
+              slint::SharedString("已定位到设置页 " + std::to_string(page + 1)));
+          return;
+        }
+      }
+    }
+    window->set_settings_status(slint::SharedString("未找到匹配的设置项"));
   });
 
   window->show();
