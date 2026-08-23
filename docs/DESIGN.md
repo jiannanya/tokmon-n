@@ -2369,6 +2369,24 @@ Linux:   $HOME/.tokmon/
 
 从陌生仓库打开项目时，`.tokmon` 只是未经信任的候选配置。它不能自行安装 artifact、下载 Node.js/CPython、执行 `npm install`/`pip install`、增加信任根、扩大 Act 权限或绑定 secret；相关变化必须经过 artifact 验证和 Fallen 审批。
 
+### 15.5 Snow 斜杠命令
+
+CLI 与 Desktop 共用一份 C++20 命令目录和解析器。命令必须位于输入开头；Desktop 输入 `/` 时由同一目录生成匹配浮层，客户端只负责选择和展示。
+
+命令执行遵循固定光路：
+
+```text
+command.invoked Fact
+→ Snow command.invoke Act
+→ command.observed Fact
+→ 专用 Lens Act / Photon 折叠 / 智能体光路
+→ command.completed | command.failed Fact
+```
+
+状态型命令折叠已提交 Photon；`compact`、`diff/export`、`fork`、`skills discover` 分别交给 Textus、Cove、Aya、Enso。`rewind` 只能从指定序号创建新 Ray，不能修改或撤销原 Photon。高影响的 daemon 固定、模型凭据、Lens 装卸仍保留显式 CLI 顶层入口。
+
+规范命令、参数、别名、双端行为和错误规则见 [`SLASH-COMMANDS.md`](SLASH-COMMANDS.md)。
+
 ---
 
 ## 16. Termon：Slint 桌面显像

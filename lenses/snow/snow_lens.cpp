@@ -4,8 +4,9 @@ namespace tokmon::builtin {
 
 SnowLens::SnowLens() : LensBase(make_manifest("snow", "Snow / 本地协议纯白投影幕",
     {"snow.protocol", "cli.output", "diagnostic.connection"},
-    {{"ui.intent", "*"}, {"snow.*", "*"}, {"system.started", "*"}},
+    {{"ui.intent", "*"}, {"command.*", "*"}, {"snow.*", "*"}, {"system.started", "*"}},
     {{"snow.intent", "tokmon.snow.intent.v1"},
+     {"command.invoke", "tokmon.command.invoke.v1"},
      {"snow.cancel", "tokmon.snow.cancel.v1"},
      {"snow.reconnect", "tokmon.snow.reconnect.v1"}})) {}
 
@@ -30,9 +31,11 @@ Result<void> SnowLens::view(const PhotonWindow& photons, SurfaceBuilder& surface
 Result<RefractionResult> SnowLens::refract(const PhotonWindow&, const Act& act,
                                             RefractionBeam& beam) {
   if (!accepts(act)) return RefractionResult{.status = RefractionStatus::passed};
-  const std::string kind = act.kind == "snow.cancel" ? "snow.cancel-observed" :
+  const std::string kind = act.kind == "command.invoke" ? "command.observed" :
+      act.kind == "snow.cancel" ? "snow.cancel-observed" :
       act.kind == "snow.reconnect" ? "snow.reconnect-observed" : "ui.intent-observed";
-  return emit(beam, kind, "tokmon.snow.result.v1", cbor::object({
+  return emit(beam, kind, act.kind == "command.invoke" ? "tokmon.command.observed.v1" :
+      "tokmon.snow.result.v1", cbor::object({
       {"intent", act.parameters}, {"request_id", act.id},
       {"committed_by_client", false}}));
 }

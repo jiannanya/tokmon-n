@@ -1,6 +1,7 @@
 #include <atomic>
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -80,7 +81,7 @@ Usage:
   tokmon lens unmount <id>
   tokmon lens reconcile          Re-read .tokmon YAML and atomically swap
   tokmon daemon status           Check this workspace background service
-  tokmon daemon start            Start it now (normally automatic)
+  tokmon daemon start            Start and pin it until an explicit stop
   tokmon daemon stop             Gracefully stop it after active work drains
   tokmon config paths            Print resolved .tokmon directories
   tokmon model list              List configured platforms (credentials redacted)
@@ -100,7 +101,8 @@ Options:
   --no-color                     Disable decoration (accepted for CI)
 
 All stateful commands attach to or automatically start the workspace tokmond.
-The shared daemon remains alive when a CLI or desktop client exits.
+Interactive CLI sessions stop it on exit; one-shot commands keep a 15 s reuse window.
+An explicit `daemon start` remains alive until `daemon stop`.
 )HELP";
 }
 
@@ -399,16 +401,30 @@ int main(int argc, char** argv) {
       .executable = sibling_daemon(argv[0])});
   if (!connection) { print_error(connection.error()); return 1; }
   if (daemon_command && arguments.size() > 1 && arguments[1] == "start") {
+    auto pinned = tokmon::pin_daemon(endpoint);
+    if (!pinned) { print_error(pinned.error()); return 1; }
     if (output_format == OutputFormat::human)
       *output << (connection->started ? "tokmond started" : "tokmond already running")
-              << "\nendpoint=" << endpoint.string() << '\n';
+              << " and pinned until `tokmon daemon stop`\nendpoint="
+              << endpoint.string() << '\n';
     else write_value(*output, tokmon::cbor::object({{"running", true},
-        {"started", connection->started}, {"endpoint", endpoint.string()}}), output_format);
+        {"started", connection->started}, {"pinned", true},
+        {"endpoint", endpoint.string()}}), output_format);
     return 0;
   }
   if (daemon_command) { help(); return 2; }
 
   tokmon::SnowClient client(endpoint);
+  const auto interactive = arguments[0] == "chat" || arguments[0] == "stdio";
+  auto client_lease = tokmon::DaemonClientLease::attach(tokmon::DaemonClientOptions{
+      .endpoint = endpoint,
+      .client_id = tokmon::make_id("cli-client"),
+      .client_kind = interactive ? "cli-interactive" : "cli-command",
+      .shutdown_when_idle = true,
+      .idle_timeout = interactive ? std::chrono::milliseconds(250)
+                                  : std::chrono::seconds(15),
+      .lease_ttl = std::chrono::seconds(6)});
+  if (!client_lease) { print_error(client_lease.error()); return 1; }
 
   if (arguments[0] == "stdio") return run_stdio(client);
   if (arguments[0] == "model" && arguments.size() > 1 && arguments[1] == "list") {
@@ -520,26 +536,41 @@ int main(int argc, char** argv) {
     if (output_format != OutputFormat::human) {
       std::cerr << "chat requires human output; use run for machine output\n"; return 2;
     }
-    *output << "Tokmon interactive mode. Type /new for a new ray or /quit to leave.\n";
+    *output << "Tokmon interactive mode. Type /help for commands or /exit to leave.\n";
     std::string line;
     tokmon::RayId active_ray;
+    std::string session_effort = "medium";
+    std::string session_access_mode = "full";
     if (arguments.size() > 1) line = join(arguments, 1);
-    while ((!line.empty() || (*output << "> " && std::getline(std::cin, line))) &&
-           line != "/quit") {
+    bool leave = false;
+    while (!leave && (!line.empty() || (*output << "> " && std::getline(std::cin, line)))) {
       if (line.empty()) continue;
-      if (line == "/new") {
-        active_ray.clear();
-        *output << "A new ray will be created by the next message.\n";
+      const auto slash = tokmon::is_slash_command(line);
+      auto payload = tokmon::cbor::object({{"action", slash ? "command.execute" : "chat"},
+          {"text", line}, {"ray", active_ray}, {"deadline_ms", deadline_ms},
+          {"surface", "cli"}, {"effort", session_effort},
+          {"access_mode", session_access_mode}});
+      if (!selected_provider.empty()) (*payload.as_map())["provider"] = selected_provider;
+      auto response = intent(client, std::move(payload));
+      if (!response) { print_error(response.error()); line.clear(); continue; }
+      if (const auto* ray = tokmon::cbor::find(response->payload, "ray"))
+        active_ray = std::string(ray->as_string());
+      if (const auto* provider = tokmon::cbor::find(response->payload, "provider"))
+        selected_provider = std::string(provider->as_string());
+      if (const auto* effort = tokmon::cbor::find(response->payload, "effort"))
+        session_effort = std::string(effort->as_string());
+      if (const auto* access = tokmon::cbor::find(response->payload, "access_mode"))
+        session_access_mode = std::string(access->as_string());
+      if (slash) {
+        if (const auto* display = tokmon::cbor::find(response->payload, "display");
+            display && !display->as_string().empty()) *output << display->as_string() << '\n';
+        if (const auto* copied = tokmon::cbor::find(response->payload, "copy_text");
+            copied && !copied->as_string().empty()) *output << copied->as_string() << '\n';
+        leave = tokmon::cbor::find(response->payload, "close_client") &&
+                tokmon::cbor::find(response->payload, "close_client")->as_bool();
         line.clear();
         continue;
       }
-      auto payload = tokmon::cbor::object({{"action", "chat"},
-          {"text", line}, {"ray", active_ray}, {"deadline_ms", deadline_ms}});
-      if (!selected_provider.empty()) (*payload.as_map())["provider"] = selected_provider;
-      auto response = intent(client, std::move(payload));
-      if (!response) { print_error(response.error()); continue; }
-      if (const auto* ray = tokmon::cbor::find(response->payload, "ray"))
-        active_ray = std::string(ray->as_string());
       auto photons = response_photons(*response);
       if (!photons) { print_error(photons.error()); continue; }
       for (const auto& photon : *photons)

@@ -2,7 +2,9 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <thread>
+#include <vector>
 
 #include <catch2/catch_test_macros.hpp>
 #include <sqlite3.h>
@@ -67,6 +69,27 @@ TEST_CASE("JSON bridge preserves protocol objects") {
   REQUIRE(parsed);
   REQUIRE(tokmon::cbor::encode(*parsed) == tokmon::cbor::encode(value));
   REQUIRE_FALSE(tokmon::json::parse("{broken"));
+}
+
+TEST_CASE("slash command catalog parses aliases quotes and desktop matches") {
+  const auto& catalog = tokmon::slash_command_catalog();
+  REQUIRE(catalog.size() >= 25);
+  REQUIRE(std::ranges::none_of(catalog, [](const auto& command) {
+    return command.name == "billing" || command.name == "login" ||
+           command.name == "upgrade";
+  }));
+
+  auto parsed = tokmon::parse_slash_command("/subtask \"review src/core\"");
+  REQUIRE(parsed);
+  REQUIRE(parsed->descriptor->name == "fork");
+  REQUIRE(parsed->invoked_name == "subtask");
+  REQUIRE(parsed->arguments == std::vector<std::string>{"review src/core"});
+
+  const auto matches = tokmon::match_slash_commands("/sec");
+  REQUIRE_FALSE(matches.empty());
+  REQUIRE(matches.front()->name == "security-review");
+  REQUIRE_FALSE(tokmon::parse_slash_command("/billing"));
+  REQUIRE_FALSE(tokmon::is_slash_command("explain /status"));
 }
 
 TEST_CASE("canonical CBOR is deterministic and rejects trailing bytes") {
@@ -638,4 +661,43 @@ TEST_CASE("workspace Snow endpoints are isolated and daemon health is probeable"
   available = tokmon::daemon_available(first);
   REQUIRE(available);
   REQUIRE_FALSE(*available);
+}
+
+TEST_CASE("daemon client leases attach, renew, detach, and explicit starts pin") {
+  const auto root = temporary_directory("daemon-client-lease");
+  const auto endpoint = tokmon::default_snow_endpoint(root);
+  std::mutex actions_mutex;
+  std::vector<std::string> actions;
+  tokmon::SnowServer server;
+  REQUIRE(server.start(endpoint, [&actions_mutex, &actions](
+      const tokmon::SnowMessage& request) {
+    const auto* action = tokmon::cbor::find(request.payload, "action");
+    {
+      std::scoped_lock lock(actions_mutex);
+      actions.emplace_back(action ? action->as_string() : std::string_view{});
+    }
+    return tokmon::SnowMessage{.kind = tokmon::SnowMessageKind::intent_result,
+        .request_id = request.request_id, .cursor = request.cursor,
+        .payload = tokmon::cbor::object({{"accepted", true}})};
+  }));
+
+  auto lease = tokmon::DaemonClientLease::attach(tokmon::DaemonClientOptions{
+      .endpoint = endpoint,
+      .client_id = "desktop-test",
+      .client_kind = "desktop",
+      .shutdown_when_idle = true,
+      .idle_timeout = std::chrono::milliseconds(0),
+      .lease_ttl = std::chrono::seconds(2)});
+  REQUIRE(lease);
+  std::this_thread::sleep_for(std::chrono::milliseconds(800));
+  REQUIRE(lease->detach());
+  REQUIRE(tokmon::pin_daemon(endpoint));
+  server.stop();
+
+  std::scoped_lock lock(actions_mutex);
+  REQUIRE_FALSE(actions.empty());
+  REQUIRE(actions.front() == "daemon.client.attach");
+  REQUIRE(std::ranges::find(actions, "daemon.client.heartbeat") != actions.end());
+  REQUIRE(std::ranges::find(actions, "daemon.client.detach") != actions.end());
+  REQUIRE(actions.back() == "daemon.pin");
 }

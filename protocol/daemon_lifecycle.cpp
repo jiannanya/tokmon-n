@@ -1,6 +1,9 @@
 #include "tokmon/daemon_lifecycle.hpp"
 
 #include <algorithm>
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
 #include <thread>
 
 #if defined(_WIN32)
@@ -26,6 +29,23 @@ SnowMessage ping_request() {
   return SnowMessage{.kind = SnowMessageKind::ping,
       .request_id = next_snow_request_id(),
       .payload = cbor::object({{"client", "daemon-lifecycle"}})};
+}
+
+Result<SnowMessage> lifecycle_request(const std::filesystem::path& endpoint,
+                                      cbor::Value payload,
+                                      const std::chrono::milliseconds timeout) {
+  SnowClient client(endpoint, timeout);
+  SnowMessage request{.kind = SnowMessageKind::intent,
+      .request_id = next_snow_request_id(), .payload = std::move(payload)};
+  auto response = client.request(request);
+  if (!response) return tl::unexpected(response.error());
+  if (response->kind == SnowMessageKind::error) {
+    const auto* message = cbor::find(response->payload, "message");
+    return tl::unexpected(make_error(ErrorCode::protocol_error,
+        message ? std::string(message->as_string())
+                : "tokmond rejected the lifecycle request"));
+  }
+  return response;
 }
 
 #if defined(_WIN32)
@@ -101,6 +121,98 @@ Result<std::uint64_t> spawn_daemon(const DaemonLaunchOptions& options) {
 
 }  // namespace
 
+struct DaemonClientLease::State {
+  explicit State(DaemonClientOptions value) : options(std::move(value)) {}
+
+  DaemonClientOptions options;
+  std::atomic_bool detached{false};
+  std::mutex wait_mutex;
+  std::condition_variable_any wait_condition;
+  std::jthread heartbeat;
+};
+
+DaemonClientLease::DaemonClientLease() = default;
+
+DaemonClientLease::DaemonClientLease(DaemonClientLease&& other) noexcept
+    : state_(std::move(other.state_)) {}
+
+DaemonClientLease& DaemonClientLease::operator=(DaemonClientLease&& other) noexcept {
+  if (this == &other) return *this;
+  (void)detach();
+  state_ = std::move(other.state_);
+  return *this;
+}
+
+DaemonClientLease::~DaemonClientLease() { (void)detach(); }
+
+Result<DaemonClientLease> DaemonClientLease::attach(DaemonClientOptions options) {
+  if (options.endpoint.empty() || options.client_id.empty() ||
+      options.client_kind.empty())
+    return tl::unexpected(make_error(ErrorCode::invalid_argument,
+        "daemon client endpoint, id, and kind are required"));
+  if (options.lease_ttl < std::chrono::seconds(2) ||
+      options.lease_ttl > std::chrono::seconds(30) ||
+      options.idle_timeout < std::chrono::milliseconds(0) ||
+      options.idle_timeout > std::chrono::minutes(5))
+    return tl::unexpected(make_error(ErrorCode::invalid_argument,
+        "daemon client lease timing is outside the supported range"));
+
+  auto attached = lifecycle_request(options.endpoint, cbor::object({
+      {"action", "daemon.client.attach"}, {"client_id", options.client_id},
+      {"client_kind", options.client_kind},
+      {"shutdown_when_idle", options.shutdown_when_idle},
+      {"idle_timeout_ms", static_cast<std::int64_t>(options.idle_timeout.count())},
+      {"lease_ttl_ms", static_cast<std::int64_t>(options.lease_ttl.count())}}),
+      std::chrono::milliseconds(750));
+  if (!attached) return tl::unexpected(attached.error());
+
+  DaemonClientLease lease;
+  lease.state_ = std::make_shared<State>(std::move(options));
+  auto state = lease.state_;
+  state->heartbeat = std::jthread([state](const std::stop_token stop) {
+    const auto interval = std::max(std::chrono::milliseconds(500),
+                                   state->options.lease_ttl / 3);
+    while (!stop.stop_requested()) {
+      std::unique_lock lock(state->wait_mutex);
+      state->wait_condition.wait_for(lock, stop, interval, [] { return false; });
+      if (stop.stop_requested() || state->detached.load(std::memory_order_acquire)) return;
+      lock.unlock();
+      auto renewed = lifecycle_request(state->options.endpoint, cbor::object({
+          {"action", "daemon.client.heartbeat"},
+          {"client_id", state->options.client_id},
+          {"lease_ttl_ms", static_cast<std::int64_t>(
+              state->options.lease_ttl.count())}}), std::chrono::milliseconds(500));
+      if (!renewed && !stop.stop_requested())
+        (void)lifecycle_request(state->options.endpoint, cbor::object({
+            {"action", "daemon.client.attach"},
+            {"client_id", state->options.client_id},
+            {"client_kind", state->options.client_kind},
+            {"shutdown_when_idle", state->options.shutdown_when_idle},
+            {"idle_timeout_ms", static_cast<std::int64_t>(
+                state->options.idle_timeout.count())},
+            {"lease_ttl_ms", static_cast<std::int64_t>(
+                state->options.lease_ttl.count())}}), std::chrono::milliseconds(500));
+    }
+  });
+  return lease;
+}
+
+Result<void> DaemonClientLease::detach() {
+  auto state = std::move(state_);
+  if (!state || state->detached.exchange(true, std::memory_order_acq_rel)) return {};
+  state->heartbeat.request_stop();
+  state->wait_condition.notify_all();
+  if (state->heartbeat.joinable()) state->heartbeat.join();
+  auto detached = lifecycle_request(state->options.endpoint, cbor::object({
+      {"action", "daemon.client.detach"},
+      {"client_id", state->options.client_id},
+      {"shutdown_when_idle", state->options.shutdown_when_idle},
+      {"idle_timeout_ms", static_cast<std::int64_t>(
+          state->options.idle_timeout.count())}}), std::chrono::milliseconds(750));
+  if (!detached) return tl::unexpected(detached.error());
+  return {};
+}
+
 std::filesystem::path workspace_snow_endpoint(
     const std::filesystem::path& run_directory,
     const std::filesystem::path& workspace) {
@@ -170,6 +282,14 @@ Result<void> shutdown_daemon(const std::filesystem::path& endpoint,
     if (!*available) return {};
   }
   return tl::unexpected(make_error(ErrorCode::timeout, "tokmond did not stop in time"));
+}
+
+Result<void> pin_daemon(const std::filesystem::path& endpoint,
+                        const std::chrono::milliseconds timeout) {
+  auto pinned = lifecycle_request(endpoint,
+      cbor::object({{"action", "daemon.pin"}}), timeout);
+  if (!pinned) return tl::unexpected(pinned.error());
+  return {};
 }
 
 }  // namespace tokmon

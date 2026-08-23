@@ -138,6 +138,41 @@ Result<RefractionResult> RayTracingEngine::execute(const PhotonWindow& window, A
   return result;
 }
 
+Result<RefractionResult> RayTracingEngine::refract(Act act) {
+  if (stopping_.load(std::memory_order_acquire))
+    return tl::unexpected(make_error(ErrorCode::cancelled, "engine stopping"));
+  const auto current = path_.snapshot();
+  const auto proposed_ray = act.ray;
+  ActPipeline pipeline(admission_);
+  if (auto proposed = audit_act(act, "act.proposed"); !proposed)
+    return tl::unexpected(proposed.error());
+  auto admitted = pipeline.admit(std::move(act), *current);
+  if (!admitted) {
+    auto rejected = emit(PhotonDraft{.ray = proposed_ray, .kind = "act.rejected",
+        .schema = "tokmon.act.audit.v1",
+        .payload = cbor::object({{"error", admitted.error().describe()}}),
+        .epoch = current->epoch});
+    if (!rejected) return tl::unexpected(rejected.error());
+    return tl::unexpected(admitted.error());
+  }
+  if (auto audit = audit_act(*admitted, "act.admitted"); !audit)
+    return tl::unexpected(audit.error());
+
+  const MountedLens* target = nullptr;
+  for (const auto& mounted : current->lenses)
+    if (mounted.lens->manifest().id == admitted->target &&
+        mounted.generation == admitted->generation) {
+      target = &mounted;
+      break;
+    }
+  if (!target)
+    return tl::unexpected(make_error(ErrorCode::invalid_state,
+                                     "admitted Lens generation left active path"));
+  auto photons = store_.read_ray(admitted->ray);
+  if (!photons) return tl::unexpected(photons.error());
+  return execute(PhotonWindow(std::move(*photons)), *admitted, *target);
+}
+
 Result<std::size_t> RayTracingEngine::advance(const RayId& ray,
                                                const std::size_t max_beats) {
   std::size_t beats = 0;
@@ -167,32 +202,7 @@ Result<std::size_t> RayTracingEngine::advance(const RayId& ray,
 
     auto act = surface->proposals.front();
     act.ray = ray;
-    const auto current = path_.snapshot();
-    ActPipeline pipeline(admission_);
-    if (auto proposed = audit_act(act, "act.proposed"); !proposed)
-      return tl::unexpected(proposed.error());
-    auto admitted = pipeline.admit(std::move(act), *current);
-    if (!admitted) {
-      auto rejected = emit(PhotonDraft{.ray = ray, .kind = "act.rejected",
-          .schema = "tokmon.act.audit.v1",
-          .payload = cbor::object({{"error", admitted.error().describe()}}),
-          .epoch = current->epoch});
-      if (!rejected) return tl::unexpected(rejected.error());
-      return tl::unexpected(admitted.error());
-    }
-    if (auto audit = audit_act(*admitted, "act.admitted"); !audit)
-      return tl::unexpected(audit.error());
-
-    const MountedLens* target = nullptr;
-    for (const auto& mounted : current->lenses)
-      if (mounted.lens->manifest().id == admitted->target &&
-          mounted.generation == admitted->generation) { target = &mounted; break; }
-    if (!target)
-      return tl::unexpected(make_error(ErrorCode::invalid_state,
-                                       "admitted Lens generation left active path"));
-    auto photons = store_.read_ray(ray);
-    if (!photons) return tl::unexpected(photons.error());
-    auto result = execute(PhotonWindow(std::move(*photons)), *admitted, *target);
+    auto result = refract(std::move(act));
     if (!result) return tl::unexpected(result.error());
     ++beats;
   }

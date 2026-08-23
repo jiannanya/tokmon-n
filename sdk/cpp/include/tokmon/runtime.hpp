@@ -23,6 +23,7 @@ class TokmonRuntime {
   Result<RayId> submit(std::string input, cbor::Value context);
   Result<RayId> submit_to(const RayId& ray, std::string input);
   Result<RayId> submit_to(const RayId& ray, std::string input, cbor::Value context);
+  Result<RefractionResult> refract(Act act);
   Result<std::size_t> advance(const RayId& ray);
   void cancel(const RayId& ray) noexcept;
   Result<std::vector<Photon>> history(const RayId& ray) const;

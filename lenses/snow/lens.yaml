@@ -7,11 +7,13 @@ trust: t1
 stateless: true
 observes:
   - { kind: ui.intent, schema: "*" }
+  - { kind: "command.*", schema: "*" }
   - { kind: "snow.*", schema: "*" }
   - { kind: system.started, schema: "*" }
 view_channels: [snow.protocol, cli.output, diagnostic.connection]
 refracts:
   - { kind: snow.intent, schema: tokmon.snow.intent.v1 }
+  - { kind: command.invoke, schema: tokmon.command.invoke.v1 }
   - { kind: snow.cancel, schema: tokmon.snow.cancel.v1 }
   - { kind: snow.reconnect, schema: tokmon.snow.reconnect.v1 }
 light_permissions: [photon.emit, log.write]

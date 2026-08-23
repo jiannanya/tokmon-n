@@ -768,6 +768,10 @@ Result<RayId> TokmonRuntime::submit_to(const RayId& ray, std::string input,
   if (!appended) return tl::unexpected(appended.error());
   return ray;
 }
+Result<RefractionResult> TokmonRuntime::refract(Act act) {
+  if (!engine_) return tl::unexpected(make_error(ErrorCode::invalid_state, "runtime is not open"));
+  return engine_->refract(std::move(act));
+}
 Result<std::size_t> TokmonRuntime::advance(const RayId& ray) {
   if (!engine_) return tl::unexpected(make_error(ErrorCode::invalid_state, "runtime is not open"));
   auto advanced = engine_->advance(ray, config_.max_beats);

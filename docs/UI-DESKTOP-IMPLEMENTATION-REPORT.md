@@ -1,6 +1,10 @@
 # Tokmon Desktop UI、进程生命周期与端到端实现验收报告
 
-> 后续更新：真实多平台模型配置、系统凭据库与 Rhea 联网链路已完成，见 [MODEL-PROVIDER-IMPLEMENTATION-REPORT.md](MODEL-PROVIDER-IMPLEMENTATION-REPORT.md)。本报告中“provider 暂用 mock”和 79 项测试统计仅记录当时验收快照。
+## 斜杠命令选择器补充（2026-08-23）
+
+输入框以 `/` 开头且尚未进入参数区时，Desktop 从共享命令目录实时筛选最多 8 条结果。浮层展示规范用法、中文说明和类别，支持悬停高亮与点击回填；输入空格、发送或选择后自动收起。所有命令由 `UiSnowController` 发送给 `tokmond`，结果再投影回对话、轨迹、模型/权限/强度状态、设置弹窗或系统剪贴板。
+
+> 后续更新：真实多平台模型配置、系统凭据库与 Rhea 联网链路已完成，见 [MODEL-PROVIDER-IMPLEMENTATION-REPORT.md](MODEL-PROVIDER-IMPLEMENTATION-REPORT.md)。第 6 节的 mock 闭环仅记录早期验收快照；当前生命周期和测试结论已更新。
 
 > 产品题记：**A Lens to Them All**  
 > 实现语言：C++20 + Slint C++  
@@ -16,10 +20,10 @@
 - `tokmon-desktop` 是原生无边框 Slint 工作台，完成主界面和八个设置页；
 - 搜索、树折叠、新建项目/会话、标题编辑、左右面板、页签、步骤、输入发送、选择菜单、文件菜单、问题面板和设置弹窗均有可操作状态；
 - `tokmon` 与 `tokmon-desktop` 均可自行连接或后台拉起同目录 `tokmond`，不依赖 `tokmon-launcher`；
-- Desktop 关闭后共享 daemon 继续工作，只有显式 `tokmon daemon stop` 才优雅停机；
+- Desktop 关闭后释放带心跳的客户端租约；最后一个客户端和活动工作离开后，对应 workspace daemon 自动优雅停机；
 - CLI 与 Desktop 的输入都进入真实 Nyxia 光路。模型 provider 暂用允许的 deterministic mock，但模型产生的 `model.tool-call` 会路由到真实 Calculator Lens，实际执行后再由模型生成最终回答；
 - Photon 事实流仍只追加。UI、设置和客户端生命周期没有获得修改、删除或撤销历史 Photon 的旁路；
-- Windows Slint 构建成功，UI-off 构建成功，自动化测试 `79/79` 通过；
+- Windows Slint 构建成功，UI-off 构建成功，当前自动化测试 `83/83` 通过；
 - 主界面及八个设置页均完成 2160×1350 物理像素实机截图，八个设置页启动、渲染、关闭的 stderr 均为 0 字节。
 
 ## 2. Figma 对齐基线
@@ -125,14 +129,16 @@ Windows 使用 `CreateProcessW` 和 `CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
 
 ### 5.3 关闭语义
 
-- 关闭 Desktop：只释放 Termon projection client，daemon 保持运行；
-- CLI 一次性命令结束：daemon 保持运行；
+- 关闭 Desktop：释放 Desktop 租约；无其他客户端和活动工作时，250 ms 后停止对应 daemon；
+- Desktop 崩溃：6 s 心跳租约过期后执行同样的安全回收；
+- CLI `chat`/`stdio`：会话期间续租，退出后 250 ms 空闲停止；
+- CLI 一次性命令：保留 15 s 命令串复用窗口，之后空闲停止；
 - `tokmon daemon status`：只做健康探测；
-- `tokmon daemon start`：显式确保服务已启动；
-- `tokmon daemon stop`：发送 `daemon.shutdown`，daemon 停止接收新工作、退出 Snow accept loop并优雅结束；
+- `tokmon daemon start`：显式启动并 pin，直到 `tokmon daemon stop`；
+- `tokmon daemon stop`：发送 `daemon.shutdown`，在活动工作完成后优雅结束；
 - `tokmon-launcher`：仅启动 Desktop 的兼容快捷方式，不创建也不拥有 daemon。
 
-实机验收结果：Desktop 打开时 status exit code 为 0；Desktop 关闭 exit code 为 0；关闭后 status 仍为 0；显式 stop 返回 0。
+多客户端不会互相误杀：只有最后一个租约离开且 Nyxia 没有活动工作时才能自动停止。详细协议和验收见 [DAEMON-LIFECYCLE.md](DAEMON-LIFECYCLE.md)。
 
 ## 6. 从对话到真实 Act 的闭环
 
@@ -194,7 +200,7 @@ cmake --build build/portable-debug --target tokmond tokmon -j 4
 ctest --test-dir build/windows-msvc-ui-debug --output-on-failure -C Debug
 ```
 
-结果：`79/79` 通过，`0` 失败，约 12.80 秒。
+当前回归结果：`83/83` 通过，`0` 失败；新增客户端租约 attach/heartbeat/detach/pin 合约测试。
 
 本轮新增或强化的自动测试包括：
 
@@ -232,13 +238,13 @@ ctest --test-dir build/windows-msvc-ui-debug --output-on-failure -C Debug
 | 指定前端交互是否具有可操作状态 | PASS |
 | CLI/Desktop 是否无需 launcher 即可使用 | PASS |
 | daemon 是否按 workspace 隔离且单实例 | PASS |
-| 客户端关闭是否不误杀共享 daemon | PASS |
+| Desktop 是否自动回收对应 daemon 且不误杀其他客户端/活动工作 | PASS |
 | daemon 是否可显式优雅停止 | PASS |
 | mock 模型后是否存在真实 Agent/Act/工具执行 | PASS |
 | UI 是否只做投影而不旁路修改 Photon | PASS |
 | 配置是否使用项目级 `.tokmon/config.yaml` YAML | PASS |
 | 错误与日志库是否保持 `tl::expected` / spdlog | PASS |
-| 自动化测试是否全绿 | PASS，79/79 |
+| 自动化测试是否全绿 | PASS，83/83 |
 | 是否需要用户补 Rust 工具链 | 不需要 |
 
 ## 10. 关键实现入口

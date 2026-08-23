@@ -73,6 +73,32 @@ slint::SharedString display_string(const std::string_view input) {
   return slint::SharedString(display_utf8(input));
 }
 
+void copy_to_clipboard(const std::string_view text) {
+#if defined(_WIN32)
+  if (!OpenClipboard(nullptr)) return;
+  EmptyClipboard();
+  const auto required = MultiByteToWideChar(CP_UTF8, 0, text.data(),
+      static_cast<int>(text.size()), nullptr, 0);
+  if (required > 0) {
+    const auto allocation = GlobalAlloc(GMEM_MOVEABLE,
+        (static_cast<std::size_t>(required) + 1u) * sizeof(wchar_t));
+    if (allocation) {
+      auto* buffer = static_cast<wchar_t*>(GlobalLock(allocation));
+      if (buffer) {
+        MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()),
+                            buffer, required);
+        buffer[required] = L'\0';
+        GlobalUnlock(allocation);
+        if (!SetClipboardData(CF_UNICODETEXT, allocation)) GlobalFree(allocation);
+      } else GlobalFree(allocation);
+    }
+  }
+  CloseClipboard();
+#else
+  (void)text;
+#endif
+}
+
 #if defined(_WIN32)
 HWND current_process_window() {
   struct Search {
@@ -238,6 +264,14 @@ class UiSnowController final {
     command.payload = tokmon::cbor::object({{"provider", std::move(provider)},
         {"model", std::move(model)},
         {"access_mode", std::move(access_mode)}, {"effort", std::move(effort)}});
+    enqueue(std::move(command));
+  }
+  void slash_command(std::string text, std::string provider, std::string model,
+                     std::string access_mode, std::string effort) {
+    Command command{"slash-command", std::move(text)};
+    command.payload = tokmon::cbor::object({{"provider", std::move(provider)},
+        {"model", std::move(model)}, {"access_mode", std::move(access_mode)},
+        {"effort", std::move(effort)}, {"surface", "desktop"}});
     enqueue(std::move(command));
   }
   void snapshot() { enqueue(Command{"snapshot", {}}); }
@@ -477,6 +511,47 @@ class UiSnowController final {
     });
   }
 
+  void apply_command_response(const tokmon::cbor::Value& payload) {
+    const auto read_string = [&payload](const char* key) {
+      const auto* value = tokmon::cbor::find(payload, key);
+      return value ? std::string(value->as_string()) : std::string{};
+    };
+    const auto read_bool = [&payload](const char* key) {
+      const auto* value = tokmon::cbor::find(payload, key);
+      return value && value->as_bool();
+    };
+    const auto display = read_string("display");
+    const auto copied = read_string("copy_text");
+    const auto title = read_string("session_title");
+    const auto model = read_string("model");
+    const auto provider = read_string("provider");
+    const auto effort = read_string("effort");
+    const auto access = read_string("access_mode");
+    const auto clear = read_bool("clear_session");
+    const auto settings = read_bool("open_settings");
+    const auto close = read_bool("close_client");
+    if (!copied.empty()) copy_to_clipboard(copied);
+    auto timeline = timeline_; auto code = code_; auto window = window_;
+    (void)slint::invoke_from_event_loop([timeline, code, window, display, title, model,
+        provider, effort, access, clear, settings, close, copied]() {
+      if (clear) { timeline->clear(); code->clear(); }
+      if (auto locked = window.lock()) {
+        auto handle = *locked;
+        if (!display.empty()) handle->set_assistant_text(display_string(display));
+        if (!title.empty()) handle->set_session_title(display_string(title));
+        if (!model.empty()) handle->set_model_name(display_string(model));
+        if (!provider.empty()) handle->set_setting_provider(display_string(provider));
+        if (!effort.empty()) handle->set_effort(effort == "low" ? "低" :
+            effort == "medium" ? "标准" : effort == "high" ? "高" : "最高");
+        if (!access.empty()) handle->set_access_mode(access == "full" ? "完全访问" :
+            access == "restricted" ? "受限访问" : "只读模式");
+        if (settings) handle->set_settings_open(true);
+        handle->set_status_text(copied.empty() ? "命令已完成" : "内容已复制到剪贴板");
+      }
+      if (close) slint::quit_event_loop();
+    });
+  }
+
   void show_error(std::string message) {
     TimelineItem item;
     item.time = "now"; item.kind = "snow.error";
@@ -521,6 +596,12 @@ class UiSnowController final {
         request.kind = tokmon::SnowMessageKind::intent;
         if (command.kind == "chat") {
           request.payload = tokmon::cbor::object({{"action", "chat"},
+              {"text", command.text}, {"ray", active_ray_}});
+          if (const auto* selection = command.payload.as_map())
+            for (const auto& [key, value] : *selection)
+              (*request.payload.as_map())[key] = value;
+        } else if (command.kind == "slash-command") {
+          request.payload = tokmon::cbor::object({{"action", "command.execute"},
               {"text", command.text}, {"ray", active_ray_}});
           if (const auto* selection = command.payload.as_map())
             for (const auto& [key, value] : *selection)
@@ -593,6 +674,19 @@ class UiSnowController final {
         continue;
       }
       if (command.kind == "reconcile") continue;
+      if (command.kind == "slash-command") {
+        if (const auto* ray = tokmon::cbor::find(response->payload, "ray"))
+          active_ray_ = std::string(ray->as_string());
+        if (tokmon::cbor::find(response->payload, "clear_session") &&
+            tokmon::cbor::find(response->payload, "clear_session")->as_bool()) {
+          photons_.clear();
+        } else {
+          auto photons = photons_from(*response);
+          if (!photons.empty()) apply_photons(std::move(photons), true);
+        }
+        apply_command_response(response->payload);
+        continue;
+      }
       if (command.kind == "chat" || command.kind == "provider-test")
         if (const auto* ray = tokmon::cbor::find(response->payload, "ray"))
           active_ray_ = std::string(ray->as_string());
@@ -687,6 +781,22 @@ int main(int argc, char** argv) {
 #endif
     return 2;
   }
+  auto client_lease = tokmon::DaemonClientLease::attach(tokmon::DaemonClientOptions{
+      .endpoint = endpoint,
+      .client_id = tokmon::make_id("desktop-client"),
+      .client_kind = "desktop",
+      .shutdown_when_idle = true,
+      .idle_timeout = std::chrono::milliseconds(250),
+      .lease_ttl = std::chrono::seconds(6)});
+  if (!client_lease) {
+#if defined(_WIN32)
+    const auto description = client_lease.error().describe();
+    const auto message = std::wstring(description.begin(), description.end());
+    MessageBoxW(nullptr, message.c_str(), L"Tokmon 无法连接后台服务",
+                MB_OK | MB_ICONERROR);
+#endif
+    return 2;
+  }
   auto window = MainWindow::create();
   window->set_settings_page(settings_page);
   window->set_settings_open(open_settings);
@@ -725,10 +835,12 @@ int main(int argc, char** argv) {
   refresh_navigation(nav_model, navigation_state, {});
   auto timeline_model = std::make_shared<slint::VectorModel<TimelineItem>>();
   auto code_model = std::make_shared<slint::VectorModel<CodeLine>>();
+  auto slash_model = std::make_shared<slint::VectorModel<SlashCommandItem>>();
   for (auto& line : code_lines_from({})) code_model->push_back(std::move(line));
   window->set_navigation(nav_model);
   window->set_timeline(timeline_model);
   window->set_code_lines(code_model);
+  window->set_slash_commands(slash_model);
   window->set_setting_workspace(
       slint::SharedString(paths->project.parent_path().generic_string()));
   window->set_daemon_state(connected->started ? "后台服务已自动启动" : "后台服务已连接");
@@ -737,7 +849,25 @@ int main(int argc, char** argv) {
   controller.snapshot();
   controller.load_settings();
   controller.load_providers();
+  window->on_slash_query_changed([slash_model, window](const slint::SharedString& text) {
+    const auto query = std::string(text);
+    const auto separator = query.find_first_of(" \t\r\n");
+    const auto visible = tokmon::is_slash_command(query) && separator == std::string::npos;
+    slash_model->clear();
+    if (visible) {
+      for (const auto* descriptor : tokmon::match_slash_commands(query, 8)) {
+        SlashCommandItem item;
+        item.command = slint::SharedString("/" + descriptor->name);
+        item.usage = display_string(descriptor->usage);
+        item.summary = display_string(descriptor->summary);
+        item.category = display_string(descriptor->category);
+        slash_model->push_back(std::move(item));
+      }
+    }
+    window->set_slash_menu_visible(visible && slash_model->row_count() != 0);
+  });
   window->on_send_message([&controller, timeline_model, window](const slint::SharedString& text) {
+    window->set_slash_menu_visible(false);
     TimelineItem item;
     item.time = time_label(std::chrono::duration_cast<std::chrono::milliseconds>(
                                std::chrono::system_clock::now().time_since_epoch())
@@ -749,10 +879,16 @@ int main(int argc, char** argv) {
     item.tone = "warning";
     item.progress = -1;
     timeline_model->push_back(std::move(item));
-    controller.chat(std::string(text), std::string(window->get_setting_provider()),
-                    std::string(window->get_model_name()),
-                    std::string(window->get_access_mode()),
-                    std::string(window->get_effort()));
+    if (tokmon::is_slash_command(std::string_view(text)))
+      controller.slash_command(std::string(text), std::string(window->get_setting_provider()),
+                               std::string(window->get_model_name()),
+                               std::string(window->get_access_mode()),
+                               std::string(window->get_effort()));
+    else
+      controller.chat(std::string(text), std::string(window->get_setting_provider()),
+                      std::string(window->get_model_name()),
+                      std::string(window->get_access_mode()),
+                      std::string(window->get_effort()));
   });
   window->on_new_session([&controller] { controller.new_session(); });
   window->on_select_navigation([nav_model, navigation_state, window](int index) {
@@ -866,5 +1002,7 @@ int main(int argc, char** argv) {
     slint::quit_event_loop();
   });
 
-  return window->run();
+  window->run();
+  (void)client_lease->detach();
+  return 0;
 }

@@ -10,6 +10,7 @@
 #include <optional>
 #include <regex>
 #include <set>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -435,6 +436,453 @@ tokmon::Result<tokmon::cbor::Value> resolved_model_context(
   if (!provider.secret_ref.empty()) (*context.as_map())["secret_ref"] = provider.secret_ref;
   return context;
 }
+
+std::string photon_text(const tokmon::Photon& photon) {
+  for (const auto* key : {"text", "summary", "stdout", "detail", "message"})
+    if (const auto* value = tokmon::cbor::find(photon.payload, key);
+        value && std::holds_alternative<std::string>(value->data))
+      return std::string(value->as_string());
+  return tokmon::cbor::diagnostic(photon.payload);
+}
+
+std::string photon_lines(const std::vector<tokmon::Photon>& photons,
+                         const std::size_t limit = 80) {
+  std::ostringstream output;
+  const auto first = photons.size() > limit ? photons.size() - limit : 0;
+  for (std::size_t index = first; index < photons.size(); ++index) {
+    const auto& photon = photons[index];
+    output << '#' << photon.sequence << " " << photon.kind;
+    const auto detail = photon_text(photon);
+    if (!detail.empty()) output << " — " << detail;
+    output << '\n';
+  }
+  return output.str();
+}
+
+tokmon::Result<tokmon::RefractionResult> invoke_lens(
+    tokmon::TokmonRuntime& runtime, const tokmon::RayId& ray,
+    std::string kind, std::string schema, std::string target,
+    tokmon::cbor::Value parameters,
+    const tokmon::RiskClass risk = tokmon::RiskClass::observe) {
+  return runtime.refract(tokmon::Act{.id = tokmon::make_id("act"), .ray = ray,
+      .kind = std::move(kind), .schema = std::move(schema),
+      .parameters = std::move(parameters), .target = std::move(target),
+      .epoch = runtime.light_path()->epoch, .risk = risk,
+      .idempotency_key = tokmon::make_id("command-binding")});
+}
+
+tokmon::Result<tokmon::cbor::Value> execute_slash_command(
+    tokmon::TokmonRuntime& runtime, const tokmon::cbor::Value& request_payload) {
+  const auto* text_field = tokmon::cbor::find(request_payload, "text");
+  const auto text = text_field ? std::string(text_field->as_string()) : std::string{};
+  auto parsed = tokmon::parse_slash_command(text);
+  if (!parsed) return tl::unexpected(parsed.error());
+
+  const auto* requested_ray = tokmon::cbor::find(request_payload, "ray");
+  tokmon::RayId active_ray = requested_ray
+      ? std::string(requested_ray->as_string()) : std::string{};
+  if (parsed->descriptor->requires_ray && active_ray.empty())
+    return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::invalid_state,
+        parsed->descriptor->usage + " requires an active session"));
+  const auto* snow_request = tokmon::cbor::find(request_payload, "snow_request_id");
+  const auto command_ray = active_ray.empty()
+      ? "command-ray-" + (snow_request ? std::string(snow_request->as_string())
+                                       : tokmon::make_id("request"))
+      : active_ray;
+  auto invoked = runtime.store().append(tokmon::PhotonDraft{.ray = command_ray,
+      .kind = "command.invoked", .schema = "tokmon.command.invoked.v1",
+      .payload = tokmon::cbor::object({
+          {"name", parsed->descriptor->name}, {"invoked_name", parsed->invoked_name},
+          {"arguments", parsed->raw_arguments}, {"surface", tokmon::cbor::find(request_payload, "surface")
+              ? *tokmon::cbor::find(request_payload, "surface") : tokmon::cbor::Value("unknown")},
+          {"modifies_committed_history", false}}), .epoch = runtime.light_path()->epoch});
+  if (!invoked) return tl::unexpected(invoked.error());
+
+  auto observed = invoke_lens(runtime, command_ray, "command.invoke",
+      "tokmon.command.invoke.v1", "org.tokmon.lens.snow",
+      tokmon::cbor::object({{"command", parsed->descriptor->name},
+                            {"arguments", parsed->raw_arguments},
+                            {"invocation_photon", invoked->id}}));
+  if (!observed) return tl::unexpected(observed.error());
+
+  tokmon::cbor::Value response = tokmon::cbor::object({
+      {"command", parsed->descriptor->name}, {"ray", active_ray},
+      {"display", ""}, {"close_client", false}, {"clear_session", false},
+      {"open_settings", false}});
+  const auto set = [&response](const char* key, tokmon::cbor::Value value) {
+    (*response.as_map())[key] = std::move(value);
+  };
+  const auto argument = [&](const std::size_t index) -> std::string {
+    return index < parsed->arguments.size() ? parsed->arguments[index] : std::string{};
+  };
+  const auto history_for = [&runtime](const tokmon::RayId& ray)
+      -> tokmon::Result<std::vector<tokmon::Photon>> {
+    return ray.empty() ? runtime.history_all(0) : runtime.history(ray);
+  };
+  const auto append_fact = [&runtime](const tokmon::RayId& ray, std::string kind,
+                                      std::string schema, tokmon::cbor::Value payload)
+      -> tokmon::Result<tokmon::Photon> {
+    return runtime.store().append(tokmon::PhotonDraft{.ray = ray,
+        .kind = std::move(kind), .schema = std::move(schema),
+        .payload = std::move(payload), .epoch = runtime.light_path()->epoch});
+  };
+
+  const auto& name = parsed->descriptor->name;
+  if (name == "help") {
+    if (const auto target = argument(0); !target.empty()) {
+      const auto* command = tokmon::find_slash_command(target);
+      if (!command) return tl::unexpected(tokmon::make_error(
+          tokmon::ErrorCode::not_found, "unknown slash command /" + target));
+      set("display", tokmon::slash_command_help(*command));
+    } else set("display", tokmon::slash_command_help());
+  } else if (name == "clear") {
+    set("clear_session", true);
+    set("ray", "");
+    set("display", "已开始新会话；原会话光子仍完整保留。\n下一条消息将创建一束新光线。");
+  } else if (name == "exit") {
+    set("close_client", true);
+    set("display", "正在关闭当前客户端；tokmond 将按客户端租约规则安全退出。");
+  } else if (name == "status") {
+    auto all = runtime.history_all(0);
+    if (!all) return tl::unexpected(all.error());
+    std::ostringstream output;
+    output << "tokmond: healthy\nLightPath: epoch " << runtime.light_path()->epoch
+           << ", " << runtime.light_path()->lenses.size() << " Lenses\nprovider: "
+           << runtime.config().default_model_provider << "\nPhoton tail: "
+           << (all->empty() ? 0 : all->back().sequence) << "\nactive ray: "
+           << (active_ray.empty() ? "none" : active_ray);
+    set("display", output.str());
+  } else if (name == "history") {
+    const auto target = argument(0).empty() ? active_ray : argument(0);
+    auto photons = history_for(target);
+    if (!photons) return tl::unexpected(photons.error());
+    set("display", photons->empty() ? "没有已提交光子。" : photon_lines(*photons));
+    set("photons", photon_array(*photons));
+  } else if (name == "resume") {
+    const auto target = argument(0);
+    if (target.empty()) return tl::unexpected(tokmon::make_error(
+        tokmon::ErrorCode::invalid_argument, "/resume requires a ray-id"));
+    auto photons = runtime.history(target);
+    if (!photons || photons->empty()) return tl::unexpected(photons
+        ? tokmon::make_error(tokmon::ErrorCode::not_found, "ray has no committed photons")
+        : photons.error());
+    active_ray = target;
+    set("ray", active_ray);
+    set("display", "已恢复光线 " + active_ray + "；后续输入会继续追加光子。");
+    set("photons", photon_array(*photons));
+  } else if (name == "rename") {
+    if (parsed->raw_arguments.empty()) return tl::unexpected(tokmon::make_error(
+        tokmon::ErrorCode::invalid_argument, "/rename requires a title"));
+    auto renamed = append_fact(active_ray, "session.renamed", "tokmon.session.title.v1",
+        tokmon::cbor::object({{"title", parsed->raw_arguments},
+                              {"replaces_display_title_only", true}}));
+    if (!renamed) return tl::unexpected(renamed.error());
+    set("session_title", parsed->raw_arguments);
+    set("display", "会话标题已更新为：“" + parsed->raw_arguments + "”。");
+  } else if (name == "branch" || name == "rewind") {
+    auto parent = runtime.history(active_ray);
+    if (!parent) return tl::unexpected(parent.error());
+    std::uint64_t from_sequence = parent->empty() ? 0 : parent->back().sequence;
+    if (name == "rewind") {
+      try { from_sequence = static_cast<std::uint64_t>(std::stoull(argument(0))); }
+      catch (...) { return tl::unexpected(tokmon::make_error(
+          tokmon::ErrorCode::invalid_argument, "/rewind requires a valid sequence")); }
+      if (std::ranges::none_of(*parent, [from_sequence](const auto& photon) {
+            return photon.sequence == from_sequence;
+          })) return tl::unexpected(tokmon::make_error(
+              tokmon::ErrorCode::not_found, "sequence is not part of the active ray"));
+    }
+    const auto child = tokmon::make_id("ray");
+    const auto branch_name = name == "branch" && !parsed->raw_arguments.empty()
+        ? parsed->raw_arguments : name + "-from-" + std::to_string(from_sequence);
+    auto child_fact = append_fact(child, "ray.branched", "tokmon.ray.branch.v1",
+        tokmon::cbor::object({{"parent_ray", active_ray},
+          {"from_sequence", static_cast<std::int64_t>(from_sequence)},
+          {"name", branch_name}, {"history_deleted", false}}));
+    if (!child_fact) return tl::unexpected(child_fact.error());
+    auto parent_fact = append_fact(active_ray, "branch.created", "tokmon.ray.branch.v1",
+        tokmon::cbor::object({{"child_ray", child},
+          {"from_sequence", static_cast<std::int64_t>(from_sequence)},
+          {"name", branch_name}, {"history_deleted", false}}));
+    if (!parent_fact) return tl::unexpected(parent_fact.error());
+    active_ray = child;
+    set("ray", active_ray);
+    set("session_title", branch_name);
+    set("display", "已从序号 #" + std::to_string(from_sequence) +
+        " 创建新光线 " + child + "；原光线未被修改。");
+  } else if (name == "copy") {
+    auto photons = runtime.history(active_ray);
+    if (!photons) return tl::unexpected(photons.error());
+    std::size_t count = 1;
+    if (!argument(0).empty()) try { count = std::clamp<std::size_t>(
+        static_cast<std::size_t>(std::stoull(argument(0))), 1, 20); } catch (...) {}
+    std::vector<std::string> messages;
+    for (auto iterator = photons->rbegin(); iterator != photons->rend() && messages.size() < count;
+         ++iterator) if (iterator->kind == "assistant.message")
+      messages.push_back(photon_text(*iterator));
+    std::ranges::reverse(messages);
+    std::ostringstream copied;
+    for (std::size_t index = 0; index < messages.size(); ++index) {
+      if (index != 0) copied << "\n\n";
+      copied << messages[index];
+    }
+    set("copy_text", copied.str());
+    set("display", messages.empty() ? "当前会话还没有助手回复。" : "已准备复制助手回复。");
+  } else if (name == "export") {
+    auto photons = runtime.history(active_ray);
+    if (!photons) return tl::unexpected(photons.error());
+    std::ostringstream markdown;
+    markdown << "# Tokmon session\n\n- Ray: `" << active_ray
+             << "`\n- Append-only: true\n\n";
+    for (const auto& photon : *photons)
+      markdown << "## #" << photon.sequence << " · " << photon.kind << "\n\n"
+               << photon_text(photon) << "\n\n";
+    const auto workspace = runtime.config().paths.project.parent_path();
+    const auto destination = argument(0).empty()
+        ? "tokmon-session-" + active_ray.substr(0, std::min<std::size_t>(12, active_ray.size())) + ".md"
+        : argument(0);
+    auto created = invoke_lens(runtime, active_ray, "artifact.create",
+        "tokmon.artifact.create.v1", "org.tokmon.lens.cove",
+        tokmon::cbor::object({{"workspace_root", workspace.generic_string()},
+                              {"content", markdown.str()}}), tokmon::RiskClass::reversible);
+    if (!created) return tl::unexpected(created.error());
+    auto refreshed = runtime.history(active_ray);
+    if (!refreshed) return tl::unexpected(refreshed.error());
+    const tokmon::Photon* artifact = nullptr;
+    for (auto iterator = refreshed->rbegin(); iterator != refreshed->rend(); ++iterator)
+      if (iterator->kind == "artifact.created") { artifact = &*iterator; break; }
+    const auto* digest = artifact ? tokmon::cbor::find(artifact->payload, "sha256") : nullptr;
+    if (!digest) return tl::unexpected(tokmon::make_error(
+        tokmon::ErrorCode::invalid_state, "Cove did not emit artifact.created"));
+    auto exported = invoke_lens(runtime, active_ray, "artifact.export",
+        "tokmon.artifact.export.v1", "org.tokmon.lens.cove",
+        tokmon::cbor::object({{"workspace_root", workspace.generic_string()},
+                              {"sha256", *digest}, {"destination", destination}}),
+        tokmon::RiskClass::reversible);
+    if (!exported) return tl::unexpected(exported.error());
+    set("display", "会话已通过 Cove 导出到 " + (workspace / destination).generic_string());
+  } else if (name == "context") {
+    auto photons = argument(0) == "all" ? runtime.history_all(0) : runtime.history(active_ray);
+    if (!photons) return tl::unexpected(photons.error());
+    std::int64_t user = 0, assistant = 0, tools = 0, summaries = 0;
+    for (const auto& photon : *photons) {
+      user += photon.kind == "user.input"; assistant += photon.kind == "assistant.message";
+      tools += photon.kind == "tool.result"; summaries += photon.kind == "summary.created";
+    }
+    std::ostringstream output;
+    output << "上下文投影\n光子: " << photons->size() << "\n用户输入: " << user
+           << "\n助手回复: " << assistant << "\n工具结果: " << tools
+           << "\n压缩摘要: " << summaries << "\n窗口上限: "
+           << runtime.config().photon_window;
+    set("display", output.str());
+  } else if (name == "compact") {
+    auto compacted = invoke_lens(runtime, active_ray, "text.compact",
+        "tokmon.text.compact.v1", "org.tokmon.lens.textus",
+        tokmon::cbor::object({{"focus", parsed->raw_arguments}, {"max_chars", 4096}}));
+    if (!compacted) return tl::unexpected(compacted.error());
+    auto photons = runtime.history(active_ray);
+    if (!photons) return tl::unexpected(photons.error());
+    const tokmon::Photon* summary = nullptr;
+    for (auto iterator = photons->rbegin(); iterator != photons->rend(); ++iterator)
+      if (iterator->kind == "summary.created") { summary = &*iterator; break; }
+    set("display", summary == nullptr ? "Textus 已完成压缩。" : photon_text(*summary));
+  } else if (name == "model") {
+    const auto selected = argument(0);
+    if (selected.empty()) {
+      std::ostringstream output;
+      output << "当前平台: " << runtime.config().default_model_provider << "\n可用平台:";
+      for (const auto& [id, provider] : runtime.config().model_providers)
+        if (provider.enabled) output << "\n  " << id << " → " << provider.model;
+      set("display", output.str());
+    } else {
+      const auto found = runtime.config().model_providers.find(selected);
+      if (found == runtime.config().model_providers.end() || !found->second.enabled)
+        return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::not_found,
+                                                 "model provider is unavailable"));
+      const auto model_name = found->second.model;
+      auto saved = select_project_model_provider(
+          runtime.config().paths.project / "config.yaml", selected);
+      if (!saved) return tl::unexpected(saved.error());
+      auto reconciled = runtime.reconcile();
+      if (!reconciled) return tl::unexpected(reconciled.error());
+      set("provider", selected); set("model", model_name);
+      set("display", "当前模型平台已切换为 " + selected + "（" + model_name + "）。");
+    }
+  } else if (name == "effort") {
+    const auto value = argument(0);
+    if (!value.empty() && value != "low" && value != "medium" && value != "high" && value != "max")
+      return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::invalid_argument,
+          "effort must be low, medium, high or max"));
+    if (!value.empty()) set("effort", value);
+    set("display", value.empty() ? "用法：/effort low|medium|high|max" : "推理强度已设为 " + value + "。");
+  } else if (name == "permissions") {
+    const auto value = argument(0);
+    if (!value.empty() && value != "full" && value != "restricted" && value != "read-only")
+      return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::invalid_argument,
+          "permissions must be full, restricted or read-only"));
+    if (!value.empty()) set("access_mode", value);
+    set("display", value.empty() ? "用法：/permissions full|restricted|read-only" :
+        "当前会话访问模式已设为 " + value + "；Fallen 仍会独立裁决每个 Act。");
+  } else if (name == "config") {
+    set("open_settings", true);
+    set("display", "项目配置: " + (runtime.config().paths.project / "config.yaml").generic_string() +
+        "\n用户配置: " + (runtime.config().paths.user / "config.yaml").generic_string());
+  } else if (name == "usage") {
+    auto photons = history_for(active_ray);
+    if (!photons) return tl::unexpected(photons.error());
+    std::int64_t input = 0, output_tokens = 0, cost = 0, calls = 0;
+    for (const auto& photon : *photons) if (photon.kind == "model.usage") {
+      ++calls;
+      if (const auto* value = tokmon::cbor::find(photon.payload, "input_tokens")) input += value->as_integer();
+      if (const auto* value = tokmon::cbor::find(photon.payload, "output_tokens")) output_tokens += value->as_integer();
+      if (const auto* value = tokmon::cbor::find(photon.payload, "cost_microunits")) cost += value->as_integer();
+    }
+    std::ostringstream output;
+    output << "模型调用: " << calls << "\n输入 tokens: " << input
+           << "\n输出 tokens: " << output_tokens << "\n成本(微单位): " << cost
+           << "\n光子数: " << photons->size();
+    set("display", output.str());
+  } else if (name == "plan" || name == "review" || name == "security-review" || name == "debug") {
+    std::string prompt;
+    if (name == "plan") prompt = "制定并执行一个可审计的计划：" + parsed->raw_arguments;
+    else if (name == "review") prompt = "审查以下目标，给出具体问题和修改建议：" +
+        (parsed->raw_arguments.empty() ? std::string("当前工作区") : parsed->raw_arguments);
+    else if (name == "security-review") prompt = "对以下目标执行安全审查，按风险分级并给出证据：" +
+        (parsed->raw_arguments.empty() ? std::string("当前工作区") : parsed->raw_arguments);
+    else prompt = "诊断以下问题并使用可用透镜收集证据：" +
+        (parsed->raw_arguments.empty() ? std::string("当前会话异常") : parsed->raw_arguments);
+    if (name == "plan" && parsed->raw_arguments.empty())
+      return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::invalid_argument,
+                                               "/plan requires a task"));
+    auto context = resolved_model_context(runtime.config(), request_payload);
+    if (!context) return tl::unexpected(context.error());
+    auto ray = active_ray.empty() ? runtime.submit(prompt, *context)
+                                  : runtime.submit_to(active_ray, prompt, *context);
+    if (!ray) return tl::unexpected(ray.error());
+    active_ray = *ray;
+    auto advanced = runtime.advance(active_ray);
+    if (!advanced) return tl::unexpected(advanced.error());
+    auto photons = runtime.history(active_ray);
+    if (!photons) return tl::unexpected(photons.error());
+    std::string answer = "命令已沿光路完成。";
+    for (auto iterator = photons->rbegin(); iterator != photons->rend(); ++iterator)
+      if (iterator->kind == "assistant.message") { answer = photon_text(*iterator); break; }
+    set("ray", active_ray); set("display", answer); set("photons", photon_array(*photons));
+  } else if (name == "tasks" || name == "agents") {
+    auto photons = history_for(active_ray);
+    if (!photons) return tl::unexpected(photons.error());
+    std::vector<tokmon::Photon> selected;
+    for (const auto& photon : *photons) {
+      const bool relevant = name == "agents"
+          ? photon.kind.starts_with("child.")
+          : photon.kind.starts_with("act.") || photon.kind.starts_with("tool.") ||
+            photon.kind.starts_with("ray.");
+      if (relevant) selected.push_back(photon);
+    }
+    set("display", selected.empty() ? (name == "agents" ? "当前没有子光线。" : "当前没有任务步骤。")
+                                     : photon_lines(selected));
+  } else if (name == "fork") {
+    if (parsed->raw_arguments.empty()) return tl::unexpected(tokmon::make_error(
+        tokmon::ErrorCode::invalid_argument, "/fork requires a task"));
+    const auto parent_budget = static_cast<std::int64_t>(runtime.config().max_beats);
+    auto forked = invoke_lens(runtime, active_ray, "child.spawn", "tokmon.child.spawn.v1",
+        "org.tokmon.lens.aya", tokmon::cbor::object({
+            {"task", parsed->raw_arguments}, {"parent_budget", parent_budget},
+            {"budget", std::max<std::int64_t>(1, parent_budget / 2)},
+            {"allowed_acts", tokmon::cbor::Value::Array{"model.request", "tool.call"}},
+            {"workspace_mode", "read_only"}, {"workspace_root", runtime.config().paths.project.parent_path().generic_string()},
+            {"join_policy", "manual"}, {"mode", "fork"}, {"deadline_ms", 30000}}));
+    if (!forked) return tl::unexpected(forked.error());
+    auto photons = runtime.history(active_ray);
+    if (!photons) return tl::unexpected(photons.error());
+    std::string child;
+    for (auto iterator = photons->rbegin(); iterator != photons->rend(); ++iterator)
+      if (iterator->kind == "child.started") {
+        if (const auto* value = tokmon::cbor::find(iterator->payload, "child_ray"))
+          child = std::string(value->as_string());
+        break;
+      }
+    set("child_ray", child);
+    set("display", "Aya 已派生只读子光线 " + child + "；任务与预算均已写入光子。");
+  } else if (name == "diff") {
+    auto diff = invoke_lens(runtime, command_ray, "git.status", "tokmon.git.status.v1",
+        "org.tokmon.lens.cove", tokmon::cbor::object({
+            {"workspace_root", runtime.config().paths.project.parent_path().generic_string()}}));
+    if (!diff) return tl::unexpected(diff.error());
+    auto photons = runtime.history(command_ray);
+    if (!photons) return tl::unexpected(photons.error());
+    std::string output = "Cove 已读取 Git 状态。";
+    for (auto iterator = photons->rbegin(); iterator != photons->rend(); ++iterator)
+      if (iterator->kind == "git.status-observed") { output = photon_text(*iterator); break; }
+    set("display", output.empty() ? "工作区干净。" : output);
+  } else if (name == "doctor") {
+    auto verified = runtime.verify();
+    if (!verified) return tl::unexpected(verified.error());
+    set("display", "存储哈希链：通过\n光路：epoch " +
+        std::to_string(runtime.light_path()->epoch) + "，" +
+        std::to_string(runtime.light_path()->lenses.size()) + " 个透镜\nSnow：正常");
+  } else if (name == "init") {
+    auto initialized = append_fact(command_ray, "project.initialized",
+        "tokmon.project.initialized.v1", tokmon::cbor::object({
+            {"workspace", runtime.config().paths.project.parent_path().generic_string()},
+            {"config_root", runtime.config().paths.project.generic_string()},
+            {"existing_history_preserved", true}}));
+    if (!initialized) return tl::unexpected(initialized.error());
+    set("display", "项目约定已就绪：" + runtime.config().paths.project.generic_string());
+  } else if (name == "lenses" || name == "lens") {
+    const auto operation = argument(0).empty() ? "list" : argument(0);
+    if (operation == "reconcile") {
+      auto reconciled = runtime.reconcile();
+      if (!reconciled) return tl::unexpected(reconciled.error());
+    } else if (operation != "list") return tl::unexpected(tokmon::make_error(
+        tokmon::ErrorCode::invalid_argument, "only list and reconcile are exposed as slash operations"));
+    std::ostringstream output;
+    output << "LightPath epoch " << runtime.light_path()->epoch << ':';
+    for (const auto& mounted : runtime.light_path()->lenses)
+      output << "\n  " << mounted.lens->manifest().id << " @ generation " << mounted.generation;
+    set("display", output.str());
+  } else if (name == "skills") {
+    if (argument(0) == "discover") {
+      tokmon::cbor::Value::Array roots{
+          runtime.config().paths.project.parent_path().generic_string(),
+          runtime.config().paths.user.generic_string()};
+      auto discovered = invoke_lens(runtime, command_ray, "skill.discover",
+          "tokmon.skill.discover.v1", "org.tokmon.lens.enso",
+          tokmon::cbor::object({{"roots", std::move(roots)}}));
+      if (!discovered) return tl::unexpected(discovered.error());
+    }
+    auto photons = history_for(active_ray);
+    if (!photons) return tl::unexpected(photons.error());
+    std::vector<tokmon::Photon> skills;
+    for (const auto& photon : *photons) if (photon.kind == "skill.discovered") skills.push_back(photon);
+    set("display", skills.empty() ? "尚未发现技能；使用 /skills discover 扫描配置根。" : photon_lines(skills));
+  } else if (name == "mcp" || name == "memory") {
+    auto photons = history_for(active_ray);
+    if (!photons) return tl::unexpected(photons.error());
+    std::vector<tokmon::Photon> selected;
+    for (const auto& photon : *photons) {
+      const bool relevant = name == "mcp"
+          ? photon.kind.starts_with("mcp.") || photon.kind.starts_with("connection.")
+          : photon.kind == "memory.accepted" || photon.kind == "memory.invalidated";
+      if (relevant) selected.push_back(photon);
+    }
+    set("display", selected.empty() ? (name == "mcp" ? "当前没有已提交的 MCP 连接事实。" :
+        "当前没有已接受的记忆事实。") : photon_lines(selected));
+  }
+
+  auto completed = append_fact(command_ray, "command.completed", "tokmon.command.result.v1",
+      tokmon::cbor::object({{"name", name}, {"invocation_photon", invoked->id},
+        {"result", tokmon::cbor::find(response, "display")
+            ? *tokmon::cbor::find(response, "display") : tokmon::cbor::Value("")},
+        {"history_deleted", false}}));
+  if (!completed) return tl::unexpected(completed.error());
+  auto command_photons = runtime.history(command_ray);
+  if (command_photons && !tokmon::cbor::find(response, "photons"))
+    set("photons", photon_array(*command_photons));
+  auto all = runtime.history_all(0);
+  set("cursor", static_cast<std::int64_t>(all && !all->empty() ? all->back().sequence : 0));
+  return response;
+}
 }
 
 int main(int argc, char** argv) {
@@ -460,6 +908,16 @@ int main(int argc, char** argv) {
   std::set<std::uint64_t> cancelled_requests;
   std::unordered_map<std::uint64_t, tokmon::SnowMessage> completed_requests;
   std::unordered_map<std::uint64_t, tokmon::RayId> active_requests;
+  struct ClientLease {
+    std::string kind;
+    bool shutdown_when_idle{true};
+    std::chrono::milliseconds idle_timeout{0};
+    std::chrono::steady_clock::time_point expires_at;
+  };
+  std::mutex lifecycle_mutex;
+  std::unordered_map<std::string, ClientLease> client_leases;
+  std::optional<std::chrono::steady_clock::time_point> idle_shutdown_at;
+  bool daemon_pinned = false;
   tokmon::SnowServer snow;
   const auto endpoint = endpoint_override.value_or(tokmon::workspace_snow_endpoint(
       runtime.config().paths.run, runtime.config().paths.project.parent_path()));
@@ -467,7 +925,9 @@ int main(int argc, char** argv) {
   if (!instance_lock.acquired()) return 0;
   auto snow_started = snow.start(endpoint, [&runtime, &runtime_mutex, &request_mutex,
                                         &cancelled_requests, &completed_requests,
-                                        &active_requests, &endpoint, &snow](
+                                        &active_requests, &lifecycle_mutex,
+                                        &client_leases, &idle_shutdown_at,
+                                        &daemon_pinned, &endpoint, &snow](
       const tokmon::SnowMessage& request) -> tokmon::SnowMessage {
     if (request.kind == tokmon::SnowMessageKind::cancel) {
       const auto* target = tokmon::cbor::find(request.payload, "request_id");
@@ -499,6 +959,94 @@ int main(int argc, char** argv) {
           return snow_error(request, tokmon::make_error(tokmon::ErrorCode::cancelled,
                                                         "request was cancelled"));
       }
+    }
+    const auto* early_action_field = request.kind == tokmon::SnowMessageKind::intent
+        ? tokmon::cbor::find(request.payload, "action") : nullptr;
+    const auto early_action = early_action_field
+        ? early_action_field->as_string() : std::string_view{};
+    if (early_action == "daemon.client.attach" ||
+        early_action == "daemon.client.heartbeat" ||
+        early_action == "daemon.client.detach" || early_action == "daemon.pin") {
+      const auto lifecycle_result = [&](tokmon::cbor::Value payload) {
+        return tokmon::SnowMessage{.kind = tokmon::SnowMessageKind::intent_result,
+            .request_id = request.request_id, .cursor = request.cursor,
+            .payload = std::move(payload)};
+      };
+      if (early_action == "daemon.pin") {
+        std::scoped_lock lifecycle_lock(lifecycle_mutex);
+        daemon_pinned = true;
+        idle_shutdown_at.reset();
+        return lifecycle_result(tokmon::cbor::object({
+            {"pinned", true}, {"ownership", "explicit-user-service"}}));
+      }
+      const auto* id_field = tokmon::cbor::find(request.payload, "client_id");
+      const auto client_id = id_field
+          ? std::string(id_field->as_string()) : std::string{};
+      if (client_id.empty())
+        return snow_error(request, tokmon::make_error(
+            tokmon::ErrorCode::invalid_argument, "daemon client_id is required"));
+      const auto now = std::chrono::steady_clock::now();
+      const auto ttl_field = tokmon::cbor::find(request.payload, "lease_ttl_ms");
+      const auto ttl_ms = std::clamp<std::int64_t>(
+          ttl_field ? ttl_field->as_integer() : 6'000, 2'000, 30'000);
+      std::scoped_lock lifecycle_lock(lifecycle_mutex);
+      if (!running.load(std::memory_order_acquire))
+        return snow_error(request, tokmon::make_error(
+            tokmon::ErrorCode::invalid_state, "tokmond is already stopping"));
+      if (early_action == "daemon.client.attach") {
+        const auto* kind_field = tokmon::cbor::find(request.payload, "client_kind");
+        const auto kind = kind_field
+            ? std::string(kind_field->as_string()) : std::string{};
+        if (kind.empty())
+          return snow_error(request, tokmon::make_error(
+              tokmon::ErrorCode::invalid_argument, "daemon client_kind is required"));
+        const auto* shutdown_field = tokmon::cbor::find(
+            request.payload, "shutdown_when_idle");
+        const auto idle_field = tokmon::cbor::find(request.payload, "idle_timeout_ms");
+        const auto idle_ms = std::clamp<std::int64_t>(
+            idle_field ? idle_field->as_integer() : 15'000, 0, 300'000);
+        client_leases[client_id] = ClientLease{
+            .kind = kind,
+            .shutdown_when_idle = !shutdown_field || shutdown_field->as_bool(),
+            .idle_timeout = std::chrono::milliseconds(idle_ms),
+            .expires_at = now + std::chrono::milliseconds(ttl_ms)};
+        return lifecycle_result(tokmon::cbor::object({
+            {"attached", true}, {"client_id", client_id},
+            {"client_kind", kind},
+            {"lease_ttl_ms", ttl_ms},
+            {"active_clients", static_cast<std::int64_t>(client_leases.size())}}));
+      }
+      const auto found = client_leases.find(client_id);
+      if (found == client_leases.end() &&
+          early_action == "daemon.client.heartbeat")
+        return snow_error(request, tokmon::make_error(
+            tokmon::ErrorCode::not_found, "daemon client lease is not active"));
+      if (early_action == "daemon.client.heartbeat") {
+        found->second.expires_at = now + std::chrono::milliseconds(ttl_ms);
+        return lifecycle_result(tokmon::cbor::object({
+            {"renewed", true}, {"client_id", client_id},
+            {"lease_ttl_ms", ttl_ms}}));
+      }
+      const auto* shutdown_field = tokmon::cbor::find(
+          request.payload, "shutdown_when_idle");
+      const auto idle_field = tokmon::cbor::find(request.payload, "idle_timeout_ms");
+      const auto shutdown_when_idle = found != client_leases.end()
+          ? found->second.shutdown_when_idle
+          : shutdown_field && shutdown_field->as_bool();
+      const auto idle_timeout = found != client_leases.end()
+          ? found->second.idle_timeout
+          : std::chrono::milliseconds(std::clamp<std::int64_t>(
+              idle_field ? idle_field->as_integer() : 15'000, 0, 300'000));
+      if (found != client_leases.end()) client_leases.erase(found);
+      if (shutdown_when_idle && !daemon_pinned) {
+        const auto requested = now + idle_timeout;
+        if (!idle_shutdown_at || requested > *idle_shutdown_at)
+          idle_shutdown_at = requested;
+      }
+      return lifecycle_result(tokmon::cbor::object({
+          {"detached", true}, {"client_id", client_id},
+          {"shutdown_when_idle", shutdown_when_idle && !daemon_pinned},
+          {"active_clients", static_cast<std::int64_t>(client_leases.size())}}));
     }
     std::scoped_lock lock(runtime_mutex);
     const auto remember = [&](tokmon::SnowMessage response) {
@@ -552,7 +1100,7 @@ int main(int argc, char** argv) {
       return remember(tokmon::SnowMessage{.kind = tokmon::SnowMessageKind::intent_result,
           .request_id = request.request_id, .cursor = request.cursor,
           .payload = tokmon::cbor::object({{"stopping", true},
-                                           {"ownership", "shared-background-service"}})});
+                                           {"ownership", "explicit-user-stop"}})});
     }
     if (action == "settings.get") {
       auto values = read_project_settings(runtime.config().paths.project / "config.yaml");
@@ -647,6 +1195,30 @@ int main(int argc, char** argv) {
           .payload = tokmon::cbor::object({
               {"id", id}, {"credential_present", action.ends_with(".set")},
               {"storage", "operating-system-credential-manager"}})});
+    }
+    if (action == "command.execute") {
+      auto command_payload = request.payload;
+      if (!command_payload.as_map()) command_payload = tokmon::cbor::Value::Map{};
+      (*command_payload.as_map())["snow_request_id"] = std::to_string(request.request_id);
+      auto result = execute_slash_command(runtime, command_payload);
+      if (!result) {
+        const auto* ray_field = tokmon::cbor::find(command_payload, "ray");
+        const auto failure_ray = ray_field && !ray_field->as_string().empty()
+            ? std::string(ray_field->as_string())
+            : "command-ray-" + std::to_string(request.request_id);
+        (void)runtime.store().append(tokmon::PhotonDraft{.ray = failure_ray,
+            .kind = "command.failed", .schema = "tokmon.command.result.v1",
+            .payload = tokmon::cbor::object({{"input", tokmon::cbor::find(request.payload, "text")
+                ? *tokmon::cbor::find(request.payload, "text") : tokmon::cbor::Value("")},
+                {"error", result.error().describe()}, {"history_deleted", false}}),
+            .epoch = runtime.light_path()->epoch});
+        return snow_error(request, result.error());
+      }
+      const auto* cursor = tokmon::cbor::find(*result, "cursor");
+      return remember(tokmon::SnowMessage{.kind = tokmon::SnowMessageKind::intent_result,
+          .request_id = request.request_id,
+          .cursor = cursor ? static_cast<std::uint64_t>(cursor->as_integer()) : request.cursor,
+          .payload = std::move(*result)});
     }
     if (action == "chat" || action == "model.provider.test") {
       const auto* text_field = tokmon::cbor::find(request.payload, "text");
@@ -834,6 +1406,40 @@ int main(int argc, char** argv) {
   std::vector<std::filesystem::file_time_type> watched_time(
       watched_config.size(), std::filesystem::file_time_type::min());
   while (running.load(std::memory_order_acquire)) {
+    bool idle_stop_candidate = false;
+    {
+      std::scoped_lock lifecycle_lock(lifecycle_mutex);
+      const auto now = std::chrono::steady_clock::now();
+      for (auto iterator = client_leases.begin(); iterator != client_leases.end();) {
+        if (iterator->second.expires_at > now) {
+          ++iterator;
+          continue;
+        }
+        if (iterator->second.shutdown_when_idle && !daemon_pinned) {
+          const auto requested = now + iterator->second.idle_timeout;
+          if (!idle_shutdown_at || requested > *idle_shutdown_at)
+            idle_shutdown_at = requested;
+        }
+        spdlog::warn("expired {} daemon client lease {}",
+                     iterator->second.kind, iterator->first);
+        iterator = client_leases.erase(iterator);
+      }
+      idle_stop_candidate = !daemon_pinned && client_leases.empty() &&
+          idle_shutdown_at && now >= *idle_shutdown_at;
+    }
+    if (idle_stop_candidate) {
+      std::unique_lock runtime_lock(runtime_mutex, std::try_to_lock);
+      if (runtime_lock.owns_lock()) {
+        std::scoped_lock lifecycle_lock(lifecycle_mutex);
+        const auto now = std::chrono::steady_clock::now();
+        if (!daemon_pinned && client_leases.empty() && idle_shutdown_at &&
+            now >= *idle_shutdown_at) {
+          spdlog::info("no client leases or active work remain; stopping tokmond");
+          running.store(false, std::memory_order_release);
+        }
+      }
+    }
+    if (!running.load(std::memory_order_acquire)) break;
     std::error_code error;
     bool changed = false;
     for (std::size_t index = 0; index < watched_config.size(); ++index) {
