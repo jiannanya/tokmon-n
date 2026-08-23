@@ -1,12 +1,22 @@
 import { LineEdit, ListView, ScrollView } from "std-widgets.slint";
 
 export struct NavigationItem {
+    id: string,
+    ray: string,
+    workspace: string,
+    kind: string,
     title: string,
     icon: image,
     indent: int,
     selected: bool,
     expandable: bool,
     expanded: bool,
+}
+
+export struct ModelChoice {
+    provider: string,
+    model: string,
+    label: string,
 }
 
 export struct TimelineItem {
@@ -68,11 +78,11 @@ component MenuOption inherits Rectangle {
     in property <bool> active: false;
     callback chosen;
     height: 27px;
-    border-radius: 5px;
-    background: active ? #fef3d6 : option-touch.has-hover ? #f5f5f4 : transparent;
+    border-radius: 9px;
+    background: active ? #f7efe5 : option-touch.has-hover ? #f5f5f4 : transparent;
     Text {
         x: 9px; width: parent.width - 18px; height: parent.height;
-        text: root.label; color: root.active ? #855702 : #44403c;
+        text: root.label; color: root.active ? #8b5229 : #44403c;
         font-size: 10px; vertical-alignment: center; overflow: elide;
     }
     option-touch := TouchArea { clicked => { root.chosen(); } }
@@ -83,17 +93,17 @@ component SettingsNavigationRow inherits Rectangle {
     in property <string> glyph;
     in property <bool> active: false;
     callback chosen;
-    height: 38px;
-    border-radius: 8px;
-    background: active ? #fef3d6 : nav-touch.has-hover ? #f5f5f4 : transparent;
+    height: 41px;
+    border-radius: 12px;
+    background: active ? #f7efe5 : nav-touch.has-hover ? #f5f5f4 : transparent;
     Text {
         x: 12px; width: 22px; height: parent.height;
-        text: root.glyph; color: root.active ? #c2410c : #78716c;
+        text: root.glyph; color: root.active ? #8b5229 : #78716c;
         font-size: 14px; vertical-alignment: center; horizontal-alignment: center;
     }
     Text {
         x: 43px; width: parent.width - 55px; height: parent.height;
-        text: root.label; color: root.active ? #855702 : #44403c;
+        text: root.label; color: root.active ? #8b5229 : #44403c;
         font-size: 12px; font-weight: root.active ? 700 : 500;
         vertical-alignment: center;
     }
@@ -104,7 +114,7 @@ component SettingsSwitch inherits Rectangle {
     in-out property <bool> checked: false;
     callback toggled(bool);
     width: 40px; height: 22px; border-radius: 11px;
-    background: checked ? #f59e0b : #d6d3d1;
+    background: checked ? #c86a28 : #d6d3d1;
     Rectangle {
         x: root.checked ? 20px : 2px; y: 2px;
         width: 18px; height: 18px; border-radius: 9px;
@@ -120,7 +130,7 @@ component SettingsChoice inherits Rectangle {
     in property <bool> active: false;
     callback chosen;
     height: 32px;
-    border-radius: 7px;
+    border-radius: 10px;
     border-width: 1px;
     border-color: active ? #f5c86b : #e7e5e4;
     background: active ? #fef3d6 : choice-touch.has-hover ? #fafaf9 : white;
@@ -162,7 +172,7 @@ component SidebarRow inherits Rectangle {
     callback selected;
     height: 29px;
     border-radius: 8px;
-    background: item.selected ? #fef3d6 : touch.has-hover ? #f0eee8 : transparent;
+    background: item.selected ? #f7efe5 : touch.has-hover ? #f0eee8 : transparent;
     HorizontalLayout {
         padding-left: 7px + item.indent * 14px;
         padding-right: 8px;
@@ -176,7 +186,7 @@ component SidebarRow inherits Rectangle {
         Image { width: 15px; height: 15px; source: item.icon; }
         Text {
             text: item.title;
-            color: item.selected ? #855702 : #44403c;
+            color: item.selected ? #8b5229 : #44403c;
             font-family: "Microsoft YaHei UI";
             font-size: 12px;
             font-weight: item.selected ? 700 : 500;
@@ -257,7 +267,7 @@ component TimelineRow inherits Rectangle {
         }
         Text {
             x: parent.width - 58px; y: 4px; width: 48px; height: 15px;
-            text: "进度  " + item.progress + " %"; color: #c2410c; font-size: 9px;
+            text: "进度  " + item.progress + " %"; color: #8b5229; font-size: 9px;
             font-weight: 600; horizontal-alignment: right;
         }
         Rectangle {
@@ -265,7 +275,7 @@ component TimelineRow inherits Rectangle {
             border-radius: 2px; background: #e7e5e4;
             Rectangle {
                 width: parent.width * min(100, max(0, item.progress)) / 100;
-                height: parent.height; border-radius: 2px; background: #f59e0b;
+                height: parent.height; border-radius: 2px; background: #c86a28;
             }
         }
         Text {
@@ -274,6 +284,85 @@ component TimelineRow inherits Rectangle {
         }
     }
 
+}
+
+component ConversationWorkflowRow inherits Rectangle {
+    in property <TimelineItem> item;
+    height: item.detail == "" ? 38px : 52px;
+    background: row-touch.has-hover ? #fafaf9 : transparent;
+    border-radius: 7px;
+
+    Rectangle {
+        x: 10px; y: 13px; width: 10px; height: 10px; border-radius: 5px;
+        background: item.tone == "success" ? #22c55e :
+                    item.tone == "danger" ? #ef4444 :
+                    item.tone == "warning" ? #f59e0b : #a8a29e;
+    }
+    Text {
+        x: 30px; y: 5px; width: parent.width - 94px; height: 20px;
+        text: item.title; color: #292524; font-size: 10.5px; font-weight: 600;
+        vertical-alignment: center; overflow: elide;
+    }
+    Text {
+        x: parent.width - 58px; y: 5px; width: 48px; height: 20px;
+        text: item.time; color: #a8a29e; font-size: 9px;
+        horizontal-alignment: right; vertical-alignment: center;
+    }
+    if item.detail != "": Text {
+        x: 30px; y: 25px; width: parent.width - 40px; height: 20px;
+        text: item.detail; color: #78716c; font-size: 9.5px;
+        vertical-alignment: center; overflow: elide;
+    }
+    row-touch := TouchArea { }
+}
+
+component TraceEventRow inherits Rectangle {
+    in property <TimelineItem> item;
+    in property <int> row-index;
+    height: 31px;
+    background: row-index == 0 ? #fdfbf7 : row-touch.has-hover ? #fafaf9 : transparent;
+    border-width: 1px;
+    border-color: #f5f5f4;
+    Text {
+        x: 7px; width: 25px; height: parent.height;
+        text: row-index + 1; color: #a8a29e; font-size: 8.5px;
+        vertical-alignment: center; horizontal-alignment: center;
+    }
+    Text {
+        x: 35px; width: 48px; height: parent.height;
+        text: item.time; color: #78716c; font-size: 8.5px; vertical-alignment: center;
+    }
+    Rectangle {
+        x: 88px; y: 8px; width: 62px; height: 16px; border-radius: 4px;
+        background: item.kind == "user.input" || item.kind == "user.message" ? #e0f2fe :
+                    item.kind == "tool.result" ? #ffedd5 :
+                    item.kind == "model.tool-call" ? #f3e8ff :
+                    item.kind == "assistant.message" ? #fce7f3 :
+                    item.kind == "act.failed" || item.kind == "model.failed" ? #fee2e2 : #ecfdf5;
+        Text {
+            width: parent.width; height: parent.height;
+            text: item.kind == "user.input" || item.kind == "user.message" ? "USER" :
+                  item.kind == "tool.result" ? "RESULT" :
+                  item.kind == "model.tool-call" ? "TOOL CALL" :
+                  item.kind == "assistant.message" ? "ASSISTANT" :
+                  item.kind == "act.failed" || item.kind == "model.failed" ? "ERROR" : "PHOTON";
+            color: #57534e; font-size: 7.5px; font-weight: 700;
+            horizontal-alignment: center; vertical-alignment: center; overflow: elide;
+        }
+    }
+    Text {
+        x: 158px; width: 65px; height: parent.height;
+        text: item.kind == "user.input" || item.kind == "user.message" ? "User" :
+              item.kind == "assistant.message" || item.kind == "model.tool-call" ? "Assistant" :
+              item.kind == "tool.result" ? "Lens" : "System";
+        color: #57534e; font-size: 8.5px; vertical-alignment: center; overflow: elide;
+    }
+    Text {
+        x: 228px; width: parent.width - 235px; height: parent.height;
+        text: item.detail == "" ? item.title : item.detail;
+        color: #44403c; font-size: 8.5px; vertical-alignment: center; overflow: elide;
+    }
+    row-touch := TouchArea { }
 }
 
 export component MainWindow inherits Window {
@@ -288,16 +377,18 @@ export component MainWindow inherits Window {
 
     in property <[NavigationItem]> navigation;
     in property <[TimelineItem]> timeline;
+    in property <[TimelineItem]> conversation-workflow;
     in property <[CodeLine]> code-lines;
     in property <[SlashCommandItem]> slash-commands;
-    in-out property <string> session-title: "生成音频时间轴字幕";
-    in-out property <string> status-text: "审阅完成";
+    in property <[ModelChoice]> model-choices;
+    in-out property <string> session-title: "新会话";
+    in-out property <string> status-text: "等待输入";
     in-out property <string> model-name: "local-deterministic";
     in-out property <string> access-mode: "完全访问";
     in-out property <string> effort: "最高";
     in-out property <string> composer-text;
-    in-out property <string> last-message: "使用 faster-whisper 模型对音频文件进行转录，输出带时间戳的字幕（Segmentation 模式）。";
-    in-out property <string> assistant-text: "已理解你的需求，我将沿当前光路组合所需透镜，并把执行结果实时投影到这里。";
+    in-out property <string> last-message;
+    in-out property <string> assistant-text;
     in-out property <string> daemon-state: "后台服务已连接";
     in-out property <bool> sidebar-visible: true;
     in-out property <bool> code-visible: true;
@@ -305,6 +396,15 @@ export component MainWindow inherits Window {
     in-out property <bool> file-preview-selected: false;
     in-out property <string> search-text;
     in-out property <bool> task-expanded: true;
+    in-out property <bool> conversation-workflow-expanded: true;
+    in-out property <string> trace-duration: "0ms";
+    in-out property <int> trace-turns: 0;
+    in-out property <int> trace-calls: 0;
+    in-out property <int> trace-input-tokens: 0;
+    in-out property <int> trace-output-tokens: 0;
+    in-out property <string> trace-provider: "-";
+    in-out property <string> trace-model: "-";
+    in-out property <string> trace-result: "等待输入";
     in-out property <bool> title-editing: false;
     in-out property <bool> settings-open: false;
     in-out property <bool> access-menu-open: false;
@@ -316,6 +416,12 @@ export component MainWindow inherits Window {
     in-out property <bool> attachment-menu-open: false;
     in-out property <bool> window-maximized: false;
     in-out property <bool> slash-menu-visible: false;
+    in-out property <bool> create-navigation-open: false;
+    in-out property <string> create-navigation-kind: "project";
+    in-out property <string> create-navigation-name: "";
+    in-out property <string> create-navigation-workspace: "";
+    in-out property <string> create-navigation-error: "";
+    in-out property <string> selected-attachment: "";
     in-out property <length> sidebar-width: 240px;
     in-out property <length> code-panel-width: 440px;
     in-out property <int> settings-page: 0;
@@ -360,7 +466,7 @@ export component MainWindow inherits Window {
     callback reconcile;
     callback save-settings;
     callback reset-settings;
-    callback configure-provider(string, string, string, string, string, bool);
+    callback configure-provider(string, string, string, string, string, bool, string);
     callback store-provider-secret(string, string);
     callback test-provider(string);
     callback drag-window;
@@ -368,6 +474,10 @@ export component MainWindow inherits Window {
     callback toggle-maximize-window;
     callback close-window;
     callback slash-query-changed(string);
+    callback rename-session(string);
+    callback create-navigation(string, string, string) -> bool;
+    callback choose-attachment(bool) -> string;
+    callback cancel-settings;
 
     VerticalLayout {
         x: 0px;
@@ -464,19 +574,18 @@ export component MainWindow inherits Window {
                 Rectangle {
                     height: 40px;
                     border-radius: 12px;
-                    background: #fef5d8;
-                    border-color: #f5e4ab;
+                    background: #f7efe5;
+                    border-color: #ebdcd0;
                     border-width: 1px;
                     HorizontalLayout {
                         alignment: center;
                         spacing: 7px;
                         Image { width: 16px; height: 16px; source: @image-url("../assets/figma/icon-02.svg"); }
-                        Text { text: "新建会话"; color: #855702; font-size: 13px; font-weight: 600; }
+                        Text { text: "新建会话"; color: #8b5229; font-size: 13px; font-weight: 600; }
                     }
                     TouchArea {
                         clicked => {
                             root.new-session();
-                            root.session-title = "新会话";
                             root.trajectory-selected = false;
                             root.composer-text = "";
                             root.last-message = "";
@@ -510,7 +619,13 @@ export component MainWindow inherits Window {
                     ToolIcon {
                         icon-size: 14px;
                         source: @image-url("../assets/figma/icon-04.svg");
-                        clicked => { root.add-navigation(); }
+                        clicked => {
+                            root.create-navigation-kind = "project";
+                            root.create-navigation-name = "";
+                            root.create-navigation-workspace = root.setting-workspace;
+                            root.create-navigation-error = "";
+                            root.create-navigation-open = true;
+                        }
                     }
                 }
                 ListView {
@@ -540,12 +655,12 @@ export component MainWindow inherits Window {
             Rectangle {
                 visible: root.sidebar-visible;
                 width: root.sidebar-visible ? 6px : 0px;
-                background: left-resize.has-hover || left-resize.pressed ? #fff7ed : #ffffff;
+                background: left-resize.has-hover || left-resize.pressed ? #fdfbf7 : #ffffff;
                 Rectangle {
                     x: (parent.width - self.width) / 2;
                     width: left-resize.has-hover || left-resize.pressed ? 2px : 1px;
                     height: parent.height;
-                    background: left-resize.has-hover || left-resize.pressed ? #f59e0b : #e7e5e4;
+                    background: left-resize.has-hover || left-resize.pressed ? #c86a28 : #e7e5e4;
                 }
                 left-resize := TouchArea {
                     mouse-cursor: col-resize;
@@ -595,7 +710,10 @@ export component MainWindow inherits Window {
                             if root.title-editing: LineEdit {
                                 width: parent.width; height: 30px;
                                 text <=> root.session-title;
-                                accepted => { root.title-editing = false; }
+                                accepted => {
+                                    if (self.text != "") { root.rename-session(self.text); }
+                                    root.title-editing = false;
+                                }
                             }
                         }
                         ToolIcon {
@@ -619,14 +737,14 @@ export component MainWindow inherits Window {
                         spacing: 18px;
                         Rectangle {
                             width: 35px;
-                            Text { text: "对话"; color: !root.trajectory-selected ? #c2410c : #78716c; font-size: 11.5px; horizontal-alignment: center; }
-                            Rectangle { visible: !root.trajectory-selected; y: parent.height - 2px; height: 2px; width: parent.width; background: #f97316; }
+                            Text { text: "对话"; color: !root.trajectory-selected ? #8b5229 : #78716c; font-size: 11.5px; horizontal-alignment: center; }
+                            Rectangle { visible: !root.trajectory-selected; y: parent.height - 2px; height: 2px; width: parent.width; background: #d97706; }
                             TouchArea { clicked => { root.trajectory-selected = false; } }
                         }
                         Rectangle {
                             width: 35px;
-                            Text { text: "轨迹"; color: root.trajectory-selected ? #c2410c : #78716c; font-size: 11.5px; horizontal-alignment: center; }
-                            Rectangle { visible: root.trajectory-selected; y: parent.height - 2px; height: 2px; width: parent.width; background: #f97316; }
+                            Text { text: "轨迹"; color: root.trajectory-selected ? #8b5229 : #78716c; font-size: 11.5px; horizontal-alignment: center; }
+                            Rectangle { visible: root.trajectory-selected; y: parent.height - 2px; height: 2px; width: parent.width; background: #d97706; }
                             TouchArea { clicked => { root.trajectory-selected = true; } }
                         }
                     }
@@ -637,85 +755,139 @@ export component MainWindow inherits Window {
                     preferred-height: 0px;
                     background: #ffffff;
                     if root.trajectory-selected: Rectangle {
-                        Text {
-                            x: 0px; y: 13px; width: parent.width; height: 18px;
-                            text: "10:20"; color: #a8a29e; font-size: 9.5px;
-                            horizontal-alignment: center;
-                        }
-                        Rectangle {
-                            width: min(parent.width * 0.43, 430px);
-                            height: 105px;
-                            x: parent.width - self.width - 48px;
-                            y: 43px;
-                            border-radius: 12px;
-                            background: #fffbeb;
-                            border-color: #fde68a;
-                            border-width: 1px;
-                            Text {
-                                x: 12px; y: 10px; width: parent.width - 24px; height: 34px;
-                                text: root.last-message == "" ? "开始一个新的任务" : root.last-message;
-                                color: #292524; font-size: 10px; font-weight: 600; wrap: word-wrap;
-                            }
-                            Rectangle {
-                                x: 12px; y: 49px; width: parent.width - 24px; height: 45px;
-                                border-radius: 6px; background: #fefce8;
-                                border-width: 1px; border-color: #fef3c7;
-                                Text {
-                                    x: 8px; y: 5px; width: parent.width - 16px; height: 35px;
-                                    text: "模型路径：C:\\Models\\faster-whisper-large-v3-turbo\n音频文件：C:\\Data\\audio.mp3\n输出字幕文件：UTF-8 编码的 .srt";
-                                    color: #a8a29e; font-size: 8.7px; wrap: word-wrap;
-                                }
-                            }
-                        }
-                        Rectangle {
-                            x: parent.width - 38px; y: 44px; width: 28px; height: 28px;
-                            border-radius: 14px; background: #fef08a;
-                            Image {
-                                x: 6px; y: 6px; width: 16px; height: 16px;
-                                source: @image-url("../assets/figma/icon-16.svg");
-                            }
-                        }
-                        Rectangle {
-                            x: 20px; y: 168px; width: 27px; height: 27px;
-                            border-radius: 14px; background: #fff7ed;
-                            border-width: 1px; border-color: #fed7aa;
-                            Image {
-                                x: 5px; y: 5px; width: 16px; height: 16px;
-                                source: @image-url("../assets/figma/icon-17.svg");
-                            }
-                        }
-                        Text {
-                            x: 56px; y: 169px; width: parent.width - 76px; height: 32px;
-                            text: root.assistant-text;
-                            color: #44403c; font-size: 10.5px; wrap: word-wrap;
-                        }
-                        Rectangle {
-                            x: 20px; y: 211px; width: parent.width - 40px;
-                            height: root.task-expanded ? max(190px, min(395px, parent.height - 226px)) : 42px;
-                            border-radius: 10px; background: #ffffff;
+                        background: #fafaf9;
+                        metrics := Rectangle {
+                            x: 18px; y: 14px; width: parent.width - 36px; height: 74px;
+                            border-radius: 16px; background: #ffffff;
                             border-width: 1px; border-color: #e7e5e4;
-                            drop-shadow-blur: 3px; drop-shadow-color: #0000000c;
-                            Rectangle {
-                                x: 0px; y: 0px;
-                                width: parent.width; height: 42px;
-                                border-color: #f0eee8; border-width: 1px;
-                                HorizontalLayout {
-                                    width: parent.width; height: parent.height;
-                                    padding-left: 14px; padding-right: 12px; spacing: 16px;
-                                    Text { text: "已工作   2分18秒"; color: #57534e; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
-                                    Text { text: "已探索   12 项"; color: #57534e; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
-                                    Text { text: "已运行   9 条命令"; color: #57534e; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
-                                    Text { text: "完成任务   1/1"; color: #166534; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
-                                    Rectangle { horizontal-stretch: 1; }
-                                    Text { text: root.task-expanded ? "收起步骤  ^" : "展开步骤  v"; color: #78716c; font-size: 9px; vertical-alignment: center; }
+                            HorizontalLayout {
+                                padding-left: 14px; padding-right: 46px; spacing: 9px;
+                                alignment: stretch;
+                                VerticalLayout {
+                                    horizontal-stretch: 1; alignment: center; spacing: 2px;
+                                    Text { text: "Duration"; color: #78716c; font-size: 9px; horizontal-alignment: center; }
+                                    Text { text: root.trace-duration; color: #292524; font-size: 11px; font-weight: 700; horizontal-alignment: center; }
                                 }
-                                TouchArea { clicked => { root.task-expanded = !root.task-expanded; } }
+                                VerticalLayout {
+                                    horizontal-stretch: 1; alignment: center; spacing: 2px;
+                                    Text { text: "Turns"; color: #78716c; font-size: 9px; horizontal-alignment: center; }
+                                    Text { text: root.trace-turns; color: #292524; font-size: 11px; font-weight: 700; horizontal-alignment: center; }
+                                }
+                                VerticalLayout {
+                                    horizontal-stretch: 1; alignment: center; spacing: 2px;
+                                    Text { text: "Calls"; color: #78716c; font-size: 9px; horizontal-alignment: center; }
+                                    Text { text: root.trace-calls; color: #292524; font-size: 11px; font-weight: 700; horizontal-alignment: center; }
+                                }
+                                VerticalLayout {
+                                    horizontal-stretch: 1; alignment: center; spacing: 2px;
+                                    Text { text: "Total Tokens"; color: #78716c; font-size: 9px; horizontal-alignment: center; }
+                                    Text { text: root.trace-input-tokens + root.trace-output-tokens; color: #292524; font-size: 11px; font-weight: 700; horizontal-alignment: center; }
+                                }
+                                VerticalLayout {
+                                    horizontal-stretch: 1; alignment: center; spacing: 2px;
+                                    Text { text: "Prompt"; color: #78716c; font-size: 9px; horizontal-alignment: center; }
+                                    Text { text: root.trace-input-tokens; color: #292524; font-size: 11px; font-weight: 700; horizontal-alignment: center; }
+                                }
+                                VerticalLayout {
+                                    horizontal-stretch: 1; alignment: center; spacing: 2px;
+                                    Text { text: "Completion"; color: #78716c; font-size: 9px; horizontal-alignment: center; }
+                                    Text { text: root.trace-output-tokens; color: #292524; font-size: 11px; font-weight: 700; horizontal-alignment: center; }
+                                }
+                            }
+                            Rectangle {
+                                x: parent.width - 40px; y: 20px; width: 28px; height: 32px;
+                                border-radius: 8px; background: #fafaf9;
+                                Text { width: parent.width; height: parent.height; text: "⌕"; color: #78716c; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                        }
+                        chart := Rectangle {
+                            x: 18px; y: 100px; width: parent.width - 36px; height: 188px;
+                            border-radius: 16px; background: #ffffff;
+                            border-width: 1px; border-color: #e7e5e4; clip: true;
+                            for tick[index] in ["0%", "20%", "40%", "60%", "80%", "100%"]: Text {
+                                x: 82px + index * (parent.width - 112px) / 5;
+                                y: 13px; width: 34px; height: 14px;
+                                text: tick; color: #a8a29e; font-size: 7.5px; horizontal-alignment: center;
+                            }
+                            Text { x: 18px; y: 39px; width: 55px; height: 18px; text: "Input"; color: #78716c; font-size: 9px; vertical-alignment: center; }
+                            Text { x: 18px; y: 67px; width: 55px; height: 18px; text: "Model"; color: #78716c; font-size: 9px; vertical-alignment: center; }
+                            Text { x: 18px; y: 95px; width: 55px; height: 18px; text: "Tools"; color: #78716c; font-size: 9px; vertical-alignment: center; }
+                            for item[index] in root.timeline: Rectangle {
+                                visible: item.kind == "user.input" || item.kind == "user.message" ||
+                                         item.kind == "model.reasoning-chunk" || item.kind == "model.content-chunk" ||
+                                         item.kind == "model.dispatched" || item.kind == "model.tool-call" ||
+                                         item.kind == "tool.result" || item.kind == "act.started";
+                                x: 82px + index * max(7px, (parent.width - 112px) / max(1, root.timeline.length));
+                                y: item.kind == "user.input" || item.kind == "user.message" ? 44px :
+                                   item.kind == "tool.result" || item.kind == "act.started" ? 100px : 72px;
+                                width: max(12px, min(70px, (parent.width - 112px) / max(1, root.timeline.length) - 3px));
+                                height: 8px; border-radius: 4px;
+                                background: item.kind == "user.input" || item.kind == "user.message" ? #64748b :
+                                            item.kind == "model.reasoning-chunk" ? #3b82f6 :
+                                            item.kind == "model.content-chunk" ? #22c55e :
+                                            item.kind == "model.tool-call" ? #a855f7 :
+                                            item.kind == "tool.result" ? #f97316 : #f59e0b;
+                            }
+                            Rectangle { x: 16px; y: 127px; width: parent.width - 32px; height: 1px; background: #f0eee8; }
+                            for legend[index] in ["Input", "Model (Thinking)", "Model (Generating)", "Tool Call", "Tool Result"]: Rectangle {
+                                x: 18px + index * (parent.width - 36px) / 5; y: 139px;
+                                width: (parent.width - 46px) / 5; height: 36px;
+                                Rectangle {
+                                    x: 0px; y: 5px; width: 8px; height: 8px; border-radius: 4px;
+                                    background: index == 0 ? #64748b : index == 1 ? #3b82f6 :
+                                                index == 2 ? #22c55e : index == 3 ? #a855f7 : #f97316;
+                                }
+                                Text { x: 13px; width: parent.width - 13px; height: 30px; text: legend; color: #78716c; font-size: 7.5px; wrap: word-wrap; }
+                            }
+                        }
+                        events := Rectangle {
+                            x: 18px; y: 300px;
+                            width: parent.width < 610px ? parent.width - 36px : (parent.width - 48px) * 0.66;
+                            height: parent.height - 314px;
+                            border-radius: 16px; background: #ffffff;
+                            border-width: 1px; border-color: #e7e5e4; clip: true;
+                            Text { x: 14px; y: 8px; width: 150px; height: 22px; text: "事件列表 (" + root.timeline.length + ")"; color: #292524; font-size: 10px; font-weight: 700; vertical-alignment: center; }
+                            Rectangle {
+                                x: parent.width - 96px; y: 8px; width: 38px; height: 22px; border-radius: 6px; background: #fafaf9; border-width: 1px; border-color: #e7e5e4;
+                                Text { width: parent.width; height: parent.height; text: "筛选"; color: #78716c; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                            Rectangle {
+                                x: parent.width - 52px; y: 8px; width: 38px; height: 22px; border-radius: 6px; background: #fafaf9; border-width: 1px; border-color: #e7e5e4;
+                                Text { width: parent.width; height: parent.height; text: "导出"; color: #78716c; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                            Rectangle {
+                                x: 0px; y: 37px; width: parent.width; height: 25px; background: #fafaf9;
+                                Text { x: 8px; width: 25px; height: parent.height; text: "#"; color: #a8a29e; font-size: 8px; vertical-alignment: center; horizontal-alignment: center; }
+                                Text { x: 35px; width: 48px; height: parent.height; text: "时间"; color: #a8a29e; font-size: 8px; vertical-alignment: center; }
+                                Text { x: 88px; width: 62px; height: parent.height; text: "类型"; color: #a8a29e; font-size: 8px; vertical-alignment: center; }
+                                Text { x: 158px; width: 65px; height: parent.height; text: "角色"; color: #a8a29e; font-size: 8px; vertical-alignment: center; }
+                                Text { x: 228px; width: parent.width - 235px; height: parent.height; text: "内容 / 名称"; color: #a8a29e; font-size: 8px; vertical-alignment: center; }
                             }
                             ListView {
-                                visible: root.task-expanded;
-                                x: 10px; y: 46px; width: parent.width - 20px; height: parent.height - 53px;
-                                for item in root.timeline: TimelineRow { item: item; }
+                                x: 0px; y: 62px; width: parent.width; height: parent.height - 82px;
+                                for item[index] in root.timeline: TraceEventRow { item: item; row-index: index; }
                             }
+                            Text { x: 12px; y: parent.height - 19px; width: parent.width - 24px; height: 15px; text: "显示 1-" + min(20, root.timeline.length) + " 条，共 " + root.timeline.length + " 条"; color: #a8a29e; font-size: 7.5px; }
+                        }
+                        request := Rectangle {
+                            visible: parent.width >= 610px;
+                            x: events.x + events.width + 12px; y: 300px;
+                            width: max(0px, parent.width - self.x - 18px); height: parent.height - 314px;
+                            border-radius: 16px; background: #ffffff;
+                            border-width: 1px; border-color: #e7e5e4;
+                            Text { x: 14px; y: 10px; width: parent.width - 28px; height: 20px; text: "●  Request #" + max(1, root.trace-calls); color: #292524; font-size: 10px; font-weight: 700; }
+                            Text { x: 14px; y: 38px; width: parent.width - 28px; height: 20px; text: "Summary    Options    Usage    Timing"; color: #8b5229; font-size: 8px; overflow: elide; }
+                            Rectangle { x: 14px; y: 60px; width: parent.width - 28px; height: 1px; background: #f0eee8; }
+                            Text { x: 14px; y: 72px; width: 60px; height: 18px; text: "Status"; color: #a8a29e; font-size: 8px; }
+                            Text { x: 78px; y: 72px; width: parent.width - 92px; height: 18px; text: root.trace-result; color: root.trace-result == "执行失败" ? #dc2626 : #15803d; font-size: 8px; horizontal-alignment: right; overflow: elide; }
+                            Text { x: 14px; y: 96px; width: 60px; height: 18px; text: "Provider"; color: #a8a29e; font-size: 8px; }
+                            Text { x: 78px; y: 96px; width: parent.width - 92px; height: 18px; text: root.trace-provider; color: #57534e; font-size: 8px; horizontal-alignment: right; overflow: elide; }
+                            Text { x: 14px; y: 120px; width: 60px; height: 18px; text: "Model"; color: #a8a29e; font-size: 8px; }
+                            Text { x: 78px; y: 120px; width: parent.width - 92px; height: 18px; text: root.trace-model; color: #57534e; font-size: 8px; horizontal-alignment: right; overflow: elide; }
+                            Text { x: 14px; y: 144px; width: 60px; height: 18px; text: "Tool calls"; color: #a8a29e; font-size: 8px; }
+                            Text { x: 78px; y: 144px; width: parent.width - 92px; height: 18px; text: root.trace-calls; color: #57534e; font-size: 8px; horizontal-alignment: right; }
+                            Text { x: 14px; y: 168px; width: 60px; height: 18px; text: "Result"; color: #a8a29e; font-size: 8px; }
+                            Text { x: 78px; y: 168px; width: parent.width - 92px; height: 18px; text: root.assistant-text == "" ? "-" : "Assistant Message"; color: #8b5229; font-size: 8px; horizontal-alignment: right; overflow: elide; }
                         }
                     }
                     if !root.trajectory-selected: ScrollView {
@@ -725,22 +897,80 @@ export component MainWindow inherits Window {
                             Text { text: "10:20"; color: #a8a29e; font-size: 10px; horizontal-alignment: center; }
                             Rectangle {
                                 height: 108px;
-                                border-radius: 12px;
-                                background: #fffbeb;
-                                border-color: #fde68a;
+                                border-radius: 16px;
+                                background: #fdfbf7;
+                                border-color: #ebdcd0;
                                 border-width: 1px;
                                 Text {
                                     x: 13px; y: 12px; width: parent.width - 26px; height: parent.height - 24px;
-                                    text: (root.last-message == "" ? "开始一个新的任务" : root.last-message) + "\n\n模型路径：C:\\Models\\faster-whisper-large-v3-turbo\n音频文件：C:\\Data\\audio.mp3\n输出字幕：UTF-8 编码的 .srt";
+                                    text: root.last-message == "" ? "开始一个新的任务" : root.last-message;
                                     color: #44403c; font-size: 11.5px; wrap: word-wrap;
                                 }
                             }
-                            Text {
-                                text: root.assistant-text;
-                                color: #44403c; font-size: 12px; wrap: word-wrap;
-                            }
-                        }
-                    }
+                             Text {
+                                 text: root.assistant-text;
+                                 color: #44403c; font-size: 12px; wrap: word-wrap;
+                             }
+                             if root.conversation-workflow.length > 0: Rectangle {
+                                 height: root.conversation-workflow-expanded
+                                     ? 48px + min(10, root.conversation-workflow.length) * 52px
+                                     : 44px;
+                                 border-radius: 16px;
+                                 background: #ffffff;
+                                 border-width: 1px;
+                                 border-color: #e7e5e4;
+                                 drop-shadow-blur: 4px;
+                                 drop-shadow-color: #0000000c;
+                                 Rectangle {
+                                     x: 0px; y: 0px; width: parent.width; height: 44px;
+                                     border-radius: 16px;
+                                     background: header-touch.has-hover ? #fafaf9 : #ffffff;
+                                     HorizontalLayout {
+                                         width: parent.width; height: parent.height;
+                                         padding-left: 14px; padding-right: 13px; spacing: 10px;
+                                         Rectangle {
+                                             width: 22px; height: 22px; border-radius: 11px;
+                                             background: root.status-text == "执行失败" ? #fef2f2 : #f7efe5;
+                                             Text {
+                                                 width: parent.width; height: parent.height;
+                                                 text: root.status-text == "执行失败" ? "!" : "✦";
+                                                 color: root.status-text == "执行失败" ? #dc2626 : #8b5229;
+                                                 font-size: 11px; font-weight: 700;
+                                                 horizontal-alignment: center; vertical-alignment: center;
+                                             }
+                                         }
+                                         Text {
+                                             text: "执行工作流  ·  " + root.conversation-workflow.length + " 步";
+                                             color: #44403c; font-size: 10.5px; font-weight: 700;
+                                             vertical-alignment: center;
+                                         }
+                                         Text {
+                                             text: root.status-text;
+                                             color: root.status-text == "执行失败" ? #dc2626 :
+                                                    root.status-text == "审阅完成" ? #15803d : #8b5229;
+                                             font-size: 9.5px; font-weight: 600;
+                                             vertical-alignment: center;
+                                         }
+                                         Rectangle { horizontal-stretch: 1; }
+                                         Text {
+                                             text: root.conversation-workflow-expanded ? "收起  ^" : "展开  v";
+                                             color: #78716c; font-size: 9px; vertical-alignment: center;
+                                         }
+                                     }
+                                     header-touch := TouchArea {
+                                         clicked => {
+                                             root.conversation-workflow-expanded = !root.conversation-workflow-expanded;
+                                         }
+                                     }
+                                 }
+                                 if root.conversation-workflow-expanded: ListView {
+                                     x: 8px; y: 45px; width: parent.width - 16px;
+                                     height: parent.height - 49px;
+                                     for item in root.conversation-workflow: ConversationWorkflowRow { item: item; }
+                                 }
+                             }
+                         }
+                     }
                 }
                 Rectangle {
                     height: 88px;
@@ -803,7 +1033,7 @@ export component MainWindow inherits Window {
                                 }
                                 Text {
                                     x: 9px; y: 22px; width: parent.width - 18px; height: 13px;
-                                    text: item.category; color: #c2410c; font-size: 8.5px;
+                                    text: item.category; color: #8b5229; font-size: 8.5px;
                                 }
                                 command-touch := TouchArea {
                                     clicked => {
@@ -825,7 +1055,7 @@ export component MainWindow inherits Window {
                             }
                             Rectangle {
                                 width: 78px;
-                                Text { text: root.access-mode + "  v"; color: #c2410c; font-size: 10px; vertical-alignment: center; }
+                                Text { text: root.access-mode + "  v"; color: #8b5229; font-size: 10px; vertical-alignment: center; }
                                 TouchArea {
                                     clicked => {
                                         root.access-menu-open = !root.access-menu-open;
@@ -875,8 +1105,16 @@ export component MainWindow inherits Window {
                             drop-shadow-blur: 8px; drop-shadow-color: #00000018;
                             VerticalLayout {
                                 padding: 2px;
-                                MenuOption { label: "添加文件"; chosen => { root.composer-text = "请处理所选文件"; root.attachment-menu-open = false; } }
-                                MenuOption { label: "添加文件夹"; chosen => { root.composer-text = "请处理所选文件夹"; root.attachment-menu-open = false; } }
+                                MenuOption { label: "添加文件"; chosen => {
+                                    root.selected-attachment = root.choose-attachment(false);
+                                    if (root.selected-attachment != "") { root.composer-text = "请处理文件：" + root.selected-attachment; }
+                                    root.attachment-menu-open = false;
+                                } }
+                                MenuOption { label: "添加文件夹"; chosen => {
+                                    root.selected-attachment = root.choose-attachment(true);
+                                    if (root.selected-attachment != "") { root.composer-text = "请处理文件夹：" + root.selected-attachment; }
+                                    root.attachment-menu-open = false;
+                                } }
                             }
                         }
                         if root.access-menu-open: Rectangle {
@@ -891,25 +1129,36 @@ export component MainWindow inherits Window {
                             }
                         }
                         if root.model-menu-open: Rectangle {
-                            x: parent.width - 306px; y: -84px; width: 220px; height: 83px;
+                            x: parent.width - 306px;
+                            y: -min(164px, root.model-choices.length * 27px + 2px);
+                            width: 220px;
+                            height: min(164px, root.model-choices.length * 27px + 2px);
                             border-radius: 8px; background: white; border-width: 1px; border-color: #e7e5e4;
                             drop-shadow-blur: 8px; drop-shadow-color: #00000018;
                             VerticalLayout {
                                 padding: 1px;
-                                MenuOption { label: "faster-whisper-large-v3-turbo"; active: root.model-name == "faster-whisper-large-v3-turbo"; chosen => { root.model-name = "faster-whisper-large-v3-turbo"; root.model-menu-open = false; } }
-                                MenuOption { label: "local-deterministic"; active: root.model-name == "local-deterministic"; chosen => { root.model-name = "local-deterministic"; root.model-menu-open = false; } }
-                                MenuOption { label: "cloud-auto"; active: root.model-name == "cloud-auto"; chosen => { root.model-name = "cloud-auto"; root.model-menu-open = false; } }
+                                for choice in root.model-choices: MenuOption {
+                                    label: choice.label;
+                                    active: root.model-name == choice.model && root.setting-provider == choice.provider;
+                                    chosen => {
+                                        root.model-name = choice.model;
+                                        root.setting-main-model = choice.model;
+                                        root.setting-provider = choice.provider;
+                                        root.model-menu-open = false;
+                                    }
+                                }
                             }
                         }
                         if root.effort-menu-open: Rectangle {
-                            x: parent.width - 133px; y: -84px; width: 92px; height: 83px;
+                            x: parent.width - 133px; y: -111px; width: 92px; height: 110px;
                             border-radius: 8px; background: white; border-width: 1px; border-color: #e7e5e4;
                             drop-shadow-blur: 8px; drop-shadow-color: #00000018;
                             VerticalLayout {
                                 padding: 1px;
                                 MenuOption { label: "最高"; active: root.effort == "最高"; chosen => { root.effort = "最高"; root.effort-menu-open = false; } }
-                                MenuOption { label: "中等"; active: root.effort == "中等"; chosen => { root.effort = "中等"; root.effort-menu-open = false; } }
-                                MenuOption { label: "较低"; active: root.effort == "较低"; chosen => { root.effort = "较低"; root.effort-menu-open = false; } }
+                                MenuOption { label: "高"; active: root.effort == "高"; chosen => { root.effort = "高"; root.effort-menu-open = false; } }
+                                MenuOption { label: "标准"; active: root.effort == "标准"; chosen => { root.effort = "标准"; root.effort-menu-open = false; } }
+                                MenuOption { label: "低"; active: root.effort == "低"; chosen => { root.effort = "低"; root.effort-menu-open = false; } }
                             }
                         }
                     }
@@ -920,12 +1169,12 @@ export component MainWindow inherits Window {
             Rectangle {
                 visible: root.code-visible;
                 width: root.code-visible ? 6px : 0px;
-                background: right-resize.has-hover || right-resize.pressed ? #fff7ed : #ffffff;
+                background: right-resize.has-hover || right-resize.pressed ? #fdfbf7 : #ffffff;
                 Rectangle {
                     x: (parent.width - self.width) / 2;
                     width: right-resize.has-hover || right-resize.pressed ? 2px : 1px;
                     height: parent.height;
-                    background: right-resize.has-hover || right-resize.pressed ? #f59e0b : #e7e5e4;
+                    background: right-resize.has-hover || right-resize.pressed ? #c86a28 : #e7e5e4;
                 }
                 right-resize := TouchArea {
                     mouse-cursor: col-resize;
@@ -955,13 +1204,13 @@ export component MainWindow inherits Window {
                         spacing: 16px;
                         Rectangle {
                             width: 58px;
-                            Text { text: "代码审阅"; color: !root.file-preview-selected ? #c2410c : #78716c; font-size: 11px; font-weight: 600; }
+                            Text { text: "代码审阅"; color: !root.file-preview-selected ? #8b5229 : #78716c; font-size: 11px; font-weight: 600; }
                             Rectangle { visible: !root.file-preview-selected; y: 35px; height: 2px; width: 58px; background: #f97316; }
                             TouchArea { clicked => { root.file-preview-selected = false; } }
                         }
                         Rectangle {
                             width: 58px;
-                            Text { text: "文件预览"; color: root.file-preview-selected ? #c2410c : #78716c; font-size: 11px; }
+                            Text { text: "文件预览"; color: root.file-preview-selected ? #8b5229 : #78716c; font-size: 11px; }
                             Rectangle { visible: root.file-preview-selected; y: 35px; height: 2px; width: 58px; background: #f97316; }
                             TouchArea { clicked => { root.file-preview-selected = true; } }
                         }
@@ -979,15 +1228,14 @@ export component MainWindow inherits Window {
                         padding-left: 10px;
                         padding-right: 10px;
                         spacing: 7px;
-                        Text { text: "🐍"; font-size: 12px; vertical-alignment: center; }
+                        Text { text: "◈"; font-size: 12px; vertical-alignment: center; }
                         Rectangle {
                             width: 112px;
-                            Text { text: root.file-preview-selected ? "output.srt  v" : "transcribe.py  v"; color: #44403c; font-size: 11px; font-weight: 600; vertical-alignment: center; }
+                            Text { text: root.file-preview-selected ? "结果预览  v" : "光子投影  v"; color: #44403c; font-size: 11px; font-weight: 600; vertical-alignment: center; }
                             TouchArea { clicked => { root.file-menu-open = !root.file-menu-open; root.code-menu-open = false; } }
                         }
                         Rectangle { horizontal-stretch: 1; }
-                        Text { text: "+42"; color: #16a34a; font-size: 10px; vertical-alignment: center; }
-                        Text { text: "-0"; color: #ef4444; font-size: 10px; vertical-alignment: center; }
+                        Text { text: root.code-lines.length + " 行"; color: #16a34a; font-size: 10px; vertical-alignment: center; }
                         ToolIcon {
                             source: @image-url("../assets/figma/icon-35.svg"); icon-size: 14px;
                             clicked => { root.code-menu-open = !root.code-menu-open; root.file-menu-open = false; }
@@ -999,8 +1247,8 @@ export component MainWindow inherits Window {
                         drop-shadow-blur: 8px; drop-shadow-color: #00000018;
                         VerticalLayout {
                             padding: 2px;
-                            MenuOption { label: "transcribe.py"; active: !root.file-preview-selected; chosen => { root.file-preview-selected = false; root.file-menu-open = false; } }
-                            MenuOption { label: "output.srt"; active: root.file-preview-selected; chosen => { root.file-preview-selected = true; root.file-menu-open = false; } }
+                            MenuOption { label: "光子投影"; active: !root.file-preview-selected; chosen => { root.file-preview-selected = false; root.file-menu-open = false; } }
+                            MenuOption { label: "结果预览"; active: root.file-preview-selected; chosen => { root.file-preview-selected = true; root.file-menu-open = false; } }
                         }
                     }
                     if root.code-menu-open: Rectangle {
@@ -1043,7 +1291,7 @@ export component MainWindow inherits Window {
                     background: #fafaf9;
                     Text {
                         x: 22px; y: 22px; width: parent.width - 44px;
-                        text: "output.srt\n\n1\n00:00:00,000 --> 00:00:02,340\nTokmon 因果光子流已生成字幕。";
+                        text: root.assistant-text == "" ? "当前会话尚无可预览结果。" : root.assistant-text;
                         color: #44403c; font-family: "Microsoft YaHei UI"; font-size: 12px;
                     }
                 }
@@ -1060,10 +1308,10 @@ export component MainWindow inherits Window {
                         StatusDot { tone: "success"; }
                         Text { text: root.status-text; color: #16a34a; font-size: 10.5px; vertical-alignment: center; }
                         Rectangle { horizontal-stretch: 1; }
-                        Text { text: "Python  |  UTF-8  |"; color: #78716c; font-size: 10px; vertical-alignment: center; }
+                        Text { text: "Photon  |  UTF-8  |"; color: #78716c; font-size: 10px; vertical-alignment: center; }
                         Rectangle {
                             width: 62px;
-                            Text { text: "2 个问题  ^"; color: #78716c; font-size: 10px; vertical-alignment: center; }
+                            Text { text: "0 个问题  ^"; color: #78716c; font-size: 10px; vertical-alignment: center; }
                             TouchArea { clicked => { root.issues-open = !root.issues-open; } }
                         }
                     }
@@ -1074,8 +1322,7 @@ export component MainWindow inherits Window {
                         VerticalLayout {
                             padding: 5px; spacing: 2px;
                             Text { text: "问题"; color: #292524; font-size: 10.5px; font-weight: 700; }
-                            Text { text: "第 8 行：dict 返回类型可进一步收窄"; color: #78716c; font-size: 9.5px; }
-                            Text { text: "第 32 行：建议确认 output.srt 的父目录"; color: #78716c; font-size: 9.5px; }
+                            Text { text: "当前投影没有发现问题"; color: #78716c; font-size: 9.5px; }
                         }
                     }
                 }
@@ -1084,10 +1331,123 @@ export component MainWindow inherits Window {
         }
     }
 
+    if root.create-navigation-open: Rectangle {
+        x: 0px; y: 0px; width: parent.width; height: parent.height;
+        background: #1c19174f;
+        TouchArea { clicked => { root.create-navigation-open = false; } }
+        create-navigation-dialog := Rectangle {
+            width: 460px; height: root.create-navigation-kind == "group" ? 258px : 358px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            border-radius: 14px; background: white;
+            border-width: 1px; border-color: #e7e5e4;
+            drop-shadow-blur: 20px; drop-shadow-color: #00000030;
+            Text {
+                x: 22px; y: 19px;
+                text: root.create-navigation-kind == "session" ? "新建会话" : "新建分组或项目";
+                color: #292524; font-size: 15px; font-weight: 700;
+            }
+            Text { x: 22px; y: 52px; text: "类型"; color: #78716c; font-size: 10px; }
+            HorizontalLayout {
+                x: 22px; y: 72px; width: parent.width - 44px; height: 34px; spacing: 8px;
+                if root.create-navigation-kind == "session": SettingsChoice {
+                    horizontal-stretch: 1; label: "会话"; active: true;
+                }
+                if root.create-navigation-kind != "session": SettingsChoice {
+                    horizontal-stretch: 1; label: "分组";
+                    active: root.create-navigation-kind == "group";
+                    chosen => { root.create-navigation-kind = "group"; }
+                }
+                if root.create-navigation-kind != "session": SettingsChoice {
+                    horizontal-stretch: 1; label: "项目";
+                    active: root.create-navigation-kind == "project";
+                    chosen => {
+                        root.create-navigation-kind = "project";
+                        if (root.create-navigation-workspace == "") {
+                            root.create-navigation-workspace = root.setting-workspace;
+                        }
+                    }
+                }
+            }
+            Text { x: 22px; y: 121px; text: "名称"; color: #78716c; font-size: 10px; }
+            create-name := LineEdit {
+                x: 22px; y: 140px; width: parent.width - 44px; height: 34px;
+                text <=> root.create-navigation-name;
+                placeholder-text: root.create-navigation-kind == "group" ? "例如：内容生产" :
+                                  root.create-navigation-kind == "session" ? "例如：实现字幕导出" :
+                                  "例如：字幕制作空间";
+            }
+            if root.create-navigation-kind != "group": Text {
+                x: 22px; y: 187px;
+                text: root.create-navigation-kind == "session" ? "工作空间（默认继承所在项目，可在此覆盖）" : "项目工作空间";
+                color: #78716c; font-size: 10px;
+            }
+            if root.create-navigation-kind != "group": LineEdit {
+                x: 22px; y: 206px; width: parent.width - 122px; height: 34px;
+                text <=> root.create-navigation-workspace;
+                placeholder-text: "选择或输入文件夹的绝对路径";
+            }
+            if root.create-navigation-kind != "group": Rectangle {
+                x: parent.width - 92px; y: 206px; width: 70px; height: 34px;
+                border-radius: 8px; border-width: 1px; border-color: #e7e5e4;
+                background: browse-workspace.has-hover ? #f5f5f4 : white;
+                Text {
+                    text: "浏览…"; color: #57534e; font-size: 10.5px;
+                    horizontal-alignment: center; vertical-alignment: center;
+                }
+                browse-workspace := TouchArea {
+                    clicked => {
+                        root.selected-attachment = root.choose-attachment(true);
+                        if (root.selected-attachment != "") {
+                            root.create-navigation-workspace = root.selected-attachment;
+                        }
+                    }
+                }
+            }
+            if root.create-navigation-kind != "group": Text {
+                x: 22px; y: 246px; width: parent.width - 44px; height: 30px;
+                text: "切换到该节点时，模型会话、文件工具和 tokmond 都会使用这个目录。";
+                color: #a8a29e; font-size: 9px; wrap: word-wrap;
+            }
+            if root.create-navigation-error != "": Text {
+                x: 22px; y: root.create-navigation-kind == "group" ? 181px : 276px;
+                width: parent.width - 44px; height: 20px;
+                text: root.create-navigation-error; color: #dc2626; font-size: 9.5px;
+                overflow: elide;
+            }
+            Rectangle {
+                x: parent.width - 188px; y: parent.height - 48px; width: 76px; height: 32px;
+                border-radius: 8px; border-width: 1px; border-color: #e7e5e4;
+                background: cancel-create.has-hover ? #f5f5f4 : white;
+                Text { text: "取消"; color: #57534e; font-size: 10.5px; horizontal-alignment: center; vertical-alignment: center; }
+                cancel-create := TouchArea { clicked => { root.create-navigation-open = false; } }
+            }
+            Rectangle {
+                x: parent.width - 104px; y: parent.height - 48px; width: 82px; height: 32px;
+                border-radius: 8px;
+                background: root.create-navigation-name == "" ||
+                            (root.create-navigation-kind != "group" && root.create-navigation-workspace == "")
+                            ? #d6d3d1 : #c86a28;
+                Text { text: "创建"; color: white; font-size: 10.5px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                TouchArea {
+                    enabled: root.create-navigation-name != "" &&
+                             (root.create-navigation-kind == "group" || root.create-navigation-workspace != "");
+                    clicked => {
+                        if (root.create-navigation(root.create-navigation-kind,
+                                                   root.create-navigation-name,
+                                                   root.create-navigation-workspace)) {
+                            root.create-navigation-open = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     if root.settings-open: Rectangle {
         x: 0px; y: 0px; width: parent.width; height: parent.height;
         background: #1c19174f;
-        TouchArea { clicked => { root.settings-open = false; } }
+        TouchArea { clicked => { root.cancel-settings(); root.settings-open = false; } }
         settings-dialog := Rectangle {
             width: min(parent.width - 40px, 1120px);
             height: min(parent.height - 40px, 720px);
@@ -1102,25 +1462,38 @@ export component MainWindow inherits Window {
                 background: #ffffff; border-width: 1px; border-color: #f0eee8;
                 Text {
                     x: 22px; width: 120px; height: parent.height;
-                    text: "设置"; color: #292524; font-size: 16px; font-weight: 700;
+                    text: "设置"; color: #1c1917; font-size: 21px; font-weight: 700;
                     vertical-alignment: center;
                 }
+                Rectangle {
+                    x: (parent.width - self.width) / 2; y: 11px;
+                    width: min(350px, parent.width - 410px); height: 34px;
+                    border-radius: 11px; background: #f9f9f8;
+                    border-width: 1px; border-color: #f0eee8;
+                    Image { x: 11px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/figma/icon-03.svg"); }
+                    LineEdit {
+                        x: 34px; y: 1px; width: parent.width - 42px; height: 32px;
+                        placeholder-text: "搜索设置项"; font-size: 10.5px;
+                        text <=> root.settings-search;
+                    }
+                }
                 Text {
-                    x: 92px; width: parent.width - 160px; height: parent.height;
+                    x: parent.width - 260px; width: 210px; height: parent.height;
                     text: root.settings-status; color: #a8a29e; font-size: 9.5px;
-                    vertical-alignment: center;
+                    horizontal-alignment: right; vertical-alignment: center; overflow: elide;
                 }
                 ToolIcon {
                     x: parent.width - 42px; y: 15px;
                     source: @image-url("../assets/figma/icon-39.svg");
-                    clicked => { root.settings-open = false; }
+                    clicked => { root.cancel-settings(); root.settings-open = false; }
                 }
             }
 
             Rectangle {
                 x: 0px; y: 56px; width: 220px; height: parent.height - 112px;
-                background: #fafaf9; border-width: 1px; border-color: #f0eee8;
+                background: #fbfbf9; border-width: 1px; border-color: #f0eee8;
                 Rectangle {
+                    visible: false;
                     x: 14px; y: 14px; width: parent.width - 28px; height: 34px;
                     border-radius: 9px; background: #f0eee8;
                     Image { x: 10px; y: 9px; width: 15px; height: 15px; source: @image-url("../assets/figma/icon-03.svg"); }
@@ -1131,7 +1504,7 @@ export component MainWindow inherits Window {
                     }
                 }
                 VerticalLayout {
-                    x: 12px; y: 62px; width: parent.width - 24px; height: 312px; spacing: 1px;
+                    x: 12px; y: 16px; width: parent.width - 24px; height: 335px; spacing: 1px;
                     SettingsNavigationRow { glyph: "⚙"; label: "通用"; active: root.settings-page == 0; chosen => { root.settings-page = 0; } }
                     SettingsNavigationRow { glyph: "◇"; label: "智能体与模型"; active: root.settings-page == 1; chosen => { root.settings-page = 1; } }
                     SettingsNavigationRow { glyph: "◈"; label: "权限与安全"; active: root.settings-page == 2; chosen => { root.settings-page = 2; } }
@@ -1143,7 +1516,7 @@ export component MainWindow inherits Window {
                 }
                 Rectangle {
                     x: 14px; y: parent.height - 51px; width: parent.width - 28px; height: 36px;
-                    border-radius: 8px; background: #fff7ed;
+                    border-radius: 11px; background: #f7efe5;
                     StatusDot { x: 10px; y: 14px; tone: "success"; }
                     Text {
                         x: 25px; width: parent.width - 34px; height: parent.height;
@@ -1165,7 +1538,7 @@ export component MainWindow inherits Window {
                           root.settings-page == 4 ? "通知" :
                           root.settings-page == 5 ? "外观" :
                           root.settings-page == 6 ? "快捷键" : "账户";
-                    color: #292524; font-size: 15px; font-weight: 700;
+                    color: #1c1917; font-size: 15px; font-weight: 700;
                 }
                 Text {
                     x: 28px; y: 50px; width: parent.width - 56px; height: 18px;
@@ -1231,7 +1604,7 @@ export component MainWindow inherits Window {
                     }
                     HorizontalLayout {
                         x: 0px; y: 285px; width: parent.width; height: 32px; spacing: 8px;
-                        SettingsChoice { horizontal-stretch: 1; label: "保存平台配置"; active: false; chosen => { root.configure-provider(root.setting-provider, root.setting-provider-protocol, root.setting-provider-endpoint, root.setting-main-model, root.setting-provider-auth, root.setting-provider-thinking); root.settings-status = "正在原子保存 provider YAML…"; } }
+                        SettingsChoice { horizontal-stretch: 1; label: "保存平台配置"; active: false; chosen => { root.configure-provider(root.setting-provider, root.setting-provider-protocol, root.setting-provider-endpoint, root.setting-main-model, root.setting-provider-auth, root.setting-provider-thinking, root.setting-reasoning); root.settings-status = "正在原子保存 provider YAML…"; } }
                         SettingsChoice { horizontal-stretch: 1; label: "测试真实连接"; active: true; chosen => { root.test-provider(root.setting-provider); root.settings-status = "正在通过 Rhea 测试真实连接…"; } }
                     }
                     Text { x: 14px; y: 329px; text: "推理强度"; color: #292524; font-size: 11px; font-weight: 600; }
@@ -1318,7 +1691,7 @@ export component MainWindow inherits Window {
                     Text { x: 14px; y: 88px; text: "强调色"; color: #292524; font-size: 11px; font-weight: 600; }
                     HorizontalLayout {
                         x: 14px; y: 114px; width: 220px; height: 30px; spacing: 10px;
-                        for color[index] in [#f59e0b, #ef4444, #8b5cf6, #3b82f6, #22c55e, #78716c]: Rectangle {
+                        for color[index] in [#f5a623, #f43f5e, #a855f7, #3b82f6, #22c55e, #78716c]: Rectangle {
                             width: 28px; height: 28px; border-radius: 14px; background: color;
                             border-width: root.setting-accent == index ? 3px : 0px; border-color: #292524;
                             TouchArea { clicked => { root.setting-accent = index; } }
@@ -1344,8 +1717,8 @@ export component MainWindow inherits Window {
 
                 if root.settings-page == 7: Rectangle {
                     x: 28px; y: 94px; width: parent.width - 56px; height: parent.height - 110px;
-                    Rectangle { x: 14px; y: 6px; width: 58px; height: 58px; border-radius: 29px; background: #fef3d6;
-                        Text { text: "JC"; color: #855702; font-size: 17px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                    Rectangle { x: 14px; y: 6px; width: 58px; height: 58px; border-radius: 29px; background: #fef08a;
+                        Text { text: "JC"; color: #8b5229; font-size: 17px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                     }
                     Text { x: 88px; y: 12px; text: root.setting-nickname; color: #292524; font-size: 13px; font-weight: 700; }
                     Text { x: 88px; y: 36px; text: root.setting-email; color: #a8a29e; font-size: 9.5px; }
@@ -1365,7 +1738,7 @@ export component MainWindow inherits Window {
 
             Rectangle {
                 x: parent.width - 230px; y: 56px; width: 230px; height: parent.height - 112px;
-                background: #fffbeb; border-width: 1px; border-color: #fef3c7;
+                background: #fdfbf7; border-width: 1px; border-color: #f0eee8;
                 Text {
                     x: 24px; y: 28px; width: parent.width - 48px; height: 24px;
                     text: root.settings-page == 0 ? "通用概览" :
@@ -1375,11 +1748,11 @@ export component MainWindow inherits Window {
                           root.settings-page == 4 ? "通知概览" :
                           root.settings-page == 5 ? "外观概览" :
                           root.settings-page == 6 ? "快捷键概览" : "账户概览";
-                    color: #855702; font-size: 12px; font-weight: 700;
+                    color: #1c1917; font-size: 12px; font-weight: 700;
                 }
                 Rectangle {
                     x: 24px; y: 67px; width: parent.width - 48px; height: 118px;
-                    border-radius: 12px; background: #ffffffb8;
+                    border-radius: 16px; background: #ffffffd8;
                     Text { x: 14px; y: 13px; text: "当前配置"; color: #57534e; font-size: 10px; font-weight: 700; }
                     Text {
                         x: 14px; y: 38px; width: parent.width - 28px; height: 66px;
@@ -1396,13 +1769,13 @@ export component MainWindow inherits Window {
                 Text {
                     x: 24px; y: 211px; width: parent.width - 48px; height: 98px;
                     text: "设置保存到当前项目的 .tokmon/config.yaml。修改由 tokmond 原子发布，其他客户端可在下一次连接时读取。";
-                    color: #a16207; font-size: 9.5px; wrap: word-wrap;
+                    color: #8b5229; font-size: 9.5px; wrap: word-wrap;
                 }
                 Rectangle {
                     x: 24px; y: parent.height - 67px; width: parent.width - 48px; height: 38px;
-                    border-radius: 9px; background: #ffffffa8; border-width: 1px; border-color: #fde68a;
+                    border-radius: 12px; background: #ffffffc8; border-width: 1px; border-color: #ebdcd0;
                     StatusDot { x: 12px; y: 16px; tone: "success"; }
-                    Text { x: 29px; width: parent.width - 38px; height: parent.height; text: "因果流只追加 · 设置可替换"; color: #855702; font-size: 9px; vertical-alignment: center; }
+                    Text { x: 29px; width: parent.width - 38px; height: parent.height; text: "因果流只追加 · 设置可替换"; color: #8b5229; font-size: 9px; vertical-alignment: center; }
                 }
             }
 
@@ -1410,7 +1783,7 @@ export component MainWindow inherits Window {
                 x: 0px; y: parent.height - 56px; width: parent.width; height: 56px;
                 background: #ffffff; border-width: 1px; border-color: #f0eee8;
                 Rectangle {
-                    x: 20px; y: 11px; width: 118px; height: 34px; border-radius: 8px;
+                    x: 20px; y: 11px; width: 118px; height: 34px; border-radius: 12px;
                     background: reset-touch.has-hover ? #f5f5f4 : white;
                     border-width: 1px; border-color: #e7e5e4;
                     Text { text: "恢复默认设置"; color: #78716c; font-size: 10.5px; horizontal-alignment: center; vertical-alignment: center; }
@@ -1434,15 +1807,16 @@ export component MainWindow inherits Window {
                 Rectangle { horizontal-stretch: 1; }
                 Rectangle {
                     x: parent.width - 194px; y: 11px; width: 74px; height: 34px;
-                    border-radius: 8px; background: cancel-touch.has-hover ? #f5f5f4 : white;
+                    border-radius: 12px; background: cancel-touch.has-hover ? #f5f5f4 : white;
                     border-width: 1px; border-color: #e7e5e4;
                     Text { text: "取消"; color: #57534e; font-size: 10.5px; horizontal-alignment: center; vertical-alignment: center; }
-                    cancel-touch := TouchArea { clicked => { root.settings-open = false; } }
+                    cancel-touch := TouchArea { clicked => { root.cancel-settings(); root.settings-open = false; } }
                 }
                 Rectangle {
                     x: parent.width - 112px; y: 11px; width: 92px; height: 34px;
-                    border-radius: 8px; background: #f59e0b;
-                    Text { text: "保存更改"; color: white; font-size: 10.5px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                    border-radius: 12px; background: #f7efe5;
+                    border-width: 1px; border-color: #ebdcd0;
+                    Text { text: "保存更改"; color: #8b5229; font-size: 10.5px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                     TouchArea { clicked => { root.save-settings(); root.settings-open = false; } }
                 }
             }

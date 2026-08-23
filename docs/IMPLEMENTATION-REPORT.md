@@ -23,7 +23,7 @@
 
 Windows 当前目标构建已完成：
 
-- 核心、透镜、Snow 与生命周期测试：当前 `83/83` 通过；
+- 核心、透镜、Snow 与生命周期测试：当前 `84/84` 通过；
 - Slint 桌面目标：编译、链接成功；
 - 安装冒烟：成功，安装树共 81 个文件；
 - 动态透镜：20 个 DLL 全部生成；
@@ -131,6 +131,8 @@ Worker Protocol 使用 4-byte 大端长度 + canonical CBOR frame。C++ host 会
 
 `tokmon` 与 `tokmon-desktop` 都会先探测按工作区隔离的 Snow endpoint；不存在时由当前可执行文件定位同目录 `tokmond`，以后台无窗口方式拉起并等待 ready。客户端通过心跳租约声明存活：Desktop 与交互 CLI 退出后安全空闲停止，一次性 CLI 保留 15 秒复用窗口；显式 `tokmon daemon start` 会 pin 常驻，直到 `tokmon daemon stop`。daemon 只在没有其他租约且 Nyxia 没有活动工作时自动退出，并通过 Windows named mutex 或 POSIX `flock` 拒绝同 endpoint 的第二实例。详见 `docs/DAEMON-LIFECYCLE.md`。
 
+Desktop 导航节点现在具有工作空间语义：项目保存规范化绝对路径，会话默认继承父项目并可显式覆盖。选择节点会在运行期完成目标 tokmond/endpoint 租约交接，再新建空 Ray 或恢复该工作空间中的已有 Ray。导航树始终由启动 Desktop 时的导航 workspace 保存，因此活动项目切换不会分裂树配置；Photon、模型配置和文件工具仍按活动 workspace 隔离。
+
 Termon 不再用硬编码 timeline/code model 作为事实来源。桌面端先消费 snapshot/cursor delta；发送 chat 后再请求该 ray 的 `SurfaceSnapshot`，从 Termon 的 `ui.trajectory` 重建活动会话投影。
 
 ## 7. 配置、错误和日志
@@ -153,7 +155,7 @@ cmake --build build/windows-msvc-ui-debug --target tokmond tokmon tokmon-desktop
 ctest --test-dir build/windows-msvc-ui-debug --output-on-failure -C Debug
 ```
 
-当前结果：`83/83` 通过，`0` 失败；其中新增 daemon 客户端租约合约测试。
+当前结果：`84/84` 通过，`0` 失败；最新真实 OpenCode 与 Desktop 原生 UI 验收见 [OPENCODE-DESKTOP-ACCEPTANCE-REPORT.md](OPENCODE-DESKTOP-ACCEPTANCE-REPORT.md)。
 
 测试包含：
 
@@ -204,7 +206,7 @@ cmake --install build/windows-msvc-ui-debug --prefix build/install-smoke
 - 当前完整编译与现实系统测试在 Windows 上执行。Cista 当前使用 Windows Credential Manager；非 Windows credential backend 保持明确 `unsupported`，不会退化成明文文件。
 - Chora 敏感 Blob 在 Windows 使用 DPAPI；非 Windows 未配置 envelope backend 时明确拒绝敏感写入。
 
-这些限制不影响本次 Windows 目标的 79 项测试与 Slint 构建，但若把“完成”定义为所有 OS/所有可选外部后端都做现场验收，则仍需相应平台或 daemon 环境。由于这些后端会 fail closed，缺少环境不会导致较弱隔离被冒充为成功。
+这些限制不影响本次 Windows 目标的 84 项测试与 Slint 构建，但若把“完成”定义为所有 OS/所有可选外部后端都做现场验收，则仍需相应平台或 daemon 环境。由于这些后端会 fail closed，缺少环境不会导致较弱隔离被冒充为成功。
 
 ## 10. 关键文件索引
 

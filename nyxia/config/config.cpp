@@ -178,7 +178,7 @@ Result<void> parse_model_providers(RuntimeConfig& config, const YAML::Node& mode
       return tl::unexpected(make_error(ErrorCode::schema_mismatch,
           source.string() + ": invalid model provider id or definition: " + id));
     if (auto result = reject_unknown(value,
-        {"protocol", "endpoint", "model", "secret_ref", "auth", "enabled",
+        {"protocol", "endpoint", "model", "secret_ref", "secret_env", "auth", "enabled",
          "allow_anonymous", "thinking", "reasoning_effort", "max_output_tokens",
          "max_attempts", "retry_backoff_ms"}, source); !result) return result;
     ModelProviderConfig provider;
@@ -189,6 +189,7 @@ Result<void> parse_model_providers(RuntimeConfig& config, const YAML::Node& mode
     if (value["endpoint"]) provider.endpoint = value["endpoint"].as<std::string>();
     if (value["model"]) provider.model = value["model"].as<std::string>();
     if (value["secret_ref"]) provider.secret_ref = value["secret_ref"].as<std::string>();
+    if (value["secret_env"]) provider.secret_env = value["secret_env"].as<std::string>();
     if (value["auth"]) provider.auth = value["auth"].as<std::string>();
     if (value["enabled"]) provider.enabled = value["enabled"].as<bool>();
     if (value["allow_anonymous"]) provider.allow_anonymous = value["allow_anonymous"].as<bool>();
@@ -229,6 +230,12 @@ Result<void> parse_model_providers(RuntimeConfig& config, const YAML::Node& mode
     if (provider.secret_ref.find('\0') != std::string::npos || provider.secret_ref.size() > 240)
       return tl::unexpected(make_error(ErrorCode::schema_mismatch,
           source.string() + ": invalid SecretRef for provider " + id));
+    static const std::regex environment_name("^[A-Z_][A-Z0-9_]{0,127}$");
+    if (!provider.secret_env.empty() &&
+        (!std::regex_match(provider.secret_env, environment_name) ||
+         provider.secret_ref.empty()))
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+          source.string() + ": invalid secret_env for provider " + id));
     if (provider.max_output_tokens <= 0 || provider.max_output_tokens > 1'000'000 ||
         provider.max_attempts <= 0 || provider.max_attempts > 10 ||
         provider.retry_backoff_ms < 0 || provider.retry_backoff_ms > 60'000)

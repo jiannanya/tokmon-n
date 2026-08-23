@@ -6,7 +6,7 @@
 
 ## 1. 目标
 
-`tokmond` 按规范化 workspace 隔离，每个 workspace 最多一个实例。客户端不再以“谁创建进程谁就无条件杀死进程”判断所有权，而是向 daemon 注册带超时的客户端租约。这样既能让 Desktop 关闭后回收对应 daemon，也不会误杀另一个 Desktop、CLI 会话或正在执行的模型/Act。
+`tokmond` 按规范化 workspace 隔离，每个 workspace 最多一个实例。客户端不再以“谁创建进程谁就无条件杀死进程”判断所有权，而是向 daemon 注册带超时的客户端租约。这样既能让 Desktop 关闭后回收对应 daemon，也不会误杀另一个 Desktop、CLI 会话或正在执行的模型/Act。Desktop 的项目/会话树可以在运行期切换工作空间：导航工作空间租约保持树可保存，当前活动项目另持一个可交接租约。
 
 ## 2. 已实现的退出策略
 
@@ -48,10 +48,16 @@
 
 多个客户端连接同一 workspace 时各自持有独立 `client_id`。任意 Desktop 的关闭只删除自己的租约；只有最后一个客户端离开才会进入退出条件。若 Desktop 关闭时 CLI 正在执行，CLI 心跳和运行时活动都会阻止退出。若用户此前执行过 `tokmon daemon start`，所有自动退出请求都会被 pin 抑制，直到显式 `tokmon daemon stop`。
 
+### 5.1 Desktop 跨工作空间交接
+
+项目节点保存绝对 `workspace`；会话节点为空时继承项目，非空时覆盖。选择不同工作空间的节点时，Desktop 先为目标目录计算 endpoint、确保 daemon ready 并 attach 新租约，成功后才发布目标 endpoint 和释放旧活动租约。导航树的保存始终发往启动 Desktop 时的导航 endpoint，避免活动项目变化导致树配置分裂。
+
+关闭 Desktop 时，controller 析构会先停止 Snow worker，再释放活动工作空间租约；主流程随后释放导航工作空间租约。两者相同时只存在主租约。现场验证从 `workspace_override` 切回 `workspace_alt` 后前者退出，关闭 Desktop 后 `workspace_alt` 与导航工作空间 daemon 均退出。
+
 ## 6. 验收结果
 
 - C++20 Windows UI 构建成功；
-- 自动化测试 `83/83` 通过，其中包含 attach、heartbeat、detach 与 pin 的 Snow 合约测试；
+- 自动化测试 `84/84` 通过，其中包含 attach、heartbeat、detach 与 pin 的 Snow 合约测试；
 - CLI 一次性命令结束后 daemon 立即可复用，17 s 后已停止；
 - 显式 `daemon start` 后等待 17 s 仍保持运行，`daemon stop` 可正常结束；
 - Desktop 收到正常窗口关闭后进程正常退出，2 s 后对应 daemon 已停止；

@@ -139,6 +139,7 @@ models:
       endpoint: https://models.example.com/v1/chat/completions
       model: company-coder
       secret_ref: model-provider/company-gateway
+      secret_env: COMPANY_GATEWAY_API_KEY
       auth: bearer
       enabled: true
       allow_anonymous: false
@@ -148,6 +149,32 @@ models:
       max_attempts: 3
       retry_backoff_ms: 500
 ```
+
+`secret_env` 是可选的非交互式引导来源，不是保存 Key 的位置。名称必须是大写环境变量格式（例如 `OPENCODE_API_KEY`），YAML 仍必须提供严格命名空间化的 `secret_ref`。`tokmond` 启动时先读取当前进程环境；Windows 还会读取当前用户和本机环境变量注册表，以支持在 Desktop/终端启动之后才写入的变量。读取成功后立即导入操作系统凭据库，后续调用只使用 `secret_ref`，临时明文缓冲区会被覆写。环境变量不存在时不会降低为匿名调用。
+
+OpenCode 验收配置示例：
+
+```yaml
+models:
+  default: opencode
+  providers:
+    opencode:
+      protocol: openai-compatible
+      endpoint: https://opencode.ai/zen/v1/chat/completions
+      model: x-preview-f-free
+      secret_ref: model-provider/opencode
+      secret_env: OPENCODE_API_KEY
+      auth: bearer
+      enabled: true
+      allow_anonymous: false
+      thinking: false
+      reasoning_effort: high
+      max_output_tokens: 4096
+      max_attempts: 2
+      retry_backoff_ms: 500
+```
+
+`x-preview-f-free` 不接受 `medium`，应使用 `low`、`high` 或 `max`。本次 Windows 现场验收使用 `high`。完整 CLI/Desktop 记录见 [OPENCODE-DESKTOP-ACCEPTANCE-REPORT.md](OPENCODE-DESKTOP-ACCEPTANCE-REPORT.md)。
 
 用户级 `~/.tokmon/config.yaml` 与项目级 `<workspace>/.tokmon/config.yaml` 使用同一 schema。先合并用户级，再按 provider id 合并项目级；项目可以覆盖 model、endpoint 或预算，但 SecretRef 必须严格等于自己的 `model-provider/<id>`，不能引用其他 provider 或其他透镜的凭据。`models.default` 必须指向存在且启用的 provider。
 

@@ -586,6 +586,7 @@ TEST_CASE("model platforms merge by id while credentials remain SecretRefs") {
             "      endpoint: https://models.example.test/v1/chat/completions\n"
             "      model: base-model\n"
             "      secret_ref: model-provider/private-cloud\n"
+            "      secret_env: PRIVATE_CLOUD_API_KEY\n"
             "      auth: bearer\n";
   }
   {
@@ -604,6 +605,7 @@ TEST_CASE("model platforms merge by id while credentials remain SecretRefs") {
   REQUIRE(provider.model == "project-model");
   REQUIRE(provider.endpoint == "https://models.example.test/v1/chat/completions");
   REQUIRE(provider.secret_ref == "model-provider/private-cloud");
+  REQUIRE(provider.secret_env == "PRIVATE_CLOUD_API_KEY");
   REQUIRE(provider.thinking);
 }
 
@@ -633,6 +635,17 @@ TEST_CASE("model configuration rejects plaintext keys and insecure remote endpoi
   auto insecure = tokmon::load_config(workspace);
   REQUIRE_FALSE(insecure);
   REQUIRE(insecure.error().code == tokmon::ErrorCode::permission_denied);
+  {
+    std::ofstream output(file, std::ios::trunc);
+    output << "models:\n  providers:\n    unsafe:\n"
+              "      protocol: openai-compatible\n"
+              "      endpoint: https://models.example.test/v1/chat/completions\n"
+              "      model: test\n      secret_ref: model-provider/unsafe\n"
+              "      secret_env: unsafeApiKey\n";
+  }
+  auto invalid_environment = tokmon::load_config(workspace);
+  REQUIRE_FALSE(invalid_environment);
+  REQUIRE(invalid_environment.error().code == tokmon::ErrorCode::schema_mismatch);
 }
 
 TEST_CASE("workspace Snow endpoints are isolated and daemon health is probeable") {

@@ -3,9 +3,12 @@
 #include <atomic>
 #include <cctype>
 #include <condition_variable>
+#include <cwchar>
+#include <cwctype>
 #include <deque>
 #include <filesystem>
 #include <iomanip>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -18,6 +21,8 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <commdlg.h>
+#include <shlobj.h>
 #endif
 
 #include "tokmon.h"
@@ -100,6 +105,115 @@ void copy_to_clipboard(const std::string_view text) {
 }
 
 #if defined(_WIN32)
+HWND current_process_window();
+#endif
+
+std::string utf8_path(const std::wstring_view path) {
+#if defined(_WIN32)
+  if (path.empty()) return {};
+  const auto required = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, path.data(),
+      static_cast<int>(path.size()), nullptr, 0, nullptr, nullptr);
+  if (required <= 0) return {};
+  std::string result(static_cast<std::size_t>(required), '\0');
+  if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, path.data(),
+      static_cast<int>(path.size()), result.data(), required, nullptr, nullptr) != required)
+    return {};
+  return result;
+#else
+  (void)path;
+  return {};
+#endif
+}
+
+std::string choose_attachment(const bool directory) {
+#if defined(_WIN32)
+  if (directory) {
+    BROWSEINFOW browse{};
+    browse.hwndOwner = current_process_window();
+    browse.lpszTitle = L"选择要交给 Tokmon 的文件夹";
+    browse.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+    auto* selected = SHBrowseForFolderW(&browse);
+    if (!selected) return {};
+    wchar_t path[MAX_PATH]{};
+    const auto resolved = SHGetPathFromIDListW(selected, path) != FALSE;
+    CoTaskMemFree(selected);
+    return resolved ? utf8_path(path) : std::string{};
+  }
+  std::wstring path(32'768, L'\0');
+  OPENFILENAMEW dialog{};
+  dialog.lStructSize = sizeof(dialog);
+  dialog.hwndOwner = current_process_window();
+  dialog.lpstrFile = path.data();
+  dialog.nMaxFile = static_cast<DWORD>(path.size());
+  dialog.lpstrFilter = L"所有文件\0*.*\0\0";
+  dialog.lpstrTitle = L"选择要交给 Tokmon 的文件";
+  dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_EXPLORER;
+  if (!GetOpenFileNameW(&dialog)) return {};
+  path.resize(std::wcslen(path.c_str()));
+  return utf8_path(path);
+#else
+  (void)directory;
+  return {};
+#endif
+}
+
+std::filesystem::path path_from_utf8(const std::string_view value) {
+#if defined(_WIN32)
+  const auto* first = reinterpret_cast<const char8_t*>(value.data());
+  return std::filesystem::path(std::u8string(first, first + value.size()));
+#else
+  return std::filesystem::path(value);
+#endif
+}
+
+std::string path_to_utf8(const std::filesystem::path& value) {
+  const auto encoded = value.generic_u8string();
+  return std::string(reinterpret_cast<const char*>(encoded.data()), encoded.size());
+}
+
+std::optional<std::filesystem::path> normalize_workspace_path(
+    const std::string_view value,
+    const std::optional<std::filesystem::path>& relative_to = std::nullopt) {
+  if (value.empty() || value.size() > 4'096u || value.find('\0') != std::string_view::npos)
+    return std::nullopt;
+  std::error_code error;
+  auto path = path_from_utf8(value);
+  if (path.is_relative()) {
+    path = relative_to ? *relative_to / path : std::filesystem::absolute(path, error);
+    if (error) return std::nullopt;
+  }
+  const auto original = path;
+  path = std::filesystem::weakly_canonical(original, error);
+  if (error) {
+    error.clear();
+    path = std::filesystem::absolute(original, error).lexically_normal();
+    if (error) return std::nullopt;
+  }
+  return path.lexically_normal();
+}
+
+bool same_workspace(const std::filesystem::path& left,
+                    const std::filesystem::path& right) {
+  std::error_code left_error;
+  std::error_code right_error;
+  const auto normalized_left = std::filesystem::weakly_canonical(left, left_error);
+  const auto normalized_right = std::filesystem::weakly_canonical(right, right_error);
+  const auto& lhs = left_error ? left.lexically_normal() : normalized_left;
+  const auto& rhs = right_error ? right.lexically_normal() : normalized_right;
+#if defined(_WIN32)
+  auto lhs_text = lhs.wstring();
+  auto rhs_text = rhs.wstring();
+  std::ranges::transform(lhs_text, lhs_text.begin(),
+                         [](const wchar_t value) { return std::towlower(value); });
+  std::ranges::transform(rhs_text, rhs_text.begin(),
+                         [](const wchar_t value) { return std::towlower(value); });
+  return lhs_text == rhs_text;
+#else
+  return lhs == rhs;
+#endif
+}
+
+#if defined(_WIN32)
 HWND current_process_window() {
   struct Search {
     DWORD process_id;
@@ -113,6 +227,11 @@ HWND current_process_window() {
         GetWindowThreadProcessId(candidate, &process_id);
         if (process_id != search->process_id || !IsWindowVisible(candidate))
           return TRUE;
+        // Winit also exposes a same-sized "Thread Event Target" proxy HWND.
+        // It is not the Slint surface and cannot receive caption, close, or
+        // file-dialog ownership operations. The real desktop window carries
+        // the application title.
+        if (GetWindowTextLengthW(candidate) <= 0) return TRUE;
         RECT bounds{};
         if (!GetWindowRect(candidate, &bounds)) return TRUE;
         const auto width = std::max<LONG>(0, bounds.right - bounds.left);
@@ -127,6 +246,21 @@ HWND current_process_window() {
       },
       reinterpret_cast<LPARAM>(&search));
   return search.window;
+}
+
+void make_current_process_window_frameless() {
+  const auto hwnd = current_process_window();
+  if (!hwnd) return;
+  auto style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+  style &= ~(static_cast<LONG_PTR>(WS_CAPTION) |
+             static_cast<LONG_PTR>(WS_SYSMENU) |
+             static_cast<LONG_PTR>(WS_MINIMIZEBOX) |
+             static_cast<LONG_PTR>(WS_MAXIMIZEBOX));
+  style |= static_cast<LONG_PTR>(WS_THICKFRAME);
+  SetWindowLongPtrW(hwnd, GWL_STYLE, style);
+  SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+               SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+                   SWP_NOACTIVATE);
 }
 #endif
 
@@ -162,6 +296,217 @@ TimelineItem timeline_item(const tokmon::Photon& photon) {
   return item;
 }
 
+std::string payload_text(const tokmon::cbor::Value& payload,
+                         const std::string_view key) {
+  const auto* value = tokmon::cbor::find(payload, key);
+  if (!value) return {};
+  if (std::holds_alternative<std::string>(value->data))
+    return std::string(value->as_string());
+  return tokmon::cbor::diagnostic(*value);
+}
+
+std::string bounded_detail(std::string value, const std::size_t capacity = 220u) {
+  if (value.size() <= capacity) return value;
+  value.resize(capacity);
+  return display_utf8(value) + "…";
+}
+
+std::string joined_detail(std::initializer_list<std::string> parts) {
+  std::string result;
+  for (auto& part : parts) {
+    if (part.empty()) continue;
+    if (!result.empty()) result.append(" · ");
+    result.append(part);
+  }
+  return bounded_detail(std::move(result));
+}
+
+std::string act_field(const tokmon::Photon& photon, const std::string_view key) {
+  const auto* act = tokmon::cbor::find(photon.payload, "act");
+  return act ? payload_text(*act, key) : std::string{};
+}
+
+std::string attempt_detail(const tokmon::Photon& photon) {
+  const auto attempt = payload_text(photon.payload, "attempt");
+  return joined_detail({payload_text(photon.payload, "provider"),
+                        payload_text(photon.payload, "model"),
+                        attempt.empty() ? std::string{} : "第 " + attempt + " 次"});
+}
+
+std::optional<TimelineItem> conversation_workflow_item(const tokmon::Photon& photon) {
+  TimelineItem item;
+  item.time = time_label(photon.committed_at_ms);
+  item.kind = display_string(photon.kind);
+  item.progress = -1;
+  item.tone = "neutral";
+  std::string title;
+  std::string detail;
+
+  if (photon.kind == "model.requested") {
+    title = "准备模型请求";
+    detail = joined_detail({payload_text(photon.payload, "provider"),
+                            payload_text(photon.payload, "model")});
+  } else if (photon.kind == "model.dispatched") {
+    title = "已发送模型请求";
+    detail = attempt_detail(photon);
+    item.tone = "warning";
+  } else if (photon.kind == "model.reasoning-chunk") {
+    title = "模型正在组合透镜能力";
+    detail = bounded_detail(payload_text(photon.payload, "text"));
+    item.tone = "warning";
+  } else if (photon.kind == "model.tool-call") {
+    title = "模型选择透镜行动";
+    detail = joined_detail({payload_text(photon.payload, "tool"),
+                            payload_text(photon.payload, "schema")});
+    item.tone = "warning";
+  } else if (photon.kind == "model.completed") {
+    title = "模型请求完成";
+    detail = attempt_detail(photon);
+    item.tone = "success";
+  } else if (photon.kind == "model.failed") {
+    title = "模型请求失败";
+    detail = joined_detail({attempt_detail(photon),
+                            payload_text(photon.payload, "error")});
+    item.tone = "danger";
+  } else if (photon.kind == "act.started") {
+    title = "透镜开始行动：" + act_field(photon, "kind");
+    detail = joined_detail({act_field(photon, "target"), "Fact → Lens → Act"});
+    item.tone = "warning";
+  } else if (photon.kind == "act.completed") {
+    title = "透镜行动完成：" + act_field(photon, "kind");
+    detail = joined_detail({act_field(photon, "target"),
+                            payload_text(photon.payload, "detail")});
+    item.tone = "success";
+  } else if (photon.kind == "act.failed" || photon.kind == "act.rejected") {
+    title = photon.kind == "act.rejected" ? "透镜行动被拒绝" : "透镜行动失败";
+    const auto kind = act_field(photon, "kind");
+    if (!kind.empty()) title.append("：" + kind);
+    detail = joined_detail({act_field(photon, "target"),
+                            payload_text(photon.payload, "error")});
+    item.tone = "danger";
+  } else if (photon.kind == "tool.result") {
+    title = "透镜返回工具结果";
+    detail = joined_detail({payload_text(photon.payload, "tool"),
+                            payload_text(photon.payload, "result")});
+    item.tone = "success";
+  } else if (photon.kind == "assistant.message") {
+    title = "生成最终答复";
+    detail = joined_detail({payload_text(photon.payload, "provider"),
+                            payload_text(photon.payload, "model")});
+    item.tone = "success";
+  } else if (photon.kind == "workflow.defined") {
+    title = "透镜工作流已定义";
+    detail = payload_text(photon.payload, "name");
+  } else if (photon.kind == "workflow.step-dispatched") {
+    title = "工作流步骤开始";
+    detail = joined_detail({payload_text(photon.payload, "node_id"),
+                            payload_text(photon.payload, "kind")});
+    item.tone = "warning";
+  } else if (photon.kind == "workflow.step-completed") {
+    title = "工作流步骤完成";
+    detail = payload_text(photon.payload, "node_id");
+    item.tone = "success";
+  } else if (photon.kind == "workflow.step-failed" ||
+             photon.kind == "workflow.compensation-failed") {
+    title = photon.kind == "workflow.step-failed" ? "工作流步骤失败" : "补偿行动失败";
+    detail = joined_detail({payload_text(photon.payload, "node_id"),
+                            payload_text(photon.payload, "error")});
+    item.tone = "danger";
+  } else if (photon.kind == "workflow.step-skipped") {
+    title = "工作流步骤已跳过";
+    detail = payload_text(photon.payload, "node_id");
+  } else if (photon.kind == "workflow.step-retry-requested") {
+    title = "工作流步骤准备重试";
+    detail = payload_text(photon.payload, "node_id");
+    item.tone = "warning";
+  } else if (photon.kind == "workflow.compensation-dispatched") {
+    title = "补偿行动开始";
+    detail = payload_text(photon.payload, "node_id");
+    item.tone = "warning";
+  } else if (photon.kind == "workflow.compensation-completed") {
+    title = "补偿行动完成";
+    detail = payload_text(photon.payload, "node_id");
+    item.tone = "success";
+  } else if (photon.kind == "workflow.paused" || photon.kind == "workflow.resumed" ||
+             photon.kind == "workflow.cancelled") {
+    title = photon.kind == "workflow.paused" ? "工作流已暂停" :
+            photon.kind == "workflow.resumed" ? "工作流已恢复" : "工作流已取消";
+    detail = payload_text(photon.payload, "node_id");
+    item.tone = photon.kind == "workflow.resumed" ? "success" :
+                photon.kind == "workflow.cancelled" ? "danger" : "warning";
+  } else {
+    return std::nullopt;
+  }
+
+  item.title = display_string(title);
+  item.detail = display_string(detail);
+  return item;
+}
+
+std::vector<TimelineItem> conversation_workflow_from(
+    const std::vector<tokmon::Photon>& photons) {
+  std::uint64_t turn_start = 0;
+  for (auto iterator = photons.rbegin(); iterator != photons.rend(); ++iterator)
+    if (iterator->kind == "user.input" || iterator->kind == "user.message") {
+      turn_start = iterator->sequence;
+      break;
+    }
+  std::vector<TimelineItem> result;
+  for (const auto& photon : photons) {
+    if (photon.sequence < turn_start) continue;
+    if (auto item = conversation_workflow_item(photon)) result.push_back(std::move(*item));
+  }
+  return result;
+}
+
+struct TraceSummary final {
+  std::string duration{"0ms"};
+  int turns{0};
+  int calls{0};
+  std::int64_t input_tokens{0};
+  std::int64_t output_tokens{0};
+  std::string provider{"-"};
+  std::string model{"-"};
+  std::string result{"等待输入"};
+};
+
+std::string duration_label(const std::int64_t milliseconds) {
+  if (milliseconds < 1'000) return std::to_string(std::max<std::int64_t>(0, milliseconds)) + "ms";
+  const auto seconds = milliseconds / 1'000;
+  if (seconds < 60) return std::to_string(seconds) + "." +
+      std::to_string((milliseconds % 1'000) / 100) + "s";
+  const auto minutes = seconds / 60;
+  return std::to_string(minutes) + "m " + std::to_string(seconds % 60) + "s";
+}
+
+TraceSummary trace_summary_from(const std::vector<tokmon::Photon>& photons) {
+  TraceSummary summary;
+  if (!photons.empty())
+    summary.duration = duration_label(std::max<std::int64_t>(0,
+        photons.back().committed_at_ms - photons.front().committed_at_ms));
+  for (const auto& photon : photons) {
+    if (photon.kind == "user.input" || photon.kind == "user.message") ++summary.turns;
+    if (photon.kind == "model.dispatched") ++summary.calls;
+    if (photon.kind == "model.usage") {
+      if (const auto* value = tokmon::cbor::find(photon.payload, "input_tokens"))
+        summary.input_tokens += value->as_integer();
+      if (const auto* value = tokmon::cbor::find(photon.payload, "output_tokens"))
+        summary.output_tokens += value->as_integer();
+    }
+    if (photon.kind.starts_with("model.") || photon.kind == "assistant.message") {
+      const auto provider = payload_text(photon.payload, "provider");
+      const auto model = payload_text(photon.payload, "model");
+      if (!provider.empty()) summary.provider = provider;
+      if (!model.empty()) summary.model = model;
+    }
+    if (photon.kind == "assistant.message" || photon.kind == "model.completed")
+      summary.result = "已完成";
+    if (photon.kind == "model.failed" || photon.kind == "act.failed" ||
+        photon.kind == "act.rejected") summary.result = "执行失败";
+  }
+  return summary;
+}
+
 std::vector<CodeLine> code_lines_from(const std::vector<tokmon::Photon>& photons) {
   std::string content;
   for (auto iterator = photons.rbegin(); iterator != photons.rend(); ++iterator) {
@@ -175,22 +520,9 @@ std::vector<CodeLine> code_lines_from(const std::vector<tokmon::Photon>& photons
       break;
     }
   }
-  if (content.empty()) content = R"PY(from pathlib import Path
-from faster_whisper import WhisperModel
-
-def transcribe(audio: Path, output: Path) -> None:
-    model = WhisperModel("large-v3-turbo", device="cuda")
-    segments, info = model.transcribe(str(audio), beam_size=5)
-    lines: list[str] = []
-    for index, segment in enumerate(segments, start=1):
-        lines.extend([
-            str(index),
-            f"{segment.start:.3f} --> {segment.end:.3f}",
-            segment.text.strip(),
-            "",
-        ])
-    output.write_text("\n".join(lines), encoding="utf-8")
-)PY";
+  if (content.empty())
+    content = "// 当前会话尚无文件变更。\n"
+              "// 真实工具创建或修改文件后，内容会投影到此处。";
   std::vector<CodeLine> result;
   std::istringstream input(content);
   std::string text;
@@ -243,14 +575,148 @@ void refresh_navigation(
   }
 }
 
+NavigationItem make_navigation_item(const std::filesystem::path& assets,
+                                    std::string id, std::string kind,
+                                    std::string title, const int indent,
+                                    const bool selected, const bool expanded = true,
+                                    std::string ray = {}, std::string workspace = {}) {
+  NavigationItem item;
+  item.id = display_string(id);
+  item.ray = display_string(ray);
+  item.workspace = display_string(workspace);
+  item.kind = display_string(kind);
+  item.title = display_string(title);
+  item.indent = indent;
+  item.selected = selected;
+  item.expandable = kind != "session";
+  item.expanded = expanded;
+  const auto icon = kind == "group" ? "icon-06.svg" :
+                    kind == "project" ? "icon-08.svg" : "icon-09.svg";
+  item.icon = slint::Image::load_from_path(
+      slint::SharedString((assets / icon).string()));
+  return item;
+}
+
+tokmon::cbor::Value navigation_value(const std::vector<NavigationItem>& items) {
+  tokmon::cbor::Value::Array encoded;
+  encoded.reserve(items.size());
+  for (const auto& item : items)
+    encoded.push_back(tokmon::cbor::object({
+        {"id", std::string(item.id)}, {"ray", std::string(item.ray)},
+        {"workspace", std::string(item.workspace)},
+        {"kind", std::string(item.kind)},
+        {"title", std::string(item.title)},
+        {"indent", static_cast<std::int64_t>(item.indent)},
+        {"selected", item.selected}, {"expanded", item.expanded}}));
+  return encoded;
+}
+
+std::optional<std::vector<NavigationItem>> navigation_items(
+    const tokmon::cbor::Value& value, const std::filesystem::path& assets,
+    const std::filesystem::path& default_workspace) {
+  if (!value.as_array()) return std::nullopt;
+  std::vector<NavigationItem> items;
+  items.reserve(value.as_array()->size());
+  for (const auto& encoded : *value.as_array()) {
+    const auto* id = tokmon::cbor::find(encoded, "id");
+    const auto* kind = tokmon::cbor::find(encoded, "kind");
+    const auto* title = tokmon::cbor::find(encoded, "title");
+    const auto kind_text = kind ? std::string(kind->as_string()) : std::string{};
+    if (!id || !title || (kind_text != "group" && kind_text != "project" &&
+                          kind_text != "session"))
+      return std::nullopt;
+    const auto indent = tokmon::cbor::find(encoded, "indent")
+        ? static_cast<int>(tokmon::cbor::find(encoded, "indent")->as_integer()) : 0;
+    if (indent < 0 || indent > 8 || title->as_string().empty() ||
+        title->as_string().size() > 256)
+      return std::nullopt;
+    std::string workspace;
+    if (const auto* encoded_workspace = tokmon::cbor::find(encoded, "workspace")) {
+      if (!std::holds_alternative<std::string>(encoded_workspace->data) ||
+          encoded_workspace->as_string().size() > 4'096u ||
+          encoded_workspace->as_string().find('\0') != std::string_view::npos)
+        return std::nullopt;
+      workspace = std::string(encoded_workspace->as_string());
+    }
+    if (kind_text == "group") {
+      workspace.clear();
+    } else if (kind_text == "project" && workspace.empty()) {
+      workspace = path_to_utf8(default_workspace);
+    }
+    if (!workspace.empty()) {
+      auto normalized = normalize_workspace_path(workspace, default_workspace);
+      if (!normalized) return std::nullopt;
+      workspace = path_to_utf8(*normalized);
+    }
+    items.push_back(make_navigation_item(assets, std::string(id->as_string()), kind_text,
+        std::string(title->as_string()), indent,
+        tokmon::cbor::find(encoded, "selected") &&
+            tokmon::cbor::find(encoded, "selected")->as_bool(),
+        !tokmon::cbor::find(encoded, "expanded") ||
+            tokmon::cbor::find(encoded, "expanded")->as_bool(),
+        tokmon::cbor::find(encoded, "ray")
+            ? std::string(tokmon::cbor::find(encoded, "ray")->as_string())
+            : std::string{}, std::move(workspace)));
+  }
+  return items;
+}
+
+std::filesystem::path navigation_workspace_at(
+    const std::vector<NavigationItem>& items, const std::size_t index,
+    const std::filesystem::path& fallback) {
+  if (index >= items.size()) return fallback;
+  if (!std::string(items[index].workspace).empty()) {
+    if (auto normalized = normalize_workspace_path(
+            std::string(items[index].workspace), fallback))
+      return *normalized;
+  }
+  for (std::size_t previous = index; previous > 0;) {
+    --previous;
+    if (items[previous].indent >= items[index].indent) continue;
+    if (items[previous].kind == "project") {
+      if (auto normalized = normalize_workspace_path(
+              std::string(items[previous].workspace), fallback))
+        return *normalized;
+    }
+    break;
+  }
+  return fallback;
+}
+
+std::size_t navigation_ancestor_at(const std::vector<NavigationItem>& items,
+                                   const std::size_t index,
+                                   const std::string_view kind) {
+  if (index >= items.size()) return items.size();
+  if (std::string(items[index].kind) == kind) return index;
+  auto ancestor_indent = items[index].indent;
+  for (std::size_t previous = index; previous > 0;) {
+    --previous;
+    if (items[previous].indent >= ancestor_indent) continue;
+    ancestor_indent = items[previous].indent;
+    if (std::string(items[previous].kind) == kind) return previous;
+  }
+  return items.size();
+}
+
 class UiSnowController final {
  public:
   UiSnowController(std::filesystem::path endpoint,
+                   std::filesystem::path workspace,
+                   std::filesystem::path daemon_executable,
                    std::shared_ptr<slint::VectorModel<TimelineItem>> timeline,
+                   std::shared_ptr<slint::VectorModel<TimelineItem>> conversation_workflow,
                    std::shared_ptr<slint::VectorModel<CodeLine>> code,
+                   std::shared_ptr<slint::VectorModel<NavigationItem>> navigation_model,
+                   std::shared_ptr<std::vector<NavigationItem>> navigation,
+                   std::filesystem::path assets,
                    slint::ComponentWeakHandle<MainWindow> window)
-      : endpoint_(std::move(endpoint)), timeline_(std::move(timeline)),
-        code_(std::move(code)), window_(std::move(window)),
+      : endpoint_(endpoint), navigation_endpoint_(std::move(endpoint)),
+        current_workspace_(workspace), navigation_workspace_(std::move(workspace)),
+        daemon_executable_(std::move(daemon_executable)), timeline_(std::move(timeline)),
+        conversation_workflow_(std::move(conversation_workflow)), code_(std::move(code)),
+        navigation_model_(std::move(navigation_model)),
+        navigation_(std::move(navigation)), assets_(std::move(assets)),
+        window_(std::move(window)),
         worker_([this](std::stop_token stop) { run(stop); }) {}
 
   ~UiSnowController() {
@@ -276,9 +742,30 @@ class UiSnowController final {
   }
   void snapshot() { enqueue(Command{"snapshot", {}}); }
   void reconcile() { enqueue(Command{"reconcile", {}}); }
-  void new_session() { enqueue(Command{"new-session", {}}); }
-  void load_settings() { enqueue(Command{"settings-load", {}}); }
+  void new_session(std::string workspace = {}) {
+    Command command{"new-session", {}};
+    command.payload = tokmon::cbor::object({{"workspace", std::move(workspace)}});
+    enqueue(std::move(command));
+  }
+  void open_session(std::string ray, std::string workspace = {}) {
+    Command command{"open-session", std::move(ray)};
+    command.payload = tokmon::cbor::object({{"workspace", std::move(workspace)}});
+    enqueue(std::move(command));
+  }
+  void switch_workspace(std::string workspace) {
+    enqueue(Command{"switch-workspace", std::move(workspace)});
+  }
+  void load_settings(const bool include_navigation = false) {
+    Command command{"settings-load", {}};
+    command.payload = tokmon::cbor::object({{"include_navigation", include_navigation}});
+    enqueue(std::move(command));
+  }
   void load_providers() { enqueue(Command{"providers-load", {}}); }
+  void save_navigation() {
+    Command command{"navigation-save", {}};
+    command.payload = navigation_value(*navigation_);
+    enqueue(std::move(command));
+  }
   void save_settings(tokmon::cbor::Value values) {
     Command command{"settings-save", {}};
     command.payload = std::move(values);
@@ -287,6 +774,11 @@ class UiSnowController final {
   void configure_provider(tokmon::cbor::Value values) {
     Command command{"provider-configure", {}};
     command.payload = std::move(values);
+    enqueue(std::move(command));
+  }
+  void select_provider(std::string id) {
+    Command command{"provider-use", {}};
+    command.payload = tokmon::cbor::object({{"id", std::move(id)}});
     enqueue(std::move(command));
   }
   void store_provider_secret(std::string id, std::string secret) {
@@ -314,6 +806,31 @@ class UiSnowController final {
       commands_.push_back(std::move(command));
     }
     condition_.notify_one();
+  }
+
+  void bind_active_ray_to_selected_session() {
+    if (active_ray_.empty()) return;
+    const auto ray = active_ray_;
+    auto navigation = navigation_;
+    auto navigation_model = navigation_model_;
+    auto window = window_;
+    (void)slint::invoke_from_event_loop(
+        [this, ray, navigation, navigation_model, window] {
+          bool changed = false;
+          for (auto& item : *navigation) {
+            if (!item.selected || item.kind != "session") continue;
+            if (std::string(item.ray) != ray) {
+              item.ray = display_string(ray);
+              changed = true;
+            }
+            break;
+          }
+          if (!changed) return;
+          auto query = std::string{};
+          if (auto locked = window.lock()) query = std::string((*locked)->get_search_text());
+          refresh_navigation(navigation_model, navigation, std::move(query));
+          save_navigation();
+        });
   }
 
   std::vector<tokmon::Photon> photons_from(const tokmon::SnowMessage& response) {
@@ -375,18 +892,27 @@ class UiSnowController final {
     std::vector<TimelineItem> items;
     items.reserve(photons_.size());
     for (const auto& photon : photons_) items.push_back(timeline_item(photon));
+    auto workflow_items = conversation_workflow_from(photons_);
+    const auto trace = trace_summary_from(photons_);
     auto lines = code_lines_from(photons_);
     auto timeline = timeline_;
+    auto workflow = conversation_workflow_;
     auto code = code_;
     auto window = window_;
     std::string assistant;
+    std::string user_message;
     std::string state = "正在沿光路执行";
     for (auto iterator = photons_.rbegin(); iterator != photons_.rend(); ++iterator) {
       if (assistant.empty() && iterator->kind == "assistant.message") {
         if (const auto* text = tokmon::cbor::find(iterator->payload, "text"))
           assistant = std::string(text->as_string());
       }
-      if (iterator->kind == "ray.darkened" || iterator->kind == "act.completed") {
+      if (user_message.empty() &&
+          (iterator->kind == "user.input" || iterator->kind == "user.message")) {
+        if (const auto* text = tokmon::cbor::find(iterator->payload, "text"))
+          user_message = std::string(text->as_string());
+      }
+      if (iterator->kind == "ray.darkened" || iterator->kind == "assistant.message") {
         state = "审阅完成";
         break;
       }
@@ -397,25 +923,60 @@ class UiSnowController final {
           assistant = "真实工具已执行：" + tokmon::cbor::diagnostic(iterator->payload);
           break;
         }
+    if (assistant.empty())
+      for (auto iterator = photons_.rbegin(); iterator != photons_.rend(); ++iterator)
+        if (iterator->kind == "act.failed" || iterator->kind == "model.failed") {
+          const auto* detail = tokmon::cbor::find(iterator->payload, "detail");
+          if (!detail) detail = tokmon::cbor::find(iterator->payload, "error");
+          assistant = "执行失败：" + (detail
+              ? std::string(detail->as_string())
+              : std::string("请在轨迹中查看失败 Photon"));
+          state = "执行失败";
+          break;
+        }
     (void)slint::invoke_from_event_loop(
-        [timeline, code, window, items = std::move(items), lines = std::move(lines),
-         assistant = std::move(assistant), state = std::move(state)]() mutable {
+        [timeline, workflow, code, window, items = std::move(items),
+         workflow_items = std::move(workflow_items), lines = std::move(lines), trace,
+         assistant = std::move(assistant), user_message = std::move(user_message),
+         state = std::move(state), replace]() mutable {
           timeline->clear();
           for (auto& item : items) timeline->push_back(std::move(item));
+          workflow->clear();
+          for (auto& item : workflow_items) workflow->push_back(std::move(item));
           code->clear();
           for (auto& line : lines) code->push_back(std::move(line));
           if (auto locked = window.lock()) {
             auto handle = *locked;
-            if (!assistant.empty()) handle->set_assistant_text(display_string(assistant));
-            handle->set_status_text(display_string(state));
+            if (replace || !assistant.empty())
+              handle->set_assistant_text(display_string(assistant));
+            if (replace || !user_message.empty())
+             handle->set_last_message(display_string(user_message));
+           handle->set_status_text(display_string(state));
+            handle->set_trace_duration(display_string(trace.duration));
+            handle->set_trace_turns(trace.turns);
+            handle->set_trace_calls(trace.calls);
+            handle->set_trace_input_tokens(static_cast<int>(std::min<std::int64_t>(
+                trace.input_tokens, std::numeric_limits<int>::max())));
+            handle->set_trace_output_tokens(static_cast<int>(std::min<std::int64_t>(
+                trace.output_tokens, std::numeric_limits<int>::max())));
+            handle->set_trace_provider(display_string(trace.provider));
+            handle->set_trace_model(display_string(trace.model));
+            handle->set_trace_result(display_string(trace.result));
             handle->set_daemon_state("后台服务已连接");
           }
         });
   }
 
-  void apply_settings(tokmon::cbor::Value values) {
+  void apply_settings(tokmon::cbor::Value values, const bool include_navigation) {
     auto window = window_;
-    (void)slint::invoke_from_event_loop([window, values = std::move(values)] {
+    auto navigation = navigation_;
+    auto navigation_model = navigation_model_;
+    const auto assets = assets_;
+    const auto workspace = current_workspace_;
+    const auto navigation_workspace = navigation_workspace_;
+    (void)slint::invoke_from_event_loop([this, window, navigation, navigation_model, assets,
+                                         workspace, navigation_workspace, include_navigation,
+                                         values = std::move(values)] {
       auto locked = window.lock();
       if (!locked || !values.as_map()) return;
       auto handle = *locked;
@@ -443,10 +1004,10 @@ class UiSnowController final {
         handle->set_setting_main_model(*value); handle->set_model_name(*value);
       }
       if (auto value = string_value("reasoning")) handle->set_setting_reasoning(*value);
+      if (auto value = string_value("reasoning")) handle->set_effort(*value);
       if (auto value = string_value("command_approval")) handle->set_setting_command_approval(*value);
       if (auto value = bool_value("network")) handle->set_setting_network(*value);
       if (auto value = bool_value("high_risk_confirmation")) handle->set_setting_high_risk(*value);
-      if (auto value = string_value("workspace")) handle->set_setting_workspace(*value);
       if (auto value = string_value("index_mode")) handle->set_setting_index_mode(*value);
       if (auto value = bool_value("workspace_sync")) handle->set_setting_workspace_sync(*value);
       if (auto value = bool_value("git")) handle->set_setting_git(*value);
@@ -464,6 +1025,36 @@ class UiSnowController final {
       if (auto value = bool_value("sidebar_visible")) handle->set_sidebar_visible(*value);
       if (auto value = bool_value("code_visible")) handle->set_code_visible(*value);
       if (auto value = bool_value("task_expanded")) handle->set_task_expanded(*value);
+      handle->set_setting_workspace(display_string(path_to_utf8(workspace)));
+      if (include_navigation) {
+        const auto* encoded = tokmon::cbor::find(values, "navigation");
+        if (encoded) {
+          if (auto decoded = navigation_items(*encoded, assets, navigation_workspace)) {
+            *navigation = std::move(*decoded);
+            refresh_navigation(navigation_model, navigation,
+                               std::string(handle->get_search_text()));
+            save_navigation();
+            for (std::size_t index = 0; index < navigation->size(); ++index) {
+              const auto& item = (*navigation)[index];
+              if (item.selected && item.kind == "session") {
+                handle->set_session_title(item.title);
+                const auto target = path_to_utf8(navigation_workspace_at(
+                    *navigation, index, navigation_workspace));
+                switch_workspace(target);
+                open_session(std::string(item.ray), target);
+                break;
+              }
+              if (item.selected && item.kind == "project") {
+                const auto target = path_to_utf8(navigation_workspace_at(
+                    *navigation, index, navigation_workspace));
+                switch_workspace(target);
+                new_session(target);
+                break;
+              }
+            }
+          }
+        }
+      }
       handle->set_settings_status("已从项目级 .tokmon/config.yaml 载入");
     });
   }
@@ -473,15 +1064,32 @@ class UiSnowController final {
     const auto* providers = tokmon::cbor::find(payload, "providers");
     if (!selected || !providers || !providers->as_array()) return;
     tokmon::cbor::Value chosen;
-    for (const auto& provider : *providers->as_array())
+    std::vector<ModelChoice> choices;
+    for (const auto& provider : *providers->as_array()) {
+      const auto* id = tokmon::cbor::find(provider, "id");
+      const auto* model = tokmon::cbor::find(provider, "model");
+      const auto* enabled = tokmon::cbor::find(provider, "enabled");
+      if (id && model && (!enabled || enabled->as_bool())) {
+        ModelChoice choice;
+        choice.provider = display_string(id->as_string());
+        choice.model = display_string(model->as_string());
+        choice.label = display_string(std::string(id->as_string()) + " · " +
+                                      std::string(model->as_string()));
+        choices.push_back(std::move(choice));
+      }
       if (const auto* id = tokmon::cbor::find(provider, "id");
-          id && id->as_string() == selected->as_string()) { chosen = provider; break; }
+          id && id->as_string() == selected->as_string()) chosen = provider;
+    }
     if (!chosen.as_map()) return;
     auto window = window_;
-    (void)slint::invoke_from_event_loop([window, chosen = std::move(chosen)] {
+    (void)slint::invoke_from_event_loop(
+        [window, chosen = std::move(chosen), choices = std::move(choices)]() mutable {
       auto locked = window.lock();
       if (!locked) return;
       auto handle = *locked;
+      auto model = std::make_shared<slint::VectorModel<ModelChoice>>();
+      for (auto& choice : choices) model->push_back(std::move(choice));
+      handle->set_model_choices(model);
       const auto string_field = [&chosen](const char* key) {
         const auto* value = tokmon::cbor::find(chosen, key);
         return display_string(value ? value->as_string() : std::string_view{});
@@ -531,10 +1139,11 @@ class UiSnowController final {
     const auto settings = read_bool("open_settings");
     const auto close = read_bool("close_client");
     if (!copied.empty()) copy_to_clipboard(copied);
-    auto timeline = timeline_; auto code = code_; auto window = window_;
-    (void)slint::invoke_from_event_loop([timeline, code, window, display, title, model,
+    auto timeline = timeline_; auto workflow = conversation_workflow_;
+    auto code = code_; auto window = window_;
+    (void)slint::invoke_from_event_loop([timeline, workflow, code, window, display, title, model,
         provider, effort, access, clear, settings, close, copied]() {
-      if (clear) { timeline->clear(); code->clear(); }
+      if (clear) { timeline->clear(); workflow->clear(); code->clear(); }
       if (auto locked = window.lock()) {
         auto handle = *locked;
         if (!display.empty()) handle->set_assistant_text(display_string(display));
@@ -564,6 +1173,122 @@ class UiSnowController final {
     });
   }
 
+  void show_workspace_error(std::string message) {
+    TimelineItem item;
+    item.time = "now";
+    item.kind = "workspace.error";
+    item.title = "工作空间切换失败";
+    item.detail = display_string(message);
+    item.progress = -1;
+    item.tone = "danger";
+    auto model = timeline_;
+    auto window = window_;
+    (void)slint::invoke_from_event_loop(
+        [model, window, item = std::move(item), message = std::move(message)]() mutable {
+          model->push_back(std::move(item));
+          if (auto locked = window.lock()) {
+            (*locked)->set_daemon_state("原工作空间仍连接");
+            (*locked)->set_settings_status(display_string(message));
+          }
+        });
+  }
+
+  bool activate_workspace(const std::string_view requested) {
+    auto target = normalize_workspace_path(requested, navigation_workspace_);
+    if (!target) {
+      show_workspace_error("工作空间路径无效；请输入有效的文件夹路径");
+      return false;
+    }
+    std::error_code directory_error;
+    std::filesystem::create_directories(*target, directory_error);
+    if (directory_error) {
+      show_workspace_error("无法创建工作空间：" + directory_error.message());
+      return false;
+    }
+    if (same_workspace(*target, current_workspace_)) {
+      auto window = window_;
+      const auto display = display_string(path_to_utf8(*target));
+      (void)slint::invoke_from_event_loop([window, display] {
+        if (auto locked = window.lock()) {
+          (*locked)->set_setting_workspace(display);
+          (*locked)->set_daemon_state("当前工作空间已连接");
+        }
+      });
+      return true;
+    }
+
+    auto paths = tokmon::resolve_paths(*target);
+    if (!paths) {
+      show_workspace_error(paths.error().describe());
+      return false;
+    }
+    const auto target_endpoint = tokmon::workspace_snow_endpoint(
+        paths->run, paths->project.parent_path());
+
+    std::optional<tokmon::DaemonClientLease> next_lease;
+    bool started = false;
+    if (!same_workspace(*target, navigation_workspace_)) {
+      auto connected = tokmon::ensure_daemon(tokmon::DaemonLaunchOptions{
+          .endpoint = target_endpoint,
+          .workspace = *target,
+          .executable = daemon_executable_});
+      if (!connected) {
+        show_workspace_error("无法启动工作空间 tokmond：" + connected.error().describe());
+        return false;
+      }
+      started = connected->started;
+      auto attached = tokmon::DaemonClientLease::attach(tokmon::DaemonClientOptions{
+          .endpoint = target_endpoint,
+          .client_id = tokmon::make_id("desktop-workspace-client"),
+          .client_kind = "desktop",
+          .shutdown_when_idle = true,
+          .idle_timeout = std::chrono::milliseconds(250),
+          .lease_ttl = std::chrono::seconds(6)});
+      if (!attached) {
+        show_workspace_error("无法附着工作空间 tokmond：" + attached.error().describe());
+        return false;
+      }
+      next_lease.emplace(std::move(*attached));
+    }
+
+    if (active_workspace_lease_) {
+      (void)active_workspace_lease_->detach();
+      active_workspace_lease_.reset();
+    }
+    if (next_lease) active_workspace_lease_.emplace(std::move(*next_lease));
+    endpoint_ = target_endpoint;
+    current_workspace_ = *target;
+    cursor_ = 0;
+    active_ray_.clear();
+    photons_.clear();
+    last_error_.clear();
+
+    auto timeline = timeline_;
+    auto workflow = conversation_workflow_;
+    auto code = code_;
+    auto window = window_;
+    const auto display = display_string(path_to_utf8(*target));
+    const auto state = slint::SharedString(started
+        ? "工作空间后台服务已自动启动" : "工作空间后台服务已连接");
+    (void)slint::invoke_from_event_loop([timeline, workflow, code, window, display, state] {
+      timeline->clear();
+      workflow->clear();
+      code->clear();
+      if (auto locked = window.lock()) {
+        auto handle = *locked;
+        handle->set_assistant_text("");
+        handle->set_last_message("");
+        handle->set_status_text("等待输入");
+        handle->set_setting_workspace(display);
+        handle->set_settings_status("已切换工作空间；正在载入项目级 .tokmon/config.yaml");
+        handle->set_daemon_state(state);
+      }
+    });
+    load_settings(false);
+    load_providers();
+    return true;
+  }
+
   void run(const std::stop_token stop) {
     while (!stop.stop_requested()) {
       Command command;
@@ -575,17 +1300,40 @@ class UiSnowController final {
         if (queued) {
           command = std::move(commands_.front()); commands_.pop_front();
         } else {
-          command = Command{"snapshot", {}};
+          // A snapshot is explicitly queued at startup. Replaying the global
+          // tail while a new session is idle would overwrite its blank state
+          // with an unrelated older ray.
+          continue;
         }
       }
-      if (command.kind == "new-session") {
+      if (command.kind == "switch-workspace") {
+        (void)activate_workspace(command.text);
+        continue;
+      }
+      if (command.kind == "new-session" || command.kind == "open-session") {
+        if (const auto* expected = tokmon::cbor::find(command.payload, "workspace");
+            expected && !expected->as_string().empty()) {
+          auto target = normalize_workspace_path(expected->as_string(), navigation_workspace_);
+          if (!target || !same_workspace(*target, current_workspace_)) {
+            show_workspace_error(
+                "目标工作空间尚未连接；会话未打开，原工作空间与 Ray 保持不变");
+            continue;
+          }
+        }
         active_ray_.clear();
         photons_.clear();
-        auto timeline = timeline_; auto code = code_;
-        (void)slint::invoke_from_event_loop([timeline, code] {
-          timeline->clear(); code->clear();
+        auto timeline = timeline_; auto workflow = conversation_workflow_; auto code = code_;
+        auto window = window_;
+        (void)slint::invoke_from_event_loop([timeline, workflow, code, window] {
+          timeline->clear(); workflow->clear(); code->clear();
+          if (auto locked = window.lock()) {
+            (*locked)->set_assistant_text("");
+            (*locked)->set_last_message("");
+            (*locked)->set_status_text("等待输入");
+          }
         });
-        continue;
+        if (command.kind == "new-session" || command.text.empty()) continue;
+        active_ray_ = command.text;
       }
       tokmon::SnowMessage request;
       request.request_id = tokmon::next_snow_request_id();
@@ -613,8 +1361,18 @@ class UiSnowController final {
         else if (command.kind == "settings-save")
           request.payload = tokmon::cbor::object({{"action", "settings.save"},
               {"values", std::move(command.payload)}});
+        else if (command.kind == "navigation-save")
+          request.payload = tokmon::cbor::object({{"action", "navigation.save"},
+                                                  {"items", std::move(command.payload)}});
+        else if (command.kind == "open-session")
+          request.payload = tokmon::cbor::object({{"action", "surface"},
+                                                  {"ray", command.text}});
         else if (command.kind == "provider-configure") {
           request.payload = tokmon::cbor::object({{"action", "model.provider.configure"}});
+          if (const auto* values = command.payload.as_map())
+            for (const auto& [key, value] : *values) (*request.payload.as_map())[key] = value;
+        } else if (command.kind == "provider-use") {
+          request.payload = tokmon::cbor::object({{"action", "model.provider.use"}});
           if (const auto* values = command.payload.as_map())
             for (const auto& [key, value] : *values) (*request.payload.as_map())[key] = value;
         } else if (command.kind == "provider-secret") {
@@ -628,7 +1386,9 @@ class UiSnowController final {
         }
         else request.payload = tokmon::cbor::object({{"action", "lens.reconcile"}});
       }
-      tokmon::SnowClient client(endpoint_);
+      const auto& request_endpoint = command.kind == "navigation-save"
+          ? navigation_endpoint_ : endpoint_;
+      tokmon::SnowClient client(request_endpoint);
       auto response = client.request(request);
       if (!response) {
         const auto message = response.error().describe();
@@ -642,10 +1402,12 @@ class UiSnowController final {
         show_error(message ? std::string(message->as_string()) : "tokmond 拒绝了请求");
         continue;
       }
-      cursor_ = std::max(cursor_, response->cursor);
+      if (command.kind != "navigation-save")
+        cursor_ = std::max(cursor_, response->cursor);
       if (command.kind == "settings-load") {
+        const auto* include = tokmon::cbor::find(command.payload, "include_navigation");
         if (const auto* values = tokmon::cbor::find(response->payload, "values"))
-          apply_settings(*values);
+          apply_settings(*values, include && include->as_bool());
         continue;
       }
       if (command.kind == "providers-load") {
@@ -662,11 +1424,20 @@ class UiSnowController final {
         });
         continue;
       }
-      if (command.kind == "provider-configure" || command.kind == "provider-secret") {
+      if (command.kind == "navigation-save") continue;
+      if (command.kind == "open-session") {
+        auto active = photons_from_surface(*response);
+        apply_photons(std::move(active), true);
+        continue;
+      }
+      if (command.kind == "provider-configure" || command.kind == "provider-secret" ||
+          command.kind == "provider-use") {
         auto window = window_;
         const auto status = command.kind == "provider-configure"
             ? slint::SharedString("平台 YAML 已原子保存并完成热重载")
-            : slint::SharedString("API Key 已写入系统凭据库；未进入 YAML/Photon/日志");
+            : command.kind == "provider-secret"
+            ? slint::SharedString("API Key 已写入系统凭据库；未进入 YAML/Photon/日志")
+            : slint::SharedString("默认模型平台已切换并完成热重载");
         (void)slint::invoke_from_event_loop([window, status] {
           if (auto locked = window.lock()) (*locked)->set_settings_status(status);
         });
@@ -677,6 +1448,7 @@ class UiSnowController final {
       if (command.kind == "slash-command") {
         if (const auto* ray = tokmon::cbor::find(response->payload, "ray"))
           active_ray_ = std::string(ray->as_string());
+        bind_active_ray_to_selected_session();
         if (tokmon::cbor::find(response->payload, "clear_session") &&
             tokmon::cbor::find(response->payload, "clear_session")->as_bool()) {
           photons_.clear();
@@ -690,6 +1462,7 @@ class UiSnowController final {
       if (command.kind == "chat" || command.kind == "provider-test")
         if (const auto* ray = tokmon::cbor::find(response->payload, "ray"))
           active_ray_ = std::string(ray->as_string());
+      if (command.kind == "chat") bind_active_ray_to_selected_session();
       auto photons = photons_from(*response);
       if (!photons.empty())
         apply_photons(std::move(photons), response->kind == tokmon::SnowMessageKind::snapshot);
@@ -719,8 +1492,17 @@ class UiSnowController final {
   }
 
   std::filesystem::path endpoint_;
+  std::filesystem::path navigation_endpoint_;
+  std::filesystem::path current_workspace_;
+  std::filesystem::path navigation_workspace_;
+  std::filesystem::path daemon_executable_;
+  std::optional<tokmon::DaemonClientLease> active_workspace_lease_;
   std::shared_ptr<slint::VectorModel<TimelineItem>> timeline_;
+  std::shared_ptr<slint::VectorModel<TimelineItem>> conversation_workflow_;
   std::shared_ptr<slint::VectorModel<CodeLine>> code_;
+  std::shared_ptr<slint::VectorModel<NavigationItem>> navigation_model_;
+  std::shared_ptr<std::vector<NavigationItem>> navigation_;
+  std::filesystem::path assets_;
   slint::ComponentWeakHandle<MainWindow> window_;
   std::mutex mutex_;
   std::condition_variable_any condition_;
@@ -764,14 +1546,15 @@ int main(int argc, char** argv) {
 #endif
   const auto endpoint = tokmon::workspace_snow_endpoint(
       paths->run, paths->project.parent_path());
+#if defined(_WIN32)
+  const auto daemon_executable = executable.parent_path() / "tokmond.exe";
+#else
+  const auto daemon_executable = executable.parent_path() / "tokmond";
+#endif
   auto connected = tokmon::ensure_daemon(tokmon::DaemonLaunchOptions{
       .endpoint = endpoint,
       .workspace = paths->project.parent_path(),
-#if defined(_WIN32)
-      .executable = executable.parent_path() / "tokmond.exe"
-#else
-      .executable = executable.parent_path() / "tokmond"
-#endif
+      .executable = daemon_executable
   });
   if (!connected) {
 #if defined(_WIN32)
@@ -805,28 +1588,27 @@ int main(int argc, char** argv) {
     assets = std::filesystem::current_path() / "apps" / "tokmon-desktop" /
              "assets" / "figma";
 
-  const std::vector<NavigationItem> navigation = [&assets] {
+  const auto navigation_workspace = paths->project.parent_path();
+  const auto navigation_workspace_text = path_to_utf8(navigation_workspace);
+  const std::vector<NavigationItem> navigation = [&assets, &navigation_workspace_text] {
     std::vector<NavigationItem> items;
-    const auto add = [&items, &assets](const char* title, const char* icon, int indent,
-                              bool selected, bool expandable) {
-      NavigationItem item; item.title = title; item.indent = indent;
-      item.selected = selected; item.expandable = expandable;
-      item.expanded = true;
-      item.icon = slint::Image::load_from_path(
-          slint::SharedString((assets / icon).string()));
-      items.push_back(std::move(item));
+    const auto add = [&items, &assets, &navigation_workspace_text](
+                         const char* title, const char* kind, int indent, bool selected) {
+      items.push_back(make_navigation_item(assets, tokmon::make_id("navigation"), kind,
+          title, indent, selected, true, {},
+          std::string_view(kind) == "project" ? navigation_workspace_text : std::string{}));
     };
-    add("内容生产", "icon-06.svg", 0, false, true);
-    add("字幕制作空间", "icon-08.svg", 1, false, true);
-    add("生成音频时间轴字幕", "icon-09.svg", 2, true, false);
-    add("字幕校对优化", "icon-10.svg", 2, false, false);
-    add("批量字幕质检优化", "icon-10.svg", 2, false, false);
-    add("音频切片处理", "icon-12.svg", 1, false, true);
-    add("演示助手", "icon-13.svg", 0, false, true);
-    add("PPT 智绘项目", "icon-16.svg", 1, false, true);
-    add("PPT 大纲生成", "icon-17.svg", 2, false, false);
-    add("演讲稿润色", "icon-18.svg", 2, false, false);
-    add("旅行计划", "icon-19.svg", 0, false, true);
+    add("内容生产", "group", 0, false);
+    add("字幕制作空间", "project", 1, false);
+    add("生成音频时间轴字幕", "session", 2, true);
+    add("字幕校对优化", "session", 2, false);
+    add("批量字幕质检优化", "session", 2, false);
+    add("音频切片处理", "project", 1, false);
+    add("演示助手", "group", 0, false);
+    add("PPT 智绘项目", "project", 1, false);
+    add("PPT 大纲生成", "session", 2, false);
+    add("演讲稿润色", "session", 2, false);
+    add("旅行计划", "group", 0, false);
     return items;
   }();
   auto navigation_state =
@@ -834,20 +1616,24 @@ int main(int argc, char** argv) {
   auto nav_model = std::make_shared<slint::VectorModel<NavigationItem>>();
   refresh_navigation(nav_model, navigation_state, {});
   auto timeline_model = std::make_shared<slint::VectorModel<TimelineItem>>();
+  auto conversation_workflow_model =
+      std::make_shared<slint::VectorModel<TimelineItem>>();
   auto code_model = std::make_shared<slint::VectorModel<CodeLine>>();
   auto slash_model = std::make_shared<slint::VectorModel<SlashCommandItem>>();
   for (auto& line : code_lines_from({})) code_model->push_back(std::move(line));
   window->set_navigation(nav_model);
   window->set_timeline(timeline_model);
+  window->set_conversation_workflow(conversation_workflow_model);
   window->set_code_lines(code_model);
   window->set_slash_commands(slash_model);
   window->set_setting_workspace(
-      slint::SharedString(paths->project.parent_path().generic_string()));
+      display_string(navigation_workspace_text));
   window->set_daemon_state(connected->started ? "后台服务已自动启动" : "后台服务已连接");
-  UiSnowController controller(endpoint, timeline_model, code_model,
-                              slint::ComponentWeakHandle<MainWindow>(window));
-  controller.snapshot();
-  controller.load_settings();
+  UiSnowController controller(endpoint, navigation_workspace, daemon_executable,
+                               timeline_model, conversation_workflow_model, code_model, nav_model,
+                               navigation_state, assets,
+                               slint::ComponentWeakHandle<MainWindow>(window));
+  controller.load_settings(true);
   controller.load_providers();
   window->on_slash_query_changed([slash_model, window](const slint::SharedString& text) {
     const auto query = std::string(text);
@@ -866,8 +1652,12 @@ int main(int argc, char** argv) {
     }
     window->set_slash_menu_visible(visible && slash_model->row_count() != 0);
   });
-  window->on_send_message([&controller, timeline_model, window](const slint::SharedString& text) {
+  window->on_send_message([&controller, timeline_model, conversation_workflow_model, window](
+                              const slint::SharedString& text) {
     window->set_slash_menu_visible(false);
+    conversation_workflow_model->clear();
+    window->set_assistant_text("");
+    window->set_status_text("正在提交请求");
     TimelineItem item;
     item.time = time_label(std::chrono::duration_cast<std::chrono::milliseconds>(
                                std::chrono::system_clock::now().time_since_epoch())
@@ -890,27 +1680,67 @@ int main(int argc, char** argv) {
                       std::string(window->get_access_mode()),
                       std::string(window->get_effort()));
   });
-  window->on_new_session([&controller] { controller.new_session(); });
-  window->on_select_navigation([nav_model, navigation_state, window](int index) {
-    if (index < 0 || index >= static_cast<int>(nav_model->row_count())) return;
-    const auto clicked = *nav_model->row_data(index);
-    for (auto& item : *navigation_state) {
-      if (item.title != clicked.title || item.indent != clicked.indent) continue;
-      if (item.expandable) item.expanded = !item.expanded;
-      else {
-        for (auto& candidate : *navigation_state) candidate.selected = false;
-        item.selected = true;
-      }
+  window->on_new_session([navigation_state, window, navigation_workspace] {
+    std::size_t project = navigation_state->size();
+    for (std::size_t index = 0; index < navigation_state->size(); ++index) {
+      if (!(*navigation_state)[index].selected) continue;
+      project = navigation_ancestor_at(*navigation_state, index, "project");
       break;
     }
+    if (project == navigation_state->size())
+      for (std::size_t index = 0; index < navigation_state->size(); ++index)
+        if ((*navigation_state)[index].kind == "project") { project = index; break; }
+    const auto title = "新会话 " + std::to_string(
+        std::ranges::count_if(*navigation_state, [](const NavigationItem& item) {
+          return item.kind == "session";
+        }) + 1);
+    const auto workspace = navigation_workspace_at(
+        *navigation_state, project, navigation_workspace);
+    window->set_create_navigation_kind("session");
+    window->set_create_navigation_name(display_string(title));
+    window->set_create_navigation_workspace(display_string(path_to_utf8(workspace)));
+    window->set_create_navigation_error("");
+    window->set_create_navigation_open(true);
+  });
+  window->on_select_navigation([nav_model, navigation_state, window, &controller,
+                                 navigation_workspace](int index) {
+    if (index < 0 || index >= static_cast<int>(nav_model->row_count())) return;
+    const auto clicked = *nav_model->row_data(index);
+    const auto found = std::ranges::find(*navigation_state, clicked.id,
+                                         &NavigationItem::id);
+    if (found == navigation_state->end()) return;
+    const auto state_index = static_cast<std::size_t>(
+        std::distance(navigation_state->begin(), found));
+    for (auto& candidate : *navigation_state) candidate.selected = false;
+    found->selected = true;
+    if (found->expandable) found->expanded = !found->expanded;
+    const auto kind = std::string(found->kind);
+    const auto ray = std::string(found->ray);
+    const auto title = found->title;
+    const auto workspace = navigation_workspace_at(
+        *navigation_state, state_index, navigation_workspace);
     refresh_navigation(nav_model, navigation_state,
                        std::string(window->get_search_text()));
+    controller.save_navigation();
+    if (kind == "session") {
+      window->set_session_title(title);
+      const auto target = path_to_utf8(workspace);
+      controller.switch_workspace(target);
+      controller.open_session(ray, target);
+    } else if (kind == "project") {
+      window->set_session_title(title);
+      const auto target = path_to_utf8(workspace);
+      controller.switch_workspace(target);
+      controller.new_session(target);
+    }
   });
   window->on_search_changed([nav_model, navigation_state](const slint::SharedString& text) {
     refresh_navigation(nav_model, navigation_state, std::string(text));
   });
   window->on_add_navigation([nav_model, navigation_state, assets, window] {
     NavigationItem item;
+    item.id = display_string(tokmon::make_id("navigation"));
+    item.kind = "project";
     item.title = slint::SharedString(
         "新建项目 " + std::to_string(navigation_state->size() + 1));
     item.icon = slint::Image::load_from_path(
@@ -919,18 +1749,127 @@ int main(int argc, char** argv) {
     item.selected = false;
     item.expandable = true;
     item.expanded = true;
+    item.workspace = window->get_setting_workspace();
     navigation_state->push_back(std::move(item));
     refresh_navigation(nav_model, navigation_state,
                        std::string(window->get_search_text()));
   });
+  window->on_create_navigation([nav_model, navigation_state, assets, window, &controller,
+                                 navigation_workspace](
+      const slint::SharedString& kind_value, const slint::SharedString& title_value,
+      const slint::SharedString& workspace_value) -> bool {
+    const auto kind = std::string(kind_value);
+    const auto title = std::string(title_value);
+    if ((kind != "group" && kind != "project" && kind != "session") ||
+        title.empty() || title.size() > 256) {
+      window->set_create_navigation_error("名称必须为 1–256 个字符");
+      return false;
+    }
+    std::size_t parent = navigation_state->size();
+    if (kind == "project") {
+      for (std::size_t index = 0; index < navigation_state->size(); ++index) {
+        if (!(*navigation_state)[index].selected) continue;
+        parent = navigation_ancestor_at(*navigation_state, index, "group");
+        break;
+      }
+      if (parent == navigation_state->size())
+        for (std::size_t index = 0; index < navigation_state->size(); ++index)
+          if ((*navigation_state)[index].kind == "group") { parent = index; break; }
+    } else if (kind == "session") {
+      for (std::size_t index = 0; index < navigation_state->size(); ++index) {
+        if (!(*navigation_state)[index].selected) continue;
+        parent = navigation_ancestor_at(*navigation_state, index, "project");
+        break;
+      }
+      if (parent == navigation_state->size())
+        for (std::size_t index = 0; index < navigation_state->size(); ++index)
+          if ((*navigation_state)[index].kind == "project") { parent = index; break; }
+    }
+
+    std::filesystem::path workspace = navigation_workspace;
+    std::string stored_workspace;
+    if (kind != "group") {
+      auto normalized = normalize_workspace_path(
+          std::string(workspace_value), navigation_workspace);
+      if (!normalized) {
+        window->set_create_navigation_error("请选择或输入有效的工作空间路径");
+        return false;
+      }
+      std::error_code directory_error;
+      std::filesystem::create_directories(*normalized, directory_error);
+      if (directory_error) {
+        window->set_create_navigation_error(display_string(
+            "无法创建工作空间：" + directory_error.message()));
+        return false;
+      }
+      workspace = *normalized;
+      if (kind == "project") {
+        stored_workspace = path_to_utf8(workspace);
+      } else {
+        const auto inherited = navigation_workspace_at(
+            *navigation_state, parent, navigation_workspace);
+        if (!same_workspace(workspace, inherited))
+          stored_workspace = path_to_utf8(workspace);
+      }
+    }
+    for (auto& item : *navigation_state) item.selected = false;
+    auto created = make_navigation_item(assets,
+        tokmon::make_id(kind == "session" ? "session" : "navigation"), kind,
+        title, parent == navigation_state->size() ? 0 :
+            (*navigation_state)[parent].indent + 1, true, true, {}, stored_workspace);
+    std::size_t insertion = navigation_state->size();
+    if (parent != navigation_state->size()) {
+      (*navigation_state)[parent].expanded = true;
+      insertion = parent + 1;
+      while (insertion < navigation_state->size() &&
+             (*navigation_state)[insertion].indent > (*navigation_state)[parent].indent)
+        ++insertion;
+    }
+    navigation_state->insert(navigation_state->begin() +
+        static_cast<std::ptrdiff_t>(insertion), std::move(created));
+    refresh_navigation(nav_model, navigation_state, std::string(window->get_search_text()));
+    if (kind == "session") window->set_session_title(display_string(title));
+    else if (kind == "project") window->set_session_title(display_string(title));
+    controller.save_navigation();
+    if (kind != "group") {
+      const auto target = path_to_utf8(workspace);
+      controller.switch_workspace(target);
+      controller.new_session(target);
+    }
+    return true;
+  });
+  window->on_rename_session([navigation_state, nav_model, window, &controller](
+      const slint::SharedString& title_value) {
+    const auto title = std::string(title_value);
+    if (title.empty() || title.size() > 256) return;
+    for (auto& item : *navigation_state)
+      if (item.selected && item.kind == "session") { item.title = title_value; break; }
+    refresh_navigation(nav_model, navigation_state, std::string(window->get_search_text()));
+    controller.save_navigation();
+    controller.slash_command("/rename " + title,
+        std::string(window->get_setting_provider()), std::string(window->get_model_name()),
+        std::string(window->get_access_mode()), std::string(window->get_effort()));
+  });
+  window->on_choose_attachment([](bool directory) {
+    return display_string(choose_attachment(directory));
+  });
+  window->on_cancel_settings([&controller] {
+    controller.load_settings();
+    controller.load_providers();
+  });
   window->on_reconcile([&controller] { controller.reconcile(); });
   window->on_configure_provider([&controller](const slint::SharedString& id,
       const slint::SharedString& protocol, const slint::SharedString& endpoint,
-      const slint::SharedString& model, const slint::SharedString& auth, bool thinking) {
+      const slint::SharedString& model, const slint::SharedString& auth, bool thinking,
+      const slint::SharedString& effort) {
+    const auto effort_value = std::string(effort) == "低" ? "low" :
+        std::string(effort) == "标准" ? "medium" :
+        std::string(effort) == "高" ? "high" : "max";
     controller.configure_provider(tokmon::cbor::object({
         {"id", std::string(id)}, {"protocol", std::string(protocol)},
         {"endpoint", std::string(endpoint)}, {"model", std::string(model)},
         {"auth", std::string(auth)}, {"thinking", thinking}, {"default", true},
+        {"reasoning_effort", effort_value},
         {"max_output_tokens", 4096}, {"max_attempts", 2},
         {"retry_backoff_ms", 250}}));
   });
@@ -970,7 +1909,9 @@ int main(int argc, char** argv) {
         {"sidebar_visible", window->get_sidebar_visible()},
         {"code_visible", window->get_code_visible()},
         {"task_expanded", window->get_task_expanded()}}));
+    controller.select_provider(std::string(window->get_setting_provider()));
     window->set_model_name(window->get_setting_main_model());
+    window->set_effort(window->get_setting_reasoning());
     window->set_settings_status("正在通过 tokmond 原子保存…");
   });
   window->on_reset_settings([window] {
@@ -993,16 +1934,14 @@ int main(int argc, char** argv) {
     window->set_window_maximized(maximized);
   });
   window->on_close_window([] {
-#if defined(_WIN32)
-    if (const auto hwnd = current_process_window()) {
-      PostMessageW(hwnd, WM_CLOSE, 0, 0);
-      return;
-    }
-#endif
     slint::quit_event_loop();
   });
 
-  window->run();
-  (void)client_lease->detach();
+  window->show();
+#if defined(_WIN32)
+  make_current_process_window_frameless();
+#endif
+  slint::run_event_loop();
+  window->hide();
   return 0;
 }

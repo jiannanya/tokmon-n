@@ -150,6 +150,9 @@ if(TOKMON_BUILD_UI)
   add_executable(tokmon-desktop WIN32
     apps/tokmon-desktop/main.cpp)
   target_link_libraries(tokmon-desktop PRIVATE tokmon_core Slint::Slint)
+  if(WIN32)
+    target_link_libraries(tokmon-desktop PRIVATE comdlg32 shell32 ole32)
+  endif()
   if(MSVC)
     # Keep a GUI subsystem (no console window) while retaining the portable main().
     target_link_options(tokmon-desktop PRIVATE /ENTRY:mainCRTStartup)

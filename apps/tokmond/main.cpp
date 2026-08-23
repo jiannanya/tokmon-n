@@ -3,6 +3,7 @@
 #include <chrono>
 #include <csignal>
 #include <condition_variable>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <fstream>
@@ -213,7 +214,9 @@ tokmon::Result<void> update_project_settings(const std::filesystem::path& file,
     YAML::Node root;
     if (std::filesystem::exists(file)) root = YAML::LoadFile(file.string());
     if (!root || !root.IsMap()) root = YAML::Node(YAML::NodeType::Map);
+    const auto navigation = root["ui"] ? root["ui"]["navigation"] : YAML::Node{};
     root["ui"] = yaml_from_cbor(*values);
+    if (navigation) root["ui"]["navigation"] = navigation;
     std::error_code error;
     std::filesystem::create_directories(file.parent_path(), error);
     if (error)
@@ -305,8 +308,109 @@ tokmon::Result<void> publish_yaml(const std::filesystem::path& file,
   return {};
 }
 
+tokmon::Result<void> update_project_navigation(const std::filesystem::path& file,
+                                               const tokmon::cbor::Value& payload) {
+  const auto* items = tokmon::cbor::find(payload, "items");
+  if (!items || !items->as_array() || items->as_array()->size() > 2'000)
+    return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::schema_mismatch,
+                                             "navigation items must be a bounded array"));
+  static const std::set<std::string> kinds{"group", "project", "session"};
+  for (const auto& item : *items->as_array()) {
+    const auto* id = tokmon::cbor::find(item, "id");
+    const auto* kind = tokmon::cbor::find(item, "kind");
+    const auto* title = tokmon::cbor::find(item, "title");
+    const auto indent = tokmon::cbor::find(item, "indent");
+    const auto* ray = tokmon::cbor::find(item, "ray");
+    const auto* workspace = tokmon::cbor::find(item, "workspace");
+    const auto kind_text = kind ? std::string(kind->as_string()) : std::string{};
+    bool workspace_invalid = false;
+    if (workspace) {
+      workspace_invalid = !std::holds_alternative<std::string>(workspace->data) ||
+          workspace->as_string().size() > 4'096u ||
+          workspace->as_string().find('\0') != std::string_view::npos;
+      if (!workspace_invalid && !workspace->as_string().empty()) {
+        const auto text = workspace->as_string();
+        const auto* first = reinterpret_cast<const char8_t*>(text.data());
+        const auto workspace_path = std::filesystem::path(
+            std::u8string(first, first + text.size()));
+        workspace_invalid = workspace_path.is_relative() || kind_text == "group";
+      }
+    }
+    if (!id || id->as_string().empty() || id->as_string().size() > 256 || !kind ||
+        !kinds.contains(kind_text) || !title ||
+        title->as_string().empty() || title->as_string().size() > 256 || !indent ||
+        indent->as_integer(-1) < 0 || indent->as_integer() > 8 ||
+        (ray && ray->as_string().size() > 256) || workspace_invalid)
+      return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::schema_mismatch,
+                                               "navigation item is invalid"));
+  }
+  try {
+    YAML::Node root;
+    if (std::filesystem::exists(file)) root = YAML::LoadFile(file.string());
+    if (!root || !root.IsMap()) root = YAML::Node(YAML::NodeType::Map);
+    root["ui"]["navigation"] = yaml_from_cbor(*items);
+    return publish_yaml(file, root, "desktop navigation");
+  } catch (const YAML::Exception& exception) {
+    return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::schema_mismatch,
+        "cannot update desktop navigation: " + std::string(exception.what())));
+  }
+}
+
 std::string provider_secret_ref(const std::string_view id) {
   return "model-provider/" + std::string(id);
+}
+
+std::optional<std::string> secret_environment_value(const std::string& name) {
+  if (name.empty()) return std::nullopt;
+  if (const auto* value = std::getenv(name.c_str()); value && *value != '\0')
+    return std::string(value);
+#if defined(_WIN32)
+  const auto wide_name = std::wstring(name.begin(), name.end());
+  const auto read_registry = [&wide_name](HKEY root, const wchar_t* path)
+      -> std::optional<std::string> {
+    DWORD type = 0;
+    DWORD bytes = 0;
+    if (RegGetValueW(root, path, wide_name.c_str(), RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ,
+                     &type, nullptr, &bytes) != ERROR_SUCCESS || bytes <= sizeof(wchar_t))
+      return std::nullopt;
+    std::wstring wide(bytes / sizeof(wchar_t), L'\0');
+    if (RegGetValueW(root, path, wide_name.c_str(), RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ,
+                     &type, wide.data(), &bytes) != ERROR_SUCCESS)
+      return std::nullopt;
+    while (!wide.empty() && wide.back() == L'\0') wide.pop_back();
+    if (wide.empty()) return std::nullopt;
+    const auto required = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide.data(),
+                                               static_cast<int>(wide.size()), nullptr, 0,
+                                               nullptr, nullptr);
+    if (required <= 0) return std::nullopt;
+    std::string value(static_cast<std::size_t>(required), '\0');
+    if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide.data(),
+                            static_cast<int>(wide.size()), value.data(), required,
+                            nullptr, nullptr) != required)
+      return std::nullopt;
+    return value;
+  };
+  if (auto value = read_registry(HKEY_CURRENT_USER, L"Environment")) return value;
+  return read_registry(HKEY_LOCAL_MACHINE,
+      L"SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment");
+#else
+  return std::nullopt;
+#endif
+}
+
+tokmon::Result<void> bootstrap_environment_credentials(
+    const tokmon::RuntimeConfig& config) {
+  for (const auto& [id, provider] : config.model_providers) {
+    (void)id;
+    if (provider.secret_env.empty() || provider.secret_ref.empty() || !provider.enabled)
+      continue;
+    auto secret = secret_environment_value(provider.secret_env);
+    if (!secret) continue;
+    auto stored = tokmon::builtin::keyring_write(provider.secret_ref, "model-api", *secret);
+    std::fill(secret->begin(), secret->end(), '\0');
+    if (!stored) return tl::unexpected(stored.error());
+  }
+  return {};
 }
 
 tokmon::Result<void> update_project_model_provider(const std::filesystem::path& file,
@@ -406,7 +510,9 @@ tokmon::cbor::Value provider_value(const tokmon::ModelProviderConfig& provider,
       {"max_output_tokens", provider.max_output_tokens},
       {"max_attempts", provider.max_attempts},
       {"retry_backoff_ms", provider.retry_backoff_ms},
-      {"credential_present", credential_present}});
+      {"credential_present", credential_present},
+      {"credential_source", provider.secret_env.empty() ? "operating-system-vault"
+                                                          : "environment-to-vault"}});
 }
 
 tokmon::Result<tokmon::cbor::Value> resolved_model_context(
@@ -419,11 +525,17 @@ tokmon::Result<tokmon::cbor::Value> resolved_model_context(
     return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::not_found,
         "requested model provider is not configured or is disabled"));
   const auto& provider = found->second;
+  const auto requested_effort = tokmon::cbor::find(payload, "effort")
+      ? std::string(tokmon::cbor::find(payload, "effort")->as_string()) : std::string{};
+  const auto normalized_effort = requested_effort == "较低" || requested_effort == "低"
+      ? std::string("low") : requested_effort == "中等" || requested_effort == "标准"
+      ? std::string("medium") : requested_effort == "高" ? std::string("high") :
+        requested_effort == "最高" ? std::string("max") : provider.reasoning_effort;
   auto context = tokmon::cbor::object({
       {"provider", provider.id}, {"protocol", provider.protocol},
       {"endpoint", provider.endpoint}, {"model", provider.model},
       {"auth", provider.auth}, {"allow_anonymous", provider.allow_anonymous},
-      {"thinking", provider.thinking}, {"reasoning_effort", provider.reasoning_effort},
+      {"thinking", provider.thinking}, {"reasoning_effort", normalized_effort},
       {"max_output_tokens", provider.max_output_tokens},
       {"max_attempts", provider.max_attempts},
       {"retry_backoff_ms", provider.retry_backoff_ms},
@@ -901,6 +1013,9 @@ int main(int argc, char** argv) {
   if (auto opened = runtime.open(workspace, "tokmond"); !opened) {
     std::cerr << opened.error().describe() << '\n'; return 2;
   }
+  if (auto imported = bootstrap_environment_credentials(runtime.config()); !imported) {
+    std::cerr << imported.error().describe() << '\n'; return 2;
+  }
   if (once) return runtime.verify() ? 0 : 1;
 
   std::mutex runtime_mutex;
@@ -1118,6 +1233,26 @@ int main(int argc, char** argv) {
           .request_id = request.request_id, .cursor = request.cursor,
           .payload = tokmon::cbor::object({{"saved", true}, {"scope", "project"},
               {"path", (runtime.config().paths.project / "config.yaml").generic_string()}})});
+    }
+    if (action == "navigation.save") {
+      const auto file = runtime.config().paths.project / "config.yaml";
+      auto saved = update_project_navigation(file, request.payload);
+      if (!saved) return snow_error(request, saved.error());
+      const auto count = tokmon::cbor::find(request.payload, "items") &&
+          tokmon::cbor::find(request.payload, "items")->as_array()
+          ? static_cast<std::int64_t>(
+                tokmon::cbor::find(request.payload, "items")->as_array()->size()) : 0;
+      auto recorded = runtime.store().append(tokmon::PhotonDraft{
+          .ray = tokmon::make_id("desktop-navigation-ray"),
+          .kind = "ui.navigation.changed",
+          .schema = "tokmon.ui.navigation.changed.v1",
+          .payload = tokmon::cbor::object({{"items", count}, {"scope", "project"},
+              {"workspace", runtime.config().paths.project.parent_path().generic_string()}})});
+      if (!recorded) return snow_error(request, recorded.error());
+      return remember(tokmon::SnowMessage{.kind = tokmon::SnowMessageKind::intent_result,
+          .request_id = request.request_id, .cursor = recorded->sequence,
+          .payload = tokmon::cbor::object({{"saved", true}, {"items", count},
+              {"photon", tokmon::to_cbor(*recorded)}})});
     }
     if (action == "model.providers") {
       std::set<std::string> credentials;

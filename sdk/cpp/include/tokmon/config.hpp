@@ -60,6 +60,10 @@ struct ModelProviderConfig {
   std::string endpoint;
   std::string model;
   std::string secret_ref;
+  // Optional name of an environment variable used only to bootstrap the
+  // operating-system credential vault. The variable value never enters
+  // configuration, Facts, Acts, Photons, process arguments, or logs.
+  std::string secret_env;
   std::string auth{"protocol-default"};
   bool enabled{true};
   bool allow_anonymous{false};

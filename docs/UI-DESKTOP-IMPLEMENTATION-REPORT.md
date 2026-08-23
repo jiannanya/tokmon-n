@@ -1,5 +1,7 @@
 # Tokmon Desktop UI、进程生命周期与端到端实现验收报告
 
+> 2026-08-23 最新增补：真实 OpenCode、项目/分组/会话持久化、会话 Ray 恢复、原生 UI 自动化及 `84/84` 回归结果见 [OPENCODE-DESKTOP-ACCEPTANCE-REPORT.md](OPENCODE-DESKTOP-ACCEPTANCE-REPORT.md)。本文中标注为早期 mock、演示文件名或 `83/83` 的段落仅保留实现演进记录，不代表当前状态。
+
 ## 斜杠命令选择器补充（2026-08-23）
 
 输入框以 `/` 开头且尚未进入参数区时，Desktop 从共享命令目录实时筛选最多 8 条结果。浮层展示规范用法、中文说明和类别，支持悬停高亮与点击回填；输入空格、发送或选择后自动收起。所有命令由 `UiSnowController` 发送给 `tokmond`，结果再投影回对话、轨迹、模型/权限/强度状态、设置弹窗或系统剪贴板。
@@ -19,32 +21,34 @@
 
 - `tokmon-desktop` 是原生无边框 Slint 工作台，完成主界面和八个设置页；
 - 搜索、树折叠、新建项目/会话、标题编辑、左右面板、页签、步骤、输入发送、选择菜单、文件菜单、问题面板和设置弹窗均有可操作状态；
+- 新建项目/会话弹窗可输入或通过原生目录对话框选择工作空间；项目拥有目录，会话默认继承并可覆盖，节点切换会真实切换对应 tokmond、Snow endpoint、Ray 和文件根目录；
 - `tokmon` 与 `tokmon-desktop` 均可自行连接或后台拉起同目录 `tokmond`，不依赖 `tokmon-launcher`；
 - Desktop 关闭后释放带心跳的客户端租约；最后一个客户端和活动工作离开后，对应 workspace daemon 自动优雅停机；
 - CLI 与 Desktop 的输入都进入真实 Nyxia 光路。模型 provider 暂用允许的 deterministic mock，但模型产生的 `model.tool-call` 会路由到真实 Calculator Lens，实际执行后再由模型生成最终回答；
 - Photon 事实流仍只追加。UI、设置和客户端生命周期没有获得修改、删除或撤销历史 Photon 的旁路；
-- Windows Slint 构建成功，UI-off 构建成功，当前自动化测试 `83/83` 通过；
+- Windows Slint 构建成功，UI-off 构建成功，当前自动化测试 `84/84` 通过；
 - 主界面及八个设置页均完成 2160×1350 物理像素实机截图，八个设置页启动、渲染、关闭的 stderr 均为 0 字节。
 
 ## 2. Figma 对齐基线
 
 实现逐节点读取并对齐以下设计画面：
 
-| 画面 | Figma node |
+| 画面 | 新版 Figma node |
 | --- | --- |
-| 主工作台 | `1:5` |
-| 通用设置 | `55:893` |
-| 智能体与模型 | `55:1979` |
-| 权限与安全 | `55:3066` |
-| 工作区 | `55:4145` |
-| 通知 | `55:5220` |
-| 外观 | `55:6292` |
-| 快捷键 | `55:7384` |
-| 账户 | `55:8488` |
+| 主工作台 | `1:3` |
+| 轨迹 | `1:907` |
+| 通用设置 | `1:2043` |
+| 智能体与模型 | `2:3360` |
+| 权限与安全 | `2:4447` |
+| 工作区 | `2:5526` |
+| 通知 | `2:6601` |
+| 外观 | `2:7673` |
+| 快捷键 | `2:8765` |
+| 账户 | `2:9869` |
 
 设置弹窗按设计采用 1120×720 逻辑像素：顶部 56、底部 56、左侧导航 220、右侧概览 230，中间为内容区。主窗口基准是 1440×900 逻辑像素，支持缩放、最小尺寸和左右面板拖拽。
 
-视觉系统保持设计稿的暖白表面、stone 灰文字、amber/orange 强调色、1px 分隔线、小圆角与低层级阴影。窗口使用 `no-frame: true`，顶部 30px 是自绘标题栏，包含拖动、最小化、最大化/还原和关闭。
+视觉系统采用新版设计稿的暖白表面、stone 灰文字、低饱和棕橙强调色、1px 分隔线、16px 卡片圆角与低层级阴影。主要 token 为 `#f9f9f8`、`#fbfbf9`、`#fdfbf7`、`#f7efe5`、`#8b5229`、`#ebdcd0`；开关使用 `#c86a28`。窗口使用 `no-frame: true`，并在 Windows 显示后移除原生 caption style；顶部 30px 是唯一的自绘标题栏，包含拖动、最小化、最大化/还原和关闭。
 
 ## 3. 主工作台实现
 
@@ -65,12 +69,13 @@
 | --- | --- | --- | --- |
 | 搜索 | 双向绑定搜索文本，输入时刷新导航模型 | 过滤自身命中项，并保留含命中后代的父节点 | PASS |
 | 树折叠 | 点击可展开节点修改 `expanded` | 无搜索时按祖先状态隐藏后代 | PASS |
-| 新建项目 | 导航标题栏 `+` 追加新根节点 | 立即刷新投影模型 | PASS |
-| 新建会话 | 顶部按钮触发 `new-session` | 清空活动 ray 和本地 projection cache，不删除历史 Photon | PASS |
+| 新建项目 | 导航标题栏 `+` 打开名称/工作空间弹窗 | 写入规范化绝对路径并切换隔离 tokmond | PASS |
+| 新建会话 | 顶部按钮打开会话/工作空间弹窗 | 默认继承父项目，可覆盖；创建后清空活动 ray，不删除历史 Photon | PASS |
+| 切换项目/会话 | 点击树节点解析其有效工作空间 | 原子交接 daemon 租约；恢复对应 Ray 或进入空会话 | PASS |
 | 标题编辑 | 铅笔按钮在 Text/LineEdit 间切换 | Enter 接受并保留新标题 | PASS |
 | 左右面板开合 | 标题栏与面板关闭按钮双向控制 | 中央区重新布局 | PASS |
 | 面板调整 | 两条 6px resize handle | 限制在安全最小/最大宽度内 | PASS |
-| 对话/轨迹 | 中央页签切换 | 对话显示用户与最终答复；轨迹显示 Photon timeline | PASS |
+| 对话/轨迹 | 中央页签切换 | 对话显示用户、最终答复和当前回合真实工作流；轨迹显示统计、三泳道时间条、Photon 事件表与 Request 摘要 | PASS |
 | 代码/文件 | 右侧页签与文件菜单切换 | Python 代码模型和 `output.srt` 预览状态分离 | PASS |
 | 步骤收起 | 任务卡头部控制展开状态 | 折叠为 42px，展开显示可滚动步骤 | PASS |
 | 输入发送 | composer 双向绑定，发送后清空 | 携带模型、权限和强度，经 Snow 提交 daemon | PASS |
@@ -182,6 +187,21 @@ Termon/Slint 只保存可丢弃的 projection cache。发送消息、保存设�
 
 Windows CLI 同时改用 `CommandLineToArgvW` 和明确 UTF-8 转换，因此新的中文输入不会再写入 mojibake 或非法字节。
 
+### 7.1 两种工作流投影
+
+Desktop 不再把“模型返回”简化成单一结果字符串：
+
+```text
+当前回合对话投影
+  = 从最后一个 user.input/user.message 起
+    筛选 model.* / act.* / tool.result / assistant.message / workflow.*
+
+完整轨迹投影
+  = 当前 Ray Surface 中的全部已提交 Photon
+```
+
+因此用户可以在对话页快速看到“已发送模型请求 → 模型组合透镜能力 → 透镜行动 → 工具结果 → 最终答复”，也可以进入轨迹页查看完整不可变证据。折叠工作流只改变本地展示状态，不会删除或修改任何 Photon。
+
 ## 8. 编译、测试与实机证据
 
 ### 8.1 构建
@@ -200,7 +220,7 @@ cmake --build build/portable-debug --target tokmond tokmon -j 4
 ctest --test-dir build/windows-msvc-ui-debug --output-on-failure -C Debug
 ```
 
-当前回归结果：`83/83` 通过，`0` 失败；新增客户端租约 attach/heartbeat/detach/pin 合约测试。
+当前回归结果：`84/84` 通过，`0` 失败；包含客户端租约 attach/heartbeat/detach/pin 合约测试。
 
 本轮新增或强化的自动测试包括：
 
@@ -244,7 +264,7 @@ ctest --test-dir build/windows-msvc-ui-debug --output-on-failure -C Debug
 | UI 是否只做投影而不旁路修改 Photon | PASS |
 | 配置是否使用项目级 `.tokmon/config.yaml` YAML | PASS |
 | 错误与日志库是否保持 `tl::expected` / spdlog | PASS |
-| 自动化测试是否全绿 | PASS，83/83 |
+| 自动化测试是否全绿 | PASS，84/84 |
 | 是否需要用户补 Rust 工具链 | 不需要 |
 
 ## 10. 关键实现入口
