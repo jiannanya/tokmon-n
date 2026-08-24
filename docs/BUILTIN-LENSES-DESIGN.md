@@ -61,7 +61,7 @@ PhotonDraft → Nyxia append gate → new committed Fact / Photon
 
 - C++ 标准固定为 C++20；
 - 可预期失败统一使用 `tl::expected<T, Error>`；
-- C++ 进程统一通过 `spdlog` 输出结构化日志；
+- C++ 进程统一通过 `chLog` 输出结构化日志；
 - Tokmon 自有运行配置、透镜 manifest、策略和工作流使用 YAML；
 - YAML 未知字段、重复 key、类型错误和非法路径必须报错，不能静默忽略；
 - Node.js 与 CPython 透镜运行在独立 Worker 中，可以使用锁定并离线物化的 npm/PyPI 依赖；
@@ -243,7 +243,7 @@ profiles:
 | 14 | Cista | 正式透镜 | OS 凭据库、SecretRef、短时绑定和跨出口脱敏 |
 | 15 | Chora | 正式透镜 | SQLite WAL、版本化 KV、加密 Blob、归档和备份 |
 | 16 | Tracket | 正式透镜 | 因果验证、Raw Trace Vault、R0—R3 回放和导出 |
-| 17 | Nota | 正式透镜 | spdlog 汇聚、OpenTelemetry、指标、Span 和实时诊断 |
+| 17 | Nota | 正式透镜 | chLog 汇聚、OpenTelemetry、指标、Span 和实时诊断 |
 | 18 | Cove | 正式透镜 | 工作区树、文件监听、Git 快照、前后镜像和 artifact |
 | 19 | Snow | 正式透镜 | headless CLI、stdio、本地协议、doctor 和脚本入口 |
 | 20 | Termon | 正式透镜 | Slint Workbench、会话、轨迹、上下文、审批和诊断界面 |
@@ -872,7 +872,7 @@ R3 永远创建新 stream；任何级别都不能向源 stream 插入、替换�
 
 ### 21.1 功能职责
 
-- `NOT-F-001`：统一接收 spdlog 结构化事件，并附加 ray/step/photon/act/beam/lens/generation/epoch correlation；
+- `NOT-F-001`：统一接收 chLog 结构化事件，并附加 ray/step/photon/act/beam/lens/generation/epoch correlation；
 - `NOT-F-002`：生成 engine、model、tool、workflow、worker、DB、Snow 和 UI 的 OpenTelemetry Span；
 - `NOT-F-003`：聚合 latency、throughput、errors、queue、bytes、token、cost、cache 和 sandbox 指标；
 - `NOT-F-004`：支持 OTLP、Jaeger/Zipkin 兼容 trace 路径和 Prometheus metrics endpoint；

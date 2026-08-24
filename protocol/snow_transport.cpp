@@ -20,9 +20,8 @@
 #include <unistd.h>
 #endif
 
-#include <spdlog/spdlog.h>
-
 #include "tokmon/hash.hpp"
+#include "tokmon/logging.hpp"
 
 namespace tokmon {
 namespace {
@@ -333,7 +332,7 @@ struct SnowServer::Impl {
           PIPE_UNLIMITED_INSTANCES, static_cast<DWORD>(snow_max_payload_bytes),
           static_cast<DWORD>(snow_max_payload_bytes), 0, nullptr);
       if (channel == invalid_channel) {
-        spdlog::error("Snow CreateNamedPipe failed: {}", GetLastError()); break;
+        log_error("Snow CreateNamedPipe failed: {}", GetLastError()); break;
       }
       const auto connected = ConnectNamedPipe(channel, nullptr) != FALSE ||
                              GetLastError() == ERROR_PIPE_CONNECTED;

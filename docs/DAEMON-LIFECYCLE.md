@@ -1,7 +1,7 @@
 # Tokmon 客户端租约与 `tokmond` 生命周期
 
 > 产品题记：**A Lens to Them All**  
-> 实现标准：C++20、`tl::expected`、spdlog  
+> 实现标准：C++20、`tl::expected`、chLog
 > 更新日期：2026-08-23
 
 ## 1. 目标

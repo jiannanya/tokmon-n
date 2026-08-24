@@ -9,7 +9,7 @@
 #include <thread>
 #include <vector>
 
-#include <catch2/catch_test_macros.hpp>
+#include "tests/support/test_framework.hpp"
 
 #include "tokmon/tokmon.hpp"
 #include "lenses/common/http_client.hpp"

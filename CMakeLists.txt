@@ -1,10 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
 
-# yaml-cpp 0.8.0 still declares compatibility with very old CMake releases.
-# CMake 4 removes those policy defaults unless consumers select a floor.
-set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING
-  "Oldest dependency policy version accepted by this build")
-
 project(tokmon VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -19,6 +14,7 @@ option(TOKMON_BUILD_SCRIPT_SDK_TESTS "Enable Node.js and CPython SDK tests" ON)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(Dependencies)
+include(ReleaseOptimization)
 
 if(MSVC)
   add_compile_options(/W4 /permissive- /utf-8 /Zc:__cplusplus)
@@ -33,6 +29,7 @@ add_library(tokmon_core STATIC
   nyxia/base/ids.cpp
   nyxia/base/json.cpp
   nyxia/base/logging.cpp
+  nyxia/base/yaml.cpp
   nyxia/base/value_types.cpp
   nyxia/config/config.cpp
   nyxia/engine/act_pipeline.cpp
@@ -89,9 +86,9 @@ target_include_directories(tokmon_core
 target_link_libraries(tokmon_core
   PUBLIC
     tl::expected
-    spdlog::spdlog
-    nlohmann_json::nlohmann_json
-    yaml-cpp::yaml-cpp
+    chlog::chlog
+    chjson
+    chyaml::chyaml
   PRIVATE
     tokmon_sqlite3)
 
@@ -185,6 +182,16 @@ if(TOKMON_BUILD_UI)
       COMMAND_EXPAND_LISTS)
   endif()
 endif()
+
+set(TOKMON_RELEASE_TARGETS
+  tokmon_sqlite3 tokmon_core tokmond tokmon tokmon-launcher tokmon-lens-worker
+  ${TOKMON_LENS_TARGETS})
+if(TARGET tokmon-desktop)
+  list(APPEND TOKMON_RELEASE_TARGETS tokmon-desktop)
+endif()
+foreach(target IN LISTS TOKMON_RELEASE_TARGETS)
+  tokmon_optimize_release_target("${target}")
+endforeach()
 
 include(CTest)
 if(BUILD_TESTING AND TOKMON_BUILD_TESTS)

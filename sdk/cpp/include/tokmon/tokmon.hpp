@@ -25,3 +25,4 @@
 #include "tokmon/surface.hpp"
 #include "tokmon/worker_protocol.hpp"
 #include "tokmon/worker_lens_proxy.hpp"
+#include "tokmon/yaml.hpp"

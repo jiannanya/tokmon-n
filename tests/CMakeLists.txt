@@ -1,4 +1,5 @@
 add_executable(tokmon-tests
+  main.cpp
   unit/core_tests.cpp
   unit/builtin_lens_tests.cpp
   ../lenses/ignis/tests/ignis_contract.cpp
@@ -25,7 +26,7 @@ add_executable(tokmon-tests
 target_link_libraries(tokmon-tests PRIVATE
   tokmon_core
   tokmon_sqlite3
-  Catch2::Catch2WithMain)
+  chtest)
 target_include_directories(tokmon-tests PRIVATE "${PROJECT_SOURCE_DIR}")
 target_compile_definitions(tokmon-tests PRIVATE
   TOKMON_TEST_LENS_PATH="$<TARGET_FILE:tokmon-lens-calculator>"
@@ -36,8 +37,7 @@ target_compile_definitions(tokmon-tests PRIVATE
   TOKMON_CMAKE_COMMAND="${CMAKE_COMMAND}")
 add_dependencies(tokmon-tests ${TOKMON_LENS_TARGETS} tokmon-lens-worker tokmon)
 
-include(Catch)
-catch_discover_tests(tokmon-tests)
+add_test(NAME tokmon-tests COMMAND tokmon-tests --quiet --no-color)
 
 if(TOKMON_BUILD_SCRIPT_SDK_TESTS)
   find_program(TOKMON_NODE_EXECUTABLE NAMES node)

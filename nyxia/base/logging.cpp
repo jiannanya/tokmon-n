@@ -1,17 +1,52 @@
 #include "tokmon/logging.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <memory>
 #include <regex>
 
-#include <spdlog/sinks/rotating_file_sink.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
-#include <spdlog/spdlog.h>
+#include "tokmon/chlog_compat.hpp"
+#include <chlog/chlog.hpp>
 
 namespace tokmon {
 
 namespace {
+
+std::atomic<std::shared_ptr<chlog::logger>>& active_logger() {
+  static std::atomic logger{[] {
+    chlog::logger_config config;
+    config.name = "tokmon";
+    config.parallel_sinks = false;
+    auto result = std::make_shared<chlog::logger>(std::move(config));
+    result->add_sink(std::make_shared<chlog::console_sink>(
+        chlog::console_sink::style::color));
+    return result;
+  }()};
+  return logger;
+}
+
+chlog::level chlog_level(const LogLevel level) noexcept {
+  switch (level) {
+    case LogLevel::trace: return chlog::level::trace;
+    case LogLevel::debug: return chlog::level::debug;
+    case LogLevel::info: return chlog::level::info;
+    case LogLevel::warn: return chlog::level::warn;
+    case LogLevel::error: return chlog::level::error;
+    case LogLevel::critical: return chlog::level::critical;
+  }
+  return chlog::level::info;
+}
+
+chlog::level parse_level(const std::string_view level) noexcept {
+  if (level == "trace") return chlog::level::trace;
+  if (level == "debug") return chlog::level::debug;
+  if (level == "warn" || level == "warning") return chlog::level::warn;
+  if (level == "error") return chlog::level::error;
+  if (level == "critical") return chlog::level::critical;
+  if (level == "off") return chlog::level::off;
+  return chlog::level::info;
+}
 
 bool sensitive_key(std::string key) {
   std::ranges::transform(key, key.begin(),
@@ -22,6 +57,13 @@ bool sensitive_key(std::string key) {
 }
 
 }  // namespace
+
+void log_message(const LogLevel level, const std::string_view message) noexcept {
+  try {
+    const auto logger = active_logger().load(std::memory_order_acquire);
+    if (logger) logger->log(chlog_level(level), std::string_view("{}"), message);
+  } catch (...) {}
+}
 
 std::string redact(const std::string_view message) {
   std::string value(message);
@@ -62,17 +104,19 @@ Result<void> initialize_logging(const std::filesystem::path& log_directory,
                                 const std::string_view level) {
   try {
     std::filesystem::create_directories(log_directory);
-    std::vector<spdlog::sink_ptr> sinks;
-    sinks.push_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
-    sinks.push_back(std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
-        (log_directory / (std::string(process_name) + ".log")).string(),
-        5 * 1024 * 1024, 4));
-    auto logger = std::make_shared<spdlog::logger>(std::string(process_name),
-                                                   sinks.begin(), sinks.end());
-    logger->set_pattern("%Y-%m-%dT%H:%M:%S.%e%z [%l] [%n] %v");
-    logger->set_level(spdlog::level::from_str(std::string(level)));
-    spdlog::set_default_logger(std::move(logger));
-    spdlog::flush_on(spdlog::level::warn);
+    chlog::logger_config config;
+    config.name = std::string(process_name);
+    config.level = parse_level(level);
+    config.pattern = "{date}T{time}.{ms} [{lvl}] [{name}] {msg}";
+    config.flush_on_level = chlog::level::warn;
+    config.parallel_sinks = false;
+    auto logger = std::make_shared<chlog::logger>(std::move(config));
+    logger->add_sink(std::make_shared<chlog::console_sink>(
+        chlog::console_sink::style::color));
+    logger->add_sink(std::make_shared<chlog::rotating_file_sink>(
+        log_directory / (std::string(process_name) + ".log"),
+        5u * 1024u * 1024u, 4u));
+    active_logger().store(std::move(logger), std::memory_order_release);
     return {};
   } catch (const std::exception& exception) {
     return tl::unexpected(make_error(ErrorCode::io_error,

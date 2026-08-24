@@ -1,53 +1,60 @@
 #include "tokmon/json.hpp"
 
-#include <limits>
-
-#include <nlohmann/json.hpp>
+#include <chjson/chjson.hpp>
 
 namespace tokmon::json {
 namespace {
 
-cbor::Value from_json(const nlohmann::json& value) {
+cbor::Value from_json(const chjson::sv_value& value) {
   if (value.is_null()) return nullptr;
-  if (value.is_boolean()) return value.get<bool>();
-  if (value.is_number_integer()) return value.get<std::int64_t>();
-  if (value.is_number_unsigned()) {
-    const auto number = value.get<std::uint64_t>();
-    if (number <= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
-      return static_cast<std::int64_t>(number);
-    return static_cast<double>(number);
-  }
-  if (value.is_number_float()) return value.get<double>();
-  if (value.is_string()) return value.get<std::string>();
+  if (value.is_bool()) return value.as_bool();
+  if (value.is_number())
+    return value.is_int() ? cbor::Value(value.as_int())
+                          : cbor::Value(value.as_double());
+  if (value.is_string()) return std::string(value.as_string_view());
   if (value.is_array()) {
     cbor::Value::Array result;
-    result.reserve(value.size());
-    for (const auto& item : value) result.push_back(from_json(item));
+    const auto array = value.as_array();
+    result.reserve(array.size());
+    for (const auto& item : array) result.push_back(from_json(item));
     return result;
   }
   cbor::Value::Map result;
-  for (auto iterator = value.begin(); iterator != value.end(); ++iterator)
-    result.emplace(iterator.key(), from_json(iterator.value()));
+  for (const auto member : value.as_object())
+    result.emplace(std::string(member.first), from_json(member.second));
   return result;
 }
 
-nlohmann::json to_json(const cbor::Value& value) {
-  return std::visit([](const auto& item) -> nlohmann::json {
+chjson::value to_json(const cbor::Value& value) {
+  return std::visit([](const auto& item) -> chjson::value {
     using Type = std::decay_t<decltype(item)>;
     if constexpr (std::is_same_v<Type, std::monostate>) return nullptr;
-    else if constexpr (std::is_same_v<Type, bool> ||
-                       std::is_same_v<Type, std::int64_t> ||
-                       std::is_same_v<Type, double> ||
-                       std::is_same_v<Type, std::string>) return item;
-    else if constexpr (std::is_same_v<Type, cbor::Value::Bytes>)
-      return nlohmann::json{{"$bytes", nlohmann::json::binary(item)}};
+    else if constexpr (std::is_same_v<Type, bool>) return item;
+    else if constexpr (std::is_same_v<Type, std::int64_t>)
+      return chjson::value::integer(item);
+    else if constexpr (std::is_same_v<Type, double>)
+      return chjson::value::number(item);
+    else if constexpr (std::is_same_v<Type, std::string>) return item;
+    else if constexpr (std::is_same_v<Type, cbor::Value::Bytes>) {
+      chjson::value::array bytes;
+      bytes.reserve(item.size());
+      for (const auto byte : item)
+        bytes.push_back(chjson::value::integer(byte));
+      // Preserve the established text representation for a binary value so
+      // protocol output remains wire-compatible across the library change.
+      return chjson::value::object{
+          {"bytes", std::move(bytes)}, {"subtype", nullptr}};
+    }
     else if constexpr (std::is_same_v<Type, cbor::Value::Array>) {
-      auto result = nlohmann::json::array();
+      chjson::value::array result;
+      result.reserve(item.size());
       for (const auto& child : item) result.push_back(to_json(child));
       return result;
     } else {
-      auto result = nlohmann::json::object();
-      for (const auto& [key, child] : item) result[key] = to_json(child);
+      chjson::value::object result;
+      result.reserve(item.size());
+      for (const auto& [key, child] : item)
+        result.emplace_back(key, to_json(child));
       return result;
     }
   }, value.data);
@@ -56,17 +63,17 @@ nlohmann::json to_json(const cbor::Value& value) {
 }  // namespace
 
 Result<cbor::Value> parse(const std::string_view text) {
-  try {
-    return from_json(nlohmann::json::parse(text.begin(), text.end()));
-  } catch (const nlohmann::json::exception& exception) {
+  auto parsed = chjson::parse(text);
+  if (parsed.err)
     return tl::unexpected(make_error(ErrorCode::protocol_error,
-                                     "invalid JSON: " + std::string(exception.what())));
-  }
+        "invalid JSON at " + std::to_string(parsed.err.line) + ":" +
+            std::to_string(parsed.err.column) + " (code " +
+            std::to_string(static_cast<int>(parsed.err.code)) + ")"));
+  return from_json(parsed.doc.root());
 }
 
 std::string stringify(const cbor::Value& value, const bool pretty) {
-  return to_json(value).dump(pretty ? 2 : -1, ' ', false,
-                             nlohmann::json::error_handler_t::replace);
+  return chjson::dump(to_json(value), pretty);
 }
 
 }  // namespace tokmon::json

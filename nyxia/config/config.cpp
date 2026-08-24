@@ -7,9 +7,8 @@
 #include <set>
 #include <unordered_map>
 
-#include <yaml-cpp/yaml.h>
-
 #include "tokmon/builtin_lens.hpp"
+#include "tokmon/yaml.hpp"
 
 namespace tokmon {
 namespace {
@@ -26,11 +25,11 @@ std::filesystem::path home_directory() {
   return std::filesystem::current_path();
 }
 
-Result<void> reject_unknown(const YAML::Node& map, const std::set<std::string>& allowed,
+Result<void> reject_unknown(const cbor::Value& map, const std::set<std::string>& allowed,
                             const std::filesystem::path& source) {
-  if (!map || !map.IsMap()) return {};
-  for (const auto& entry : map) {
-    const auto key = entry.first.as<std::string>();
+  if (!map.as_map()) return {};
+  for (const auto& [key, value] : *map.as_map()) {
+    (void)value;
     if (!allowed.contains(key))
       return tl::unexpected(make_error(ErrorCode::schema_mismatch,
           "unknown YAML field '" + key + "' in " + source.string()));
@@ -57,55 +56,79 @@ Result<PolicyEffect> parse_policy_effect(const std::string& text) {
                                    "unknown Fallen policy effect: " + text));
 }
 
-Result<std::vector<std::string>> string_sequence(const YAML::Node& node,
+Result<std::vector<std::string>> string_sequence(const cbor::Value* node,
                                                  const std::string_view field,
                                                  const std::filesystem::path& source) {
   std::vector<std::string> values;
   if (!node) return values;
-  if (!node.IsSequence())
+  if (!node->as_array())
     return tl::unexpected(make_error(ErrorCode::schema_mismatch,
         source.string() + ": fallen." + std::string(field) + " must be a sequence"));
-  for (const auto& value : node) values.push_back(value.as<std::string>());
+  for (const auto& value : *node->as_array()) {
+    if (!std::holds_alternative<std::string>(value.data))
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+          source.string() + ": fallen." + std::string(field) +
+              " entries must be strings"));
+    values.emplace_back(value.as_string());
+  }
   return values;
 }
 
-Result<void> parse_fallen_policy(FallenPolicy& policy, const YAML::Node& fallen,
+template <typename Type>
+Result<void> require_type(const cbor::Value& map, const std::string_view key,
+                          const std::string_view expected,
+                          const std::filesystem::path& source) {
+  const auto* value = cbor::find(map, key);
+  if (value && !std::holds_alternative<Type>(value->data))
+    return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+        source.string() + ": " + std::string(key) + " must be " +
+            std::string(expected)));
+  return {};
+}
+
+Result<void> parse_fallen_policy(FallenPolicy& policy, const cbor::Value& fallen,
                                  const std::filesystem::path& source) {
-  if (!fallen || !fallen.IsMap())
+  if (!fallen.as_map())
     return tl::unexpected(make_error(ErrorCode::schema_mismatch,
                                      source.string() + ": fallen must be a map"));
   if (auto result = reject_unknown(fallen, {"defaults", "rules", "approvals"}, source);
       !result) return result;
   policy.configured = true;
-  if (fallen["defaults"]) {
-    auto effect = parse_policy_effect(fallen["defaults"].as<std::string>());
+  if (const auto* defaults = cbor::find(fallen, "defaults")) {
+    auto effect = parse_policy_effect(std::string(defaults->as_string()));
     if (!effect) return tl::unexpected(effect.error());
     policy.default_effect = *effect;
   }
-  if (const auto rules = fallen["rules"]) {
-    if (!rules.IsSequence())
+  if (const auto* rules = cbor::find(fallen, "rules")) {
+    if (!rules->as_array())
       return tl::unexpected(make_error(ErrorCode::schema_mismatch,
                                        source.string() + ": fallen.rules must be a sequence"));
     policy.rules.clear();
-    for (const auto& encoded : rules) {
-      if (!encoded.IsMap())
+    for (const auto& encoded : *rules->as_array()) {
+      if (!encoded.as_map())
         return tl::unexpected(make_error(ErrorCode::schema_mismatch,
                                          source.string() + ": Fallen rule must be a map"));
       if (auto result = reject_unknown(encoded,
           {"effect", "acts", "targets", "trusts", "risks", "paths", "argv0", "parameters",
            "not_before_ms", "not_after_ms"}, source); !result) return result;
-      if (!encoded["effect"])
+      if (auto result = require_type<std::string>(encoded, "effect", "a string", source);
+          !result) return result;
+      for (const auto* key : {"not_before_ms", "not_after_ms"})
+        if (auto result = require_type<std::int64_t>(encoded, key, "an integer", source);
+            !result) return result;
+      const auto* encoded_effect = cbor::find(encoded, "effect");
+      if (!encoded_effect)
         return tl::unexpected(make_error(ErrorCode::schema_mismatch,
                                          source.string() + ": Fallen rule effect is required"));
-      auto effect = parse_policy_effect(encoded["effect"].as<std::string>());
+      auto effect = parse_policy_effect(std::string(encoded_effect->as_string()));
       if (!effect) return tl::unexpected(effect.error());
       PolicyRule rule; rule.effect = *effect;
-      auto acts = string_sequence(encoded["acts"], "rules.acts", source);
-      auto targets = string_sequence(encoded["targets"], "rules.targets", source);
-      auto trusts = string_sequence(encoded["trusts"], "rules.trusts", source);
-      auto risks = string_sequence(encoded["risks"], "rules.risks", source);
-      auto paths = string_sequence(encoded["paths"], "rules.paths", source);
-      auto argv0 = string_sequence(encoded["argv0"], "rules.argv0", source);
+      auto acts = string_sequence(cbor::find(encoded, "acts"), "rules.acts", source);
+      auto targets = string_sequence(cbor::find(encoded, "targets"), "rules.targets", source);
+      auto trusts = string_sequence(cbor::find(encoded, "trusts"), "rules.trusts", source);
+      auto risks = string_sequence(cbor::find(encoded, "risks"), "rules.risks", source);
+      auto paths = string_sequence(cbor::find(encoded, "paths"), "rules.paths", source);
+      auto argv0 = string_sequence(cbor::find(encoded, "argv0"), "rules.argv0", source);
       if (!acts) return tl::unexpected(acts.error());
       if (!targets) return tl::unexpected(targets.error());
       if (!trusts) return tl::unexpected(trusts.error());
@@ -116,16 +139,17 @@ Result<void> parse_fallen_policy(FallenPolicy& policy, const YAML::Node& fallen,
       rule.trusts = std::move(*trusts);
       rule.risks = std::move(*risks); rule.paths = std::move(*paths);
       rule.argv0 = std::move(*argv0);
-      if (const auto parameters = encoded["parameters"]) {
-        if (!parameters.IsMap())
+      if (const auto* parameters = cbor::find(encoded, "parameters")) {
+        if (!parameters->as_map())
           return tl::unexpected(make_error(ErrorCode::schema_mismatch,
               source.string() + ": Fallen rule parameters must be a map"));
-        for (const auto& entry : parameters)
-          rule.parameters.emplace(entry.first.as<std::string>(),
-                                  entry.second.as<std::string>());
+        for (const auto& [key, value] : *parameters->as_map())
+          rule.parameters.emplace(key, std::string(value.as_string()));
       }
-      if (encoded["not_before_ms"]) rule.not_before_ms = encoded["not_before_ms"].as<std::int64_t>();
-      if (encoded["not_after_ms"]) rule.not_after_ms = encoded["not_after_ms"].as<std::int64_t>();
+      if (const auto* value = cbor::find(encoded, "not_before_ms"))
+        rule.not_before_ms = value->as_integer();
+      if (const auto* value = cbor::find(encoded, "not_after_ms"))
+        rule.not_after_ms = value->as_integer();
       if (rule.not_before_ms > 0 && rule.not_after_ms > 0 &&
           rule.not_before_ms > rule.not_after_ms)
         return tl::unexpected(make_error(ErrorCode::schema_mismatch,
@@ -133,14 +157,13 @@ Result<void> parse_fallen_policy(FallenPolicy& policy, const YAML::Node& fallen,
       policy.rules.push_back(std::move(rule));
     }
   }
-  if (const auto approvals = fallen["approvals"]) {
-    if (!approvals.IsMap())
+  if (const auto* approvals = cbor::find(fallen, "approvals")) {
+    if (!approvals->as_map())
       return tl::unexpected(make_error(ErrorCode::schema_mismatch,
                                        source.string() + ": fallen.approvals must be a map"));
     policy.approval_risks.clear();
-    for (const auto& entry : approvals) {
-      const auto risk = entry.first.as<std::string>();
-      auto principals = string_sequence(entry.second, "approvals." + risk, source);
+    for (const auto& [risk, encoded] : *approvals->as_map()) {
+      auto principals = string_sequence(&encoded, "approvals." + risk, source);
       if (!principals) return tl::unexpected(principals.error());
       if (!principals->empty()) policy.approval_risks.push_back(risk);
     }
@@ -153,17 +176,20 @@ bool loopback_endpoint(const std::string_view endpoint) {
       endpoint.starts_with("http://localhost") || endpoint.starts_with("http://[::1]");
 }
 
-Result<void> parse_model_providers(RuntimeConfig& config, const YAML::Node& models,
+Result<void> parse_model_providers(RuntimeConfig& config, const cbor::Value& models,
                                    const std::filesystem::path& source) {
-  if (!models.IsMap())
+  if (!models.as_map())
     return tl::unexpected(make_error(ErrorCode::schema_mismatch,
                                      source.string() + ": models must be a map"));
   if (auto result = reject_unknown(models, {"default", "providers"}, source); !result)
     return result;
-  if (models["default"]) config.default_model_provider = models["default"].as<std::string>();
-  const auto providers = models["providers"];
+  if (auto result = require_type<std::string>(models, "default", "a string", source);
+      !result) return result;
+  if (const auto* selected = cbor::find(models, "default"))
+    config.default_model_provider = std::string(selected->as_string());
+  const auto* providers = cbor::find(models, "providers");
   if (!providers) return {};
-  if (!providers.IsMap())
+  if (!providers->as_map())
     return tl::unexpected(make_error(ErrorCode::schema_mismatch,
         source.string() + ": models.providers must be a map"));
   static const std::regex id_pattern("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$");
@@ -171,37 +197,50 @@ Result<void> parse_model_providers(RuntimeConfig& config, const YAML::Node& mode
       "local", "openai-compatible", "anthropic", "gemini"};
   static const std::set<std::string> auth_modes{
       "protocol-default", "bearer", "x-api-key", "x-goog-api-key", "none"};
-  for (const auto& encoded : providers) {
-    const auto id = encoded.first.as<std::string>();
-    const auto value = encoded.second;
-    if (!std::regex_match(id, id_pattern) || !value.IsMap())
+  for (const auto& [id, value] : *providers->as_map()) {
+    if (!std::regex_match(id, id_pattern) || !value.as_map())
       return tl::unexpected(make_error(ErrorCode::schema_mismatch,
           source.string() + ": invalid model provider id or definition: " + id));
     if (auto result = reject_unknown(value,
         {"protocol", "endpoint", "model", "secret_ref", "secret_env", "auth", "enabled",
          "allow_anonymous", "thinking", "reasoning_effort", "max_output_tokens",
          "max_attempts", "retry_backoff_ms"}, source); !result) return result;
+    for (const auto* key : {"protocol", "endpoint", "model", "secret_ref", "secret_env",
+                            "auth", "reasoning_effort"})
+      if (auto result = require_type<std::string>(value, key, "a string", source); !result)
+        return result;
+    for (const auto* key : {"enabled", "allow_anonymous", "thinking"})
+      if (auto result = require_type<bool>(value, key, "a boolean", source); !result)
+        return result;
+    for (const auto* key : {"max_output_tokens", "max_attempts", "retry_backoff_ms"})
+      if (auto result = require_type<std::int64_t>(value, key, "an integer", source); !result)
+        return result;
     ModelProviderConfig provider;
     if (const auto found = config.model_providers.find(id);
         found != config.model_providers.end()) provider = found->second;
     provider.id = id;
-    if (value["protocol"]) provider.protocol = value["protocol"].as<std::string>();
-    if (value["endpoint"]) provider.endpoint = value["endpoint"].as<std::string>();
-    if (value["model"]) provider.model = value["model"].as<std::string>();
-    if (value["secret_ref"]) provider.secret_ref = value["secret_ref"].as<std::string>();
-    if (value["secret_env"]) provider.secret_env = value["secret_env"].as<std::string>();
-    if (value["auth"]) provider.auth = value["auth"].as<std::string>();
-    if (value["enabled"]) provider.enabled = value["enabled"].as<bool>();
-    if (value["allow_anonymous"]) provider.allow_anonymous = value["allow_anonymous"].as<bool>();
-    if (value["thinking"]) provider.thinking = value["thinking"].as<bool>();
-    if (value["reasoning_effort"])
-      provider.reasoning_effort = value["reasoning_effort"].as<std::string>();
-    if (value["max_output_tokens"])
-      provider.max_output_tokens = value["max_output_tokens"].as<std::int64_t>();
-    if (value["max_attempts"])
-      provider.max_attempts = value["max_attempts"].as<std::int64_t>();
-    if (value["retry_backoff_ms"])
-      provider.retry_backoff_ms = value["retry_backoff_ms"].as<std::int64_t>();
+    const auto read_string = [&](const char* key, std::string& output) {
+      if (const auto* field = cbor::find(value, key))
+        output = std::string(field->as_string());
+    };
+    read_string("protocol", provider.protocol);
+    read_string("endpoint", provider.endpoint);
+    read_string("model", provider.model);
+    read_string("secret_ref", provider.secret_ref);
+    read_string("secret_env", provider.secret_env);
+    read_string("auth", provider.auth);
+    read_string("reasoning_effort", provider.reasoning_effort);
+    if (const auto* field = cbor::find(value, "enabled")) provider.enabled = field->as_bool();
+    if (const auto* field = cbor::find(value, "allow_anonymous"))
+      provider.allow_anonymous = field->as_bool();
+    if (const auto* field = cbor::find(value, "thinking"))
+      provider.thinking = field->as_bool();
+    if (const auto* field = cbor::find(value, "max_output_tokens"))
+      provider.max_output_tokens = field->as_integer();
+    if (const auto* field = cbor::find(value, "max_attempts"))
+      provider.max_attempts = field->as_integer();
+    if (const auto* field = cbor::find(value, "retry_backoff_ms"))
+      provider.retry_backoff_ms = field->as_integer();
     if (!protocols.contains(provider.protocol))
       return tl::unexpected(make_error(ErrorCode::schema_mismatch,
           source.string() + ": unsupported model protocol for " + id));
@@ -248,102 +287,148 @@ Result<void> parse_model_providers(RuntimeConfig& config, const YAML::Node& mode
 
 Result<void> merge_config_file(RuntimeConfig& config, const std::filesystem::path& source) {
   if (!std::filesystem::exists(source)) return {};
-  try {
-    const auto root = YAML::LoadFile(source.string());
-    if (!root.IsMap())
+  auto loaded = yaml::load(source);
+  if (!loaded) return tl::unexpected(loaded.error());
+  const auto& root = *loaded;
+  if (!root.is_map())
+    return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                     source.string() + " must contain a YAML map"));
+  if (auto result = reject_unknown(root,
+      {"logging", "engine", "security", "ui", "fallen", "models"}, source);
+      !result) return result;
+  if (const auto* logging = cbor::find(root, "logging")) {
+    if (!logging->is_map())
       return tl::unexpected(make_error(ErrorCode::schema_mismatch,
-                                       source.string() + " must contain a YAML map"));
-    if (auto result = reject_unknown(root,
-        {"logging", "engine", "security", "ui", "fallen", "models"}, source);
+                                       source.string() + ": logging must be a map"));
+    if (auto result = reject_unknown(*logging, {"level"}, source); !result) return result;
+    if (auto result = require_type<std::string>(*logging, "level", "a string", source);
         !result) return result;
-    if (const auto logging = root["logging"]) {
-      if (auto result = reject_unknown(logging, {"level"}, source); !result) return result;
-      if (logging["level"]) config.log_level = logging["level"].as<std::string>();
+    if (const auto* level = cbor::find(*logging, "level"))
+      config.log_level = std::string(level->as_string());
+  }
+  if (const auto* engine = cbor::find(root, "engine")) {
+    if (!engine->is_map())
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                       source.string() + ": engine must be a map"));
+    if (auto result = reject_unknown(*engine, {"photon_window", "max_beats"}, source);
+        !result) return result;
+    for (const auto* key : {"photon_window", "max_beats"})
+      if (auto result = require_type<std::int64_t>(*engine, key, "an integer", source);
+          !result) return result;
+    if (const auto* field = cbor::find(*engine, "photon_window")) {
+      if (field->as_integer() <= 0)
+        return tl::unexpected(make_error(ErrorCode::invalid_argument,
+                                         "engine limits must be positive"));
+      config.photon_window = static_cast<std::size_t>(field->as_integer());
     }
-    if (const auto engine = root["engine"]) {
-      if (auto result = reject_unknown(engine, {"photon_window", "max_beats"}, source); !result)
-        return result;
-      if (engine["photon_window"]) config.photon_window = engine["photon_window"].as<std::size_t>();
-      if (engine["max_beats"]) config.max_beats = engine["max_beats"].as<std::size_t>();
+    if (const auto* field = cbor::find(*engine, "max_beats")) {
+      if (field->as_integer() <= 0)
+        return tl::unexpected(make_error(ErrorCode::invalid_argument,
+                                         "engine limits must be positive"));
+      config.max_beats = static_cast<std::size_t>(field->as_integer());
     }
-    if (const auto security = root["security"]) {
-      if (auto result = reject_unknown(security,
-          {"require_signatures", "trusted_signers"}, source); !result)
-        return result;
-      if (security["require_signatures"])
-        config.require_signatures = security["require_signatures"].as<bool>();
-      if (const auto signers = security["trusted_signers"]) {
-        if (!signers.IsMap())
+  }
+  if (const auto* security = cbor::find(root, "security")) {
+    if (!security->is_map())
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                       source.string() + ": security must be a map"));
+    if (auto result = reject_unknown(*security,
+        {"require_signatures", "trusted_signers"}, source); !result) return result;
+    if (auto result = require_type<bool>(*security, "require_signatures", "a boolean", source);
+        !result) return result;
+    if (const auto* field = cbor::find(*security, "require_signatures"))
+      config.require_signatures = field->as_bool();
+    if (const auto* signers = cbor::find(*security, "trusted_signers")) {
+      if (!signers->as_map())
+        return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+            source.string() + ": security.trusted_signers must be a map"));
+      for (const auto& [signer, encoded] : *signers->as_map()) {
+        if (!std::holds_alternative<std::string>(encoded.data))
           return tl::unexpected(make_error(ErrorCode::schema_mismatch,
-              source.string() + ": security.trusted_signers must be a map"));
-        for (const auto& entry : signers) {
-          const auto signer = entry.first.as<std::string>();
-          const auto secret_ref = entry.second.as<std::string>();
-          if (signer.empty() || secret_ref.empty())
-            return tl::unexpected(make_error(ErrorCode::schema_mismatch,
-                source.string() + ": trusted signer names and SecretRefs cannot be empty"));
-          config.trusted_signers[signer] = secret_ref;
-        }
+              source.string() + ": trusted signer SecretRefs must be strings"));
+        const auto secret_ref = std::string(encoded.as_string());
+        if (signer.empty() || secret_ref.empty())
+          return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+              source.string() + ": trusted signer names and SecretRefs cannot be empty"));
+        config.trusted_signers[signer] = secret_ref;
       }
     }
-    if (const auto fallen = root["fallen"]) {
-      const auto project_file = source.parent_path().filename() == ".tokmon" &&
-                                source.parent_path() == config.paths.project;
-      auto result = parse_fallen_policy(project_file ? config.project_policy : config.user_policy,
-                                        fallen, source);
-      if (!result) return result;
-    }
-    if (const auto models = root["models"]) {
-      auto result = parse_model_providers(config, models, source);
-      if (!result) return result;
-    }
-    if (config.photon_window == 0 || config.photon_window > 100'000 ||
-        config.max_beats == 0 || config.max_beats > 1024)
-      return tl::unexpected(make_error(ErrorCode::invalid_argument,
-                                       "engine limits are outside the allowed range"));
-    return {};
-  } catch (const YAML::Exception& exception) {
-    return tl::unexpected(make_error(ErrorCode::schema_mismatch,
-        "cannot parse " + source.string() + ": " + exception.what()));
   }
+  if (const auto* fallen = cbor::find(root, "fallen")) {
+    const auto project_file = source.parent_path().filename() == ".tokmon" &&
+                              source.parent_path() == config.paths.project;
+    auto result = parse_fallen_policy(project_file ? config.project_policy : config.user_policy,
+                                      *fallen, source);
+    if (!result) return result;
+  }
+  if (const auto* models = cbor::find(root, "models")) {
+    auto result = parse_model_providers(config, *models, source);
+    if (!result) return result;
+  }
+  if (config.photon_window == 0 || config.photon_window > 100'000 ||
+      config.max_beats == 0 || config.max_beats > 1024)
+    return tl::unexpected(make_error(ErrorCode::invalid_argument,
+                                     "engine limits are outside the allowed range"));
+  return {};
 }
 
 Result<void> merge_light_path(std::vector<DesiredLens>& lenses,
                               const std::filesystem::path& source) {
   if (!std::filesystem::exists(source)) return {};
-  try {
-    const auto root = YAML::LoadFile(source.string());
-    if (auto result = reject_unknown(root, {"version", "lenses"}, source); !result) return result;
-    const auto entries = root["lenses"];
-    if (!entries || !entries.IsSequence())
+  auto loaded = yaml::load(source);
+  if (!loaded) return tl::unexpected(loaded.error());
+  const auto& root = *loaded;
+  if (auto result = reject_unknown(root, {"version", "lenses"}, source); !result)
+    return result;
+  const auto* entries = cbor::find(root, "lenses");
+  if (!entries || !entries->as_array())
+    return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                     source.string() + ": lenses must be a sequence"));
+  std::unordered_map<std::string, std::size_t> index;
+  for (std::size_t i = 0; i < lenses.size(); ++i) index[lenses[i].id] = i;
+  for (const auto& entry : *entries->as_array()) {
+    if (!entry.is_map())
       return tl::unexpected(make_error(ErrorCode::schema_mismatch,
-                                       source.string() + ": lenses must be a sequence"));
-    std::unordered_map<std::string, std::size_t> index;
-    for (std::size_t i = 0; i < lenses.size(); ++i) index[lenses[i].id] = i;
-    for (const auto& entry : entries) {
-      if (auto result = reject_unknown(entry, {"id", "artifact", "enabled", "runtime"}, source);
-          !result) return result;
-      DesiredLens lens;
-      lens.id = entry["id"].as<std::string>();
-      lens.artifact = entry["artifact"] ? entry["artifact"].as<std::string>() : "builtin:" + lens.id;
+                                       source.string() + ": Lens entry must be a map"));
+    if (auto result = reject_unknown(entry, {"id", "artifact", "enabled", "runtime"}, source);
+        !result) return result;
+    if (auto result = require_type<std::string>(entry, "id", "a string", source); !result)
+      return result;
+    if (auto result = require_type<std::string>(entry, "artifact", "a string", source);
+        !result) return result;
+    if (auto result = require_type<bool>(entry, "enabled", "a boolean", source); !result)
+      return result;
+    if (auto result = require_type<std::string>(entry, "runtime", "a string", source);
+        !result) return result;
+    DesiredLens lens;
+    const auto* id = cbor::find(entry, "id");
+    const auto* artifact_field = cbor::find(entry, "artifact");
+    const auto* enabled = cbor::find(entry, "enabled");
+    const auto* runtime_field = cbor::find(entry, "runtime");
+    lens.id = id ? std::string(id->as_string()) : std::string{};
+    if (lens.id.empty())
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                       source.string() + ": Lens id cannot be empty"));
+    lens.artifact = artifact_field ? std::string(artifact_field->as_string())
+                                   : "builtin:" + lens.id;
       if (!lens.artifact.starts_with("builtin:")) {
         auto artifact = std::filesystem::path(lens.artifact);
         if (artifact.is_relative())
           lens.artifact = (source.parent_path() / artifact).lexically_normal().string();
       }
-      lens.enabled = !entry["enabled"] || entry["enabled"].as<bool>();
-      auto runtime = parse_runtime(entry["runtime"] ?
-          entry["runtime"].as<std::string>() : "in_process");
-      if (!runtime) return tl::unexpected(runtime.error());
-      lens.runtime = *runtime;
-      if (const auto found = index.find(lens.id); found != index.end()) lenses[found->second] = lens;
-      else { index[lens.id] = lenses.size(); lenses.push_back(std::move(lens)); }
+    lens.enabled = !enabled || enabled->as_bool();
+    auto runtime = parse_runtime(runtime_field ? std::string(runtime_field->as_string())
+                                               : "in_process");
+    if (!runtime) return tl::unexpected(runtime.error());
+    lens.runtime = *runtime;
+    if (const auto found = index.find(lens.id); found != index.end())
+      lenses[found->second] = lens;
+    else {
+      index[lens.id] = lenses.size();
+      lenses.push_back(std::move(lens));
     }
-    return {};
-  } catch (const YAML::Exception& exception) {
-    return tl::unexpected(make_error(ErrorCode::schema_mismatch,
-        "cannot parse " + source.string() + ": " + exception.what()));
   }
+  return {};
 }
 
 bool wildcard_match(const std::string_view pattern, const std::string_view value) {

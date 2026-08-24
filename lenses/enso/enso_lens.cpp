@@ -11,9 +11,8 @@
 #include <set>
 #include <sstream>
 
-#include <yaml-cpp/yaml.h>
-
 #include "tokmon/hash.hpp"
+#include "tokmon/yaml.hpp"
 
 namespace tokmon::builtin {
 namespace {
@@ -100,26 +99,27 @@ struct SkillInfo {
 
 SkillInfo parse_skill_info(const std::filesystem::path& path, const std::string& text) {
   SkillInfo info{.name = path.parent_path().filename().string()};
-  try {
-    if (text.starts_with("---")) {
-      const auto end = text.find("\n---", 3);
-      if (end != std::string::npos) {
-        const auto metadata = YAML::Load(text.substr(4, end - 4));
-        if (metadata["name"]) info.name = metadata["name"].as<std::string>();
-        if (metadata["description"])
-          info.description = metadata["description"].as<std::string>();
-        if (metadata["version"]) info.version = metadata["version"].as<std::string>();
-        const auto copy_strings = [](const YAML::Node& values, cbor::Value::Array& output) {
-          if (!values || !values.IsSequence()) return;
-          for (const auto& value : values)
-            if (value.IsScalar()) output.emplace_back(value.as<std::string>());
+  if (text.starts_with("---")) {
+    const auto end = text.find("\n---", 3);
+    if (end != std::string::npos) {
+      auto metadata = yaml::parse(text.substr(4, end - 4), "skill front matter");
+      if (metadata && metadata->is_map()) {
+        if (const auto* name = cbor::find(*metadata, "name"))
+          info.name = std::string(name->as_string());
+        if (const auto* description = cbor::find(*metadata, "description"))
+          info.description = std::string(description->as_string());
+        if (const auto* version = cbor::find(*metadata, "version"))
+          info.version = std::string(version->as_string());
+        const auto copy_strings = [](const cbor::Value* values,
+                                     cbor::Value::Array& output) {
+          if (!values || !values->as_array()) return;
+          for (const auto& value : *values->as_array())
+            if (std::holds_alternative<std::string>(value.data)) output.push_back(value);
         };
-        copy_strings(metadata["triggers"], info.triggers);
-        copy_strings(metadata["permissions"], info.permissions);
+        copy_strings(cbor::find(*metadata, "triggers"), info.triggers);
+        copy_strings(cbor::find(*metadata, "permissions"), info.permissions);
       }
     }
-  } catch (const YAML::Exception&) {
-    // A malformed optional front matter never turns the body into metadata.
   }
   if (info.description.empty()) {
     if (const auto heading = text.find("# "); heading != std::string::npos) {

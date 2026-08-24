@@ -20,7 +20,13 @@
       "displayName": "Windows MSVC Release",
       "inherits": "windows-msvc-debug",
       "binaryDir": "${sourceDir}/build/windows-msvc-release",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_TESTING": "OFF",
+        "TOKMON_BUILD_TESTS": "OFF",
+        "TOKMON_BUILD_SCRIPT_SDK_TESTS": "OFF",
+        "TOKMON_OPTIMIZE_RELEASE_SIZE": "ON"
+      }
     },
     {
       "name": "portable-debug",

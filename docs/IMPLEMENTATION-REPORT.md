@@ -99,7 +99,7 @@ tokmon lens reconcile
 | Cista | Windows Credential Manager create/read/rotate/delete/list metadata；exact Act + target generation + purpose + epoch + lifetime 的一次性 binding；schema-aware redaction 与内存清零 | 真实 OS credential 读写与一次消费测试；Photon 中无明文 |
 | Chora | Photon WAL/append gate 显像、不可变版本 KV、内容寻址 Blob、去重/校验、Windows DPAPI 敏感 Blob、checkpoint、archive、backup manifest/restore | 真实 blob 写入、地址 hash 和不可变性测试 |
 | Tracket | sequence/id/parent/epoch/schema/hash/caused-by-act 验证、timeline/causal DAG、raw trace vault、R0/R1/R2/R3 replay、fork/export/audit/integrity report | 断链与未知 required schema 进入不可信诊断，不伪造可信 replay |
-| Nota | spdlog 结构化事件、correlation、Span/metric fold、OTLP HTTP exporter、Prometheus 文本和真实 loopback `/metrics` server、运行时 filter/sample、health/doctor/diagnostic bundle | 真实 HTTP collector 与 Prometheus GET 专项测试；endpoint 只允许 loopback |
+| Nota | chLog 结构化事件、correlation、Span/metric fold、OTLP HTTP exporter、Prometheus 文本和真实 loopback `/metrics` server、运行时 filter/sample、health/doctor/diagnostic bundle | 真实 HTTP collector 与 Prometheus GET 专项测试；endpoint 只允许 loopback |
 | Cove | canonical entity tree、类型/大小/mtime/hash/Git/ignored；create/modify/delete/rename 聚合；branch/HEAD/index/worktree/untracked/conflict；pre/post image、guarded read/write/create/move/delete、Git evidence、artifact/provenance | 真实文件生命周期、Git repo/ignored 状态、polling watcher 与 worktree 测试 |
 | Snow | interactive chat、headless run、history、JSONL/CBOR、stdio 并发、request id、stream/cancel/ordered close、named pipe/Unix socket、snapshot/cursor delta/gap/reconnect/idempotency、deadline、doctor、Lens 管理 | 真实本地 transport 并发、stdio 顺序关闭、断线 cursor 恢复测试 |
 | Termon | 13 个 `ui.*` SurfaceChannel：conversation、trajectory、code、terminal、approval、context、models、tools、workspace、children、lenses、diagnostics、settings；Slint 仅保存 projection cache | tokmond 新增按 ray 折叠 Surface；桌面端聊天后读取 `ui.trajectory`，所有提交仍由 daemon 完成 |
@@ -141,7 +141,7 @@ Termon 不再用硬编码 timeline/code model 作为事实来源。桌面端先�
 - 用户级目录：`~/.tokmon/`；
 - 项目级目录：`<workspace>/.tokmon/`；
 - 可预期失败：`tl::expected<T, tokmon::Error>`；
-- C++ 日志：spdlog；
+- C++ 日志：chLog；
 - 语言标准：C++20。
 
 YAML loader 拒绝未知字段、未知 runtime、非法资源上限、缺失 entry、错误 ABI、重复依赖和越界路径。日志、Error、Photon、Surface、HTTP 错误正文和 diagnostic bundle 在进入 sink 前执行 redaction。
@@ -176,7 +176,7 @@ ctest --test-dir build/windows-msvc-ui-debug --output-on-failure -C Debug
 cmake --build build/windows-msvc-ui-debug --parallel 4
 ```
 
-结果：成功生成 5 个应用程序、20 个 `tokmon-lens-*.dll` 和 `slint_cpp.dll`。编译器只有第三方 spdlog/fmt/yaml-cpp warning，没有 Tokmon 编译或链接错误。
+结果：成功生成 5 个应用程序、20 个 `tokmon-lens-*.dll` 和 `slint_cpp.dll`。编译器只有第三方库 warning，没有 Tokmon 编译或链接错误。
 
 ### 8.3 安装冒烟
 

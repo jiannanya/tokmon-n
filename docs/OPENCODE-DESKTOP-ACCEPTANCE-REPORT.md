@@ -2,7 +2,7 @@
 
 > 验收日期：2026-08-23  
 > 验收工作区：`E:\cc\AI\tokmon\tokmon_work_test`  
-> 实现：C++20、Slint C++、YAML、`tl::expected`、spdlog  
+> 实现：C++20、Slint C++、YAML、`tl::expected`、chLog
 > 语义边界：Fact → Lens → Act；Photon 只能追加；产品题记为 **A Lens to Them All**
 
 ## 1. 结论

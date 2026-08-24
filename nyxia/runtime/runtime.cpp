@@ -10,15 +10,13 @@
 #include <thread>
 #include <vector>
 
-#include <spdlog/spdlog.h>
-#include <yaml-cpp/yaml.h>
-
 #include "tokmon/c_abi_loader.hpp"
 #include "tokmon/builtin_lens.hpp"
 #include "tokmon/hash.hpp"
 #include "tokmon/logging.hpp"
 #include "tokmon/manifest_io.hpp"
 #include "tokmon/worker_lens_proxy.hpp"
+#include "tokmon/yaml.hpp"
 #include "lenses/common/secret_store.hpp"
 
 #if defined(_WIN32)
@@ -157,97 +155,96 @@ Result<void> verify_artifact_evidence(const std::filesystem::path& root,
     }
     return {};
   }
-  try {
-    const auto lock = YAML::LoadFile(lock_path.string());
-    if (!lock.IsMap())
+  auto lock = yaml::load(lock_path);
+  if (!lock) return tl::unexpected(lock.error());
+  if (!lock->is_map())
+    return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                     "lens-lock.yaml must be a map"));
+  const std::set<std::string> allowed{"api", "artifact_hash", "runtime_hash",
+      "schema_bundle_hash", "sbom_hash", "dependencies", "signature"};
+  for (const auto& [key, value] : *lock->as_map()) {
+    (void)value;
+    if (!allowed.contains(key))
       return tl::unexpected(make_error(ErrorCode::schema_mismatch,
-                                       "lens-lock.yaml must be a map"));
-    const std::set<std::string> allowed{"api", "artifact_hash", "runtime_hash",
-        "schema_bundle_hash", "sbom_hash", "dependencies", "signature"};
-    for (const auto& field : lock) {
-      const auto key = field.first.as<std::string>();
-      if (!allowed.contains(key))
-        return tl::unexpected(make_error(ErrorCode::schema_mismatch,
-            "unknown lens-lock.yaml field: " + key));
-    }
-    if (!lock["api"] || lock["api"].as<std::string>() != "tokmon.lens-lock/v1" ||
-        !lock["artifact_hash"])
-      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
-          "lens-lock.yaml requires api tokmon.lens-lock/v1 and artifact_hash"));
-    if (!secure_equal(lock["artifact_hash"].as<std::string>(), computed_artifact_hash))
+          "unknown lens-lock.yaml field: " + key));
+  }
+  const auto* api = cbor::find(*lock, "api");
+  const auto* artifact_hash = cbor::find(*lock, "artifact_hash");
+  if (!api || api->as_string() != "tokmon.lens-lock/v1" || !artifact_hash)
+    return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+        "lens-lock.yaml requires api tokmon.lens-lock/v1 and artifact_hash"));
+  if (!secure_equal(artifact_hash->as_string(), computed_artifact_hash))
+    return tl::unexpected(make_error(ErrorCode::integrity_error,
+                                     "Lens artifact hash does not match its lock"));
+
+  std::string runtime_hash;
+  if (!manifest.runtime_entry.empty()) {
+    auto hashed = file_hash((root / manifest.runtime_entry).lexically_normal());
+    if (!hashed) return tl::unexpected(hashed.error());
+    runtime_hash = *hashed;
+    const auto* locked_runtime = cbor::find(*lock, "runtime_hash");
+    if (!locked_runtime || !secure_equal(locked_runtime->as_string(), runtime_hash))
       return tl::unexpected(make_error(ErrorCode::integrity_error,
-                                       "Lens artifact hash does not match its lock"));
+                                       "Lens runtime hash does not match its lock"));
+  }
+  const auto evidence_hash = [&](const std::string& relative,
+                                 const char* field) -> Result<std::string> {
+    if (relative.empty()) return std::string{};
+    const auto path = (root / relative).lexically_normal();
+    if (!inside(root.lexically_normal(), path))
+      return tl::unexpected(make_error(ErrorCode::permission_denied,
+                                       "Lens evidence escapes its artifact"));
+    auto hashed = file_hash(path);
+    if (!hashed) return tl::unexpected(hashed.error());
+    const auto* locked = cbor::find(*lock, field);
+    if (!locked || !secure_equal(locked->as_string(), *hashed))
+      return tl::unexpected(make_error(ErrorCode::integrity_error,
+          std::string(field) + " does not match its lock"));
+    return *hashed;
+  };
+  auto schema_hash = evidence_hash(manifest.schema_bundle, "schema_bundle_hash");
+  if (!schema_hash) return tl::unexpected(schema_hash.error());
+  auto sbom_hash = evidence_hash(manifest.sbom, "sbom_hash");
+  if (!sbom_hash) return tl::unexpected(sbom_hash.error());
 
-    std::string runtime_hash;
-    if (!manifest.runtime_entry.empty()) {
-      auto hashed = file_hash((root / manifest.runtime_entry).lexically_normal());
-      if (!hashed) return tl::unexpected(hashed.error());
-      runtime_hash = *hashed;
-      if (!lock["runtime_hash"] ||
-          !secure_equal(lock["runtime_hash"].as<std::string>(), runtime_hash))
-        return tl::unexpected(make_error(ErrorCode::integrity_error,
-                                         "Lens runtime hash does not match its lock"));
-    }
-    const auto evidence_hash = [&](const std::string& relative,
-                                   const char* field) -> Result<std::string> {
-      if (relative.empty()) return std::string{};
-      const auto path = (root / relative).lexically_normal();
-      if (!inside(root.lexically_normal(), path))
-        return tl::unexpected(make_error(ErrorCode::permission_denied,
-                                         "Lens evidence escapes its artifact"));
-      auto hashed = file_hash(path);
-      if (!hashed) return tl::unexpected(hashed.error());
-      if (!lock[field] || !secure_equal(lock[field].as<std::string>(), *hashed))
-        return tl::unexpected(make_error(ErrorCode::integrity_error,
-            std::string(field) + " does not match its lock"));
-      return *hashed;
-    };
-    auto schema_hash = evidence_hash(manifest.schema_bundle, "schema_bundle_hash");
-    if (!schema_hash) return tl::unexpected(schema_hash.error());
-    auto sbom_hash = evidence_hash(manifest.sbom, "sbom_hash");
-    if (!sbom_hash) return tl::unexpected(sbom_hash.error());
-
-    if (const auto dependencies = lock["dependencies"]) {
-      if (!dependencies.IsMap())
+  if (const auto* dependencies = cbor::find(*lock, "dependencies")) {
+    if (!dependencies->as_map())
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                       "lens-lock dependencies must be a map"));
+    for (const auto& [id, hash] : *dependencies->as_map()) {
+      if (id.empty() || hash.as_string().size() != 64u)
         return tl::unexpected(make_error(ErrorCode::schema_mismatch,
-                                         "lens-lock dependencies must be a map"));
-      for (const auto& dependency : dependencies) {
-        const auto id = dependency.first.as<std::string>();
-        const auto hash = dependency.second.as<std::string>();
-        if (id.empty() || hash.size() != 64u)
-          return tl::unexpected(make_error(ErrorCode::schema_mismatch,
-              "locked dependency ids and hashes must be exact"));
-      }
+            "locked dependency ids and hashes must be exact"));
     }
+  }
 
-    if (const auto signature = lock["signature"]) {
-      if (!signature.IsMap() || !signature["algorithm"] || !signature["signer"] ||
-          !signature["value"] || signature["algorithm"].as<std::string>() != "hmac-sha256")
-        return tl::unexpected(make_error(ErrorCode::schema_mismatch,
-            "Lens signature must declare hmac-sha256, signer and value"));
-      const auto signer = signature["signer"].as<std::string>();
-      const auto trusted = config.trusted_signers.find(signer);
-      if (trusted == config.trusted_signers.end())
-        return tl::unexpected(make_error(ErrorCode::permission_denied,
-                                         "Lens artifact signer is not trusted"));
-      auto key = builtin::keyring_read(trusted->second);
-      if (!key) return tl::unexpected(key.error());
-      const auto material = std::string(computed_artifact_hash) + "\n" + runtime_hash +
-          "\n" + *schema_hash + "\n" + *sbom_hash;
-      const auto expected = hmac_sha256_hex(*key, material);
-      std::fill(key->begin(), key->end(), '\0');
-      if (!secure_equal(signature["value"].as<std::string>(), expected))
-        return tl::unexpected(make_error(ErrorCode::integrity_error,
-                                         "Lens artifact signature is invalid"));
-    } else if (config.require_signatures) {
+  if (const auto* signature = cbor::find(*lock, "signature")) {
+    const auto* algorithm = cbor::find(*signature, "algorithm");
+    const auto* signer_value = cbor::find(*signature, "signer");
+    const auto* signature_value = cbor::find(*signature, "value");
+    if (!signature->is_map() || !algorithm || !signer_value || !signature_value ||
+        algorithm->as_string() != "hmac-sha256")
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+          "Lens signature must declare hmac-sha256, signer and value"));
+    const auto signer = std::string(signer_value->as_string());
+    const auto trusted = config.trusted_signers.find(signer);
+    if (trusted == config.trusted_signers.end())
+      return tl::unexpected(make_error(ErrorCode::permission_denied,
+                                       "Lens artifact signer is not trusted"));
+    auto key = builtin::keyring_read(trusted->second);
+    if (!key) return tl::unexpected(key.error());
+    const auto material = std::string(computed_artifact_hash) + "\n" + runtime_hash +
+        "\n" + *schema_hash + "\n" + *sbom_hash;
+    const auto expected = hmac_sha256_hex(*key, material);
+    std::fill(key->begin(), key->end(), '\0');
+    if (!secure_equal(signature_value->as_string(), expected))
+      return tl::unexpected(make_error(ErrorCode::integrity_error,
+                                       "Lens artifact signature is invalid"));
+  } else if (config.require_signatures) {
       return tl::unexpected(make_error(ErrorCode::integrity_error,
                                        "Lens artifact signature is required"));
-    }
-    return {};
-  } catch (const YAML::Exception& exception) {
-    return tl::unexpected(make_error(ErrorCode::schema_mismatch,
-        "cannot parse lens-lock.yaml: " + std::string(exception.what())));
   }
+  return {};
 }
 
 Result<std::filesystem::path> first_existing(
@@ -528,7 +525,7 @@ Result<void> TokmonRuntime::open(const std::optional<std::filesystem::path>& wor
   if (auto result = store_.open(config_.paths.database); !result) return result;
   auto recovered = recover_inflight_acts(store_);
   if (!recovered) return tl::unexpected(recovered.error());
-  if (*recovered != 0) spdlog::warn("marked {} in-flight Acts outcome-unknown", *recovered);
+  if (*recovered != 0) log_warn("marked {} in-flight Acts outcome-unknown", *recovered);
   engine_ = std::make_unique<RayTracingEngine>(store_, path_, beams_);
   engine_->set_admission([this](const Act& act) {
     auto all_photons = store_.read_all();
@@ -605,8 +602,8 @@ Result<void> TokmonRuntime::open(const std::optional<std::filesystem::path>& wor
       .payload = cbor::object({{"version", "0.1.0"},
           {"light_path_hash", path_.snapshot()->hash}}), .epoch = path_.snapshot()->epoch});
   if (!started) return tl::unexpected(started.error());
-  spdlog::info("Tokmon runtime ready epoch={} lenses={}", path_.snapshot()->epoch,
-               path_.snapshot()->lenses.size());
+  log_info("Tokmon runtime ready epoch={} lenses={}", path_.snapshot()->epoch,
+           path_.snapshot()->lenses.size());
   return {};
 }
 

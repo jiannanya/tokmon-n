@@ -12,7 +12,7 @@
 > 实现语言：C++20 + Slint C++  
 > 配置格式：YAML  
 > 错误通道：`tl::expected<T, tokmon::Error>`  
-> 日志：spdlog  
+> 日志：chLog
 > 验收日期：2026-08-23
 
 ## 1. 验收结论
@@ -212,7 +212,7 @@ cmake --preset portable-debug
 cmake --build build/portable-debug --target tokmond tokmon -j 4
 ```
 
-结果：全部成功。Windows UI 构建生成 `tokmond.exe`、`tokmon.exe`、`tokmon-desktop.exe` 和 Slint runtime；UI-off preset 也成功。项目保持 C++20，没有引入 C++23。编译输出中的提示来自第三方 yaml-cpp/spdlog/fmt 或既有兼容代码，没有本次目标的编译/链接错误。
+结果：全部成功。Windows UI 构建生成 `tokmond.exe`、`tokmon.exe`、`tokmon-desktop.exe` 和 Slint runtime；UI-off preset 也成功。项目保持 C++20，没有引入 C++23。编译输出中的提示来自第三方库或既有兼容代码，没有本次目标的编译/链接错误。
 
 ### 8.2 自动化测试
 
@@ -263,7 +263,7 @@ ctest --test-dir build/windows-msvc-ui-debug --output-on-failure -C Debug
 | mock 模型后是否存在真实 Agent/Act/工具执行 | PASS |
 | UI 是否只做投影而不旁路修改 Photon | PASS |
 | 配置是否使用项目级 `.tokmon/config.yaml` YAML | PASS |
-| 错误与日志库是否保持 `tl::expected` / spdlog | PASS |
+| 错误与日志库是否保持 `tl::expected` / chLog | PASS |
 | 自动化测试是否全绿 | PASS，84/84 |
 | 是否需要用户补 Rust 工具链 | 不需要 |
 

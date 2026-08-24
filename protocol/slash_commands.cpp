@@ -159,7 +159,7 @@ std::vector<const SlashCommandDescriptor*> match_slash_commands(
     }
     if (score >= 0) matches.push_back(Match{&command, score});
   }
-  std::ranges::stable_sort(matches, [](const Match& left, const Match& right) {
+  std::stable_sort(matches.begin(), matches.end(), [](const Match& left, const Match& right) {
     return left.score < right.score ||
         (left.score == right.score && left.command->name < right.command->name);
   });

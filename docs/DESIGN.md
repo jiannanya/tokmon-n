@@ -514,7 +514,7 @@ Nyxia 静态链接进 `tokmond`。它只包含：
 7. Photon append gate、Act gate 的不可绕过连接；
 8. 动态代码的 worker/WASM 边界；
 9. 停止、崩溃和诊断所需的最小状态；
-10. 以 `tl::expected` 为唯一可恢复错误返回模型，以 `spdlog` 为统一日志出口。
+10. 以 `tl::expected` 为唯一可恢复错误返回模型，以 `chLog` 为统一日志出口。
 
 Nyxia 不包含 provider 策略、Prompt、tool catalog、memory、workflow、workspace、存储业务、审批规则或 UI 页面。
 
@@ -1358,7 +1358,7 @@ CPython `sys.path` 仅包含锁定 stdlib、`tokmon-lens-sdk`、Lens `src/` 与�
 - 非 C++ SDK 不得出现另一套事件总线、状态存储或直接 Lens lookup；
 - `view` 默认不得进行网络、文件写入或长时间阻塞；
 - `refract` 的所有 host 调用受 BeamTicket、deadline、budget 和 permission 控制；
-- SDK 的 `host.log` 发送结构化日志 frame，由 C++ host 脱敏后写入 `spdlog`；
+- SDK 的 `host.log` 发送结构化日志 frame，由 C++ host 脱敏后写入 `chLog`；
 - stdout/stderr 作为有界诊断流捕获，不作为 worker 协议，也不形成 committed Photon，除非某个 Act 明确要求记录；
 - JavaScript/Python 可贡献通用 UiSurface 数据和内置卡片 schema，但不能在运行时注入任意 Slint 代码；
 - 相同 golden ray 必须可以分别驱动 C++、Node.js 和 CPython 的等价测试 Lens。
@@ -1455,7 +1455,7 @@ tokmon lens status --light-path
 ```text
 user/project .tokmon/light-path.yaml changes
 → Cove/control watcher reads complete file
-→ yaml-cpp parse + schema validation
+→ chYAML parse + schema validation
 → append config.light-path-observed(hash, source, normalized desired path)
 → Ignis.view compares desired path with active mount epoch
 → Ignis.refract proposes lens.reconcile Act
@@ -2615,27 +2615,27 @@ CI 开启 warnings-as-errors、ASan/UBSan、TSan 专项、clang-tidy、format、
 | crypto | libsodium/平台 API | hash、signature、secure memory |
 | serialization | canonical CBOR + generated codec | Photon/Act/ABI/protocol |
 | C++ error result | tl::expected | 宿主/native Lens 显式错误返回和 `Result<T>` |
-| config | yaml-cpp | YAML 配置与 Lens manifest |
-| C++ logging | spdlog | 宿主进程的唯一结构化日志实现 |
-| testing | Catch2 + RapidCheck | unit/property |
+| config | chYAML | YAML 配置与 Lens manifest |
+| C++ logging | chLog | 宿主进程的唯一结构化日志实现 |
+| testing | chTest | unit/property |
 | compression | zstd | immutable segment/artifact |
 
 具体版本写入 lockfile、SBOM 和 artifact provenance，不在源码中跟随移动版本。
 
 ```cmake
 find_package(tl-expected CONFIG REQUIRED)
-find_package(spdlog CONFIG REQUIRED)
-find_package(yaml-cpp CONFIG REQUIRED)
+find_package(chlog CONFIG REQUIRED)
+find_package(chyaml CONFIG REQUIRED)
 
 target_link_libraries(tokmon_base
   PUBLIC
     tl::expected
-    spdlog::spdlog
-    yaml-cpp::yaml-cpp)
+    chlog::chlog
+    chyaml::chyaml)
 ```
 
 - C++ `Result<T>` 统一定义为 `tl::expected<T, Error>`，禁止 C++ Lens 自建不兼容错误容器；
-- `spdlog` 是 daemon、CLI、C++ worker host、desktop 和 launcher 的唯一日志实现；Node.js/CPython Lens 的日志通过 `log.write` frame 交给 host，再由 `spdlog` 写出；
+- `chLog` 是 daemon、CLI、C++ worker host、desktop 和 launcher 的唯一日志实现；Node.js/CPython Lens 的日志通过 `log.write` frame 交给 host，再由 `chLog` 写出；
 - YAML 解析结果先经 schema/字段白名单校验，再转换成不可变运行配置；
 - YAML 未知字段默认报错，禁止因拼写错误静默回退到默认值。
 
@@ -2849,9 +2849,9 @@ struct Error {
 };
 ```
 
-在 C++ 调用链中，`Error` 通过 `tl::expected<T, Error>` 显式传播；语言 worker 的 SDK `Result` 在协议边界转换为同一 `Error`。`spdlog` 只记录诊断副本，不参与错误控制流，也不能成为恢复依据。所有日志在进入 sink 前先经 Cista 脱敏，并附带可用的 photon/ray/act/beam/lens/generation/epoch 字段。
+在 C++ 调用链中，`Error` 通过 `tl::expected<T, Error>` 显式传播；语言 worker 的 SDK `Result` 在协议边界转换为同一 `Error`。`chLog` 只记录诊断副本，不参与错误控制流，也不能成为恢复依据。所有日志在进入 sink 前先经 Cista 脱敏，并附带可用的 photon/ray/act/beam/lens/generation/epoch 字段。
 
-统一日志实现由 C++ `tokmon_logging` 薄封装约束，底层只允许 `spdlog`：launcher/CLI 默认 console sink，daemon/worker supervisor/desktop 使用 rotating file sink，并可由 Nota 增加受控 exporter sink。Node.js/CPython adapter 只发送结构化 `log.write`，不直接选择持久化 sink。异步日志队列必须有界；溢出策略不能阻塞 Photon append writer，warning/error 则同步写入应急 sink。
+统一日志实现由 C++ `tokmon_logging` 薄封装约束，底层只允许 `chLog`：launcher/CLI 默认 console sink，daemon/worker supervisor/desktop 使用 rotating file sink，并可由 Nota 增加受控 exporter sink。Node.js/CPython adapter 只发送结构化 `log.write`，不直接选择持久化 sink。异步日志队列必须有界；溢出策略不能阻塞 Photon append writer，warning/error 则同步写入应急 sink。
 
 错误分类：validation、policy、secret、sandbox、I/O、provider、storage、ABI、worker crash、view nondeterminism、budget、cancel 和 outcome unknown。
 
@@ -3213,11 +3213,11 @@ old tokmon remains runnable
 
 - daemon、launcher、CLI、desktop、native worker 与 C++ SDK 使用 ISO C++20，不使用 C++23；
 - C++ 宿主/native Lens 的可恢复错误使用 `tl::expected<T, Error>`，正常失败路径不依赖异常；JavaScript/Python SDK 把可预期失败编码为协议 `Result`，未捕获异常只在 worker 边界转成 `ErrorFrame`；
-- C++ 进程统一使用 `spdlog`；Node.js/CPython Lens 日志经 `log.write` 交给 host `spdlog`，全部经过脱敏且不作为事实源；
+- C++ 进程统一使用 `chLog`；Node.js/CPython Lens 日志经 `log.write` 交给 host `chLog`，全部经过脱敏且不作为事实源；
 - TypeScript 构建为 Node.js ESM，JavaScript/TypeScript 可以使用锁定、离线物化的 npm 依赖；
 - Python Lens 使用 exact CPython 与按 artifact hash 隔离的不可变环境，可以使用锁定、离线物化的 PyPI wheel；
 - Node.js/CPython 不嵌入 `tokmond`，语言 runtime、SDK、依赖树与扩展 ABI 均被 lock/hash/SBOM 约束；
-- Tokmon 运行配置、信任配置、bootstrap lock 和 Lens manifest 全部使用 YAML/yaml-cpp；
+- Tokmon 运行配置、信任配置、bootstrap lock 和 Lens manifest 全部使用 YAML/chYAML；
 - Slint 只存在于 Termon/desktop，并固定精确版本；
 - C++ 句柄、weak handle 和 event-loop 线程规则正确；
 - P0 页面闭合输入、计划、审批、执行、Diff、终端、完成和恢复；

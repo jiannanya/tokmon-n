@@ -5,36 +5,42 @@
 #include <string>
 #include <vector>
 
-#include <catch2/catch_test_macros.hpp>
-#include <yaml-cpp/yaml.h>
+#include "tests/support/test_framework.hpp"
 
 #include "tokmon/tokmon.hpp"
+#include "tokmon/yaml.hpp"
 
 namespace tokmon::tests {
 
-inline std::vector<std::string> yaml_strings(const YAML::Node& sequence) {
+inline std::vector<std::string> yaml_strings(const cbor::Value* sequence) {
   std::vector<std::string> values;
-  for (const auto& item : sequence) values.push_back(item.as<std::string>());
+  if (!sequence || !sequence->as_array()) return values;
+  for (const auto& item : *sequence->as_array())
+    values.emplace_back(item.as_string());
   return values;
 }
 
-inline void verify_pattern_sequence(const YAML::Node& sequence,
+inline void verify_pattern_sequence(const cbor::Value* sequence,
                                     const std::vector<PhotonPattern>& patterns) {
-  REQUIRE(sequence.IsSequence());
-  REQUIRE(sequence.size() == patterns.size());
+  REQUIRE(sequence != nullptr);
+  REQUIRE(sequence->as_array() != nullptr);
+  REQUIRE(sequence->as_array()->size() == patterns.size());
   for (std::size_t index = 0; index < patterns.size(); ++index) {
-    REQUIRE(sequence[index]["kind"].as<std::string>() == patterns[index].kind);
-    REQUIRE(sequence[index]["schema"].as<std::string>() == patterns[index].schema);
+    const auto& item = (*sequence->as_array())[index];
+    REQUIRE(cbor::find(item, "kind")->as_string() == patterns[index].kind);
+    REQUIRE(cbor::find(item, "schema")->as_string() == patterns[index].schema);
   }
 }
 
-inline void verify_pattern_sequence(const YAML::Node& sequence,
+inline void verify_pattern_sequence(const cbor::Value* sequence,
                                     const std::vector<ActPattern>& patterns) {
-  REQUIRE(sequence.IsSequence());
-  REQUIRE(sequence.size() == patterns.size());
+  REQUIRE(sequence != nullptr);
+  REQUIRE(sequence->as_array() != nullptr);
+  REQUIRE(sequence->as_array()->size() == patterns.size());
   for (std::size_t index = 0; index < patterns.size(); ++index) {
-    REQUIRE(sequence[index]["kind"].as<std::string>() == patterns[index].kind);
-    REQUIRE(sequence[index]["schema"].as<std::string>() == patterns[index].schema);
+    const auto& item = (*sequence->as_array())[index];
+    REQUIRE(cbor::find(item, "kind")->as_string() == patterns[index].kind);
+    REQUIRE(cbor::find(item, "schema")->as_string() == patterns[index].schema);
   }
 }
 
@@ -57,19 +63,23 @@ inline void verify_lens_contract(const std::string_view short_id,
 
   const auto manifest_path = std::filesystem::path(TOKMON_SOURCE_DIR) /
       "lenses" / short_id / "lens.yaml";
-  const auto yaml = YAML::LoadFile(manifest_path.string());
-  REQUIRE(yaml["id"].as<std::string>() == manifest.id);
-  REQUIRE(yaml["display_name"].as<std::string>() == manifest.display_name);
-  REQUIRE(yaml["version"].as<std::string>() == manifest.version);
-  REQUIRE(yaml["abi"]["major"].as<std::uint32_t>() == manifest.abi_major);
-  REQUIRE(yaml["abi"]["minor"].as<std::uint32_t>() == manifest.abi_minor);
-  REQUIRE(yaml["runtime"]["kind"].as<std::string>() == to_string(manifest.runtime));
-  REQUIRE(yaml["trust"].as<std::string>() == "t1");
-  REQUIRE(yaml["stateless"].as<bool>() == manifest.stateless);
-  REQUIRE(yaml_strings(yaml["view_channels"]) == manifest.view_channels);
-  REQUIRE(yaml_strings(yaml["light_permissions"]) == manifest.light_permissions);
-  verify_pattern_sequence(yaml["observes"], manifest.observes);
-  verify_pattern_sequence(yaml["refracts"], manifest.refracts);
+  auto encoded = yaml::load(manifest_path);
+  REQUIRE(encoded.has_value());
+  REQUIRE(cbor::find(*encoded, "id")->as_string() == manifest.id);
+  REQUIRE(cbor::find(*encoded, "display_name")->as_string() == manifest.display_name);
+  REQUIRE(cbor::find(*encoded, "version")->as_string() == manifest.version);
+  const auto* abi = cbor::find(*encoded, "abi");
+  const auto* runtime = cbor::find(*encoded, "runtime");
+  REQUIRE(cbor::find(*abi, "major")->as_integer() == manifest.abi_major);
+  REQUIRE(cbor::find(*abi, "minor")->as_integer() == manifest.abi_minor);
+  REQUIRE(cbor::find(*runtime, "kind")->as_string() == to_string(manifest.runtime));
+  REQUIRE(cbor::find(*encoded, "trust")->as_string() == "t1");
+  REQUIRE(cbor::find(*encoded, "stateless")->as_bool() == manifest.stateless);
+  REQUIRE(yaml_strings(cbor::find(*encoded, "view_channels")) == manifest.view_channels);
+  REQUIRE(yaml_strings(cbor::find(*encoded, "light_permissions")) ==
+          manifest.light_permissions);
+  verify_pattern_sequence(cbor::find(*encoded, "observes"), manifest.observes);
+  verify_pattern_sequence(cbor::find(*encoded, "refracts"), manifest.refracts);
 
   SurfaceBuilder first_builder(manifest.id);
   SurfaceBuilder second_builder(manifest.id);

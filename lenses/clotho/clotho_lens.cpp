@@ -6,9 +6,8 @@
 #include <set>
 #include <sstream>
 
-#include <yaml-cpp/yaml.h>
-
 #include "tokmon/hash.hpp"
+#include "tokmon/yaml.hpp"
 
 namespace tokmon::builtin {
 namespace {
@@ -19,64 +18,36 @@ struct WorkflowNode {
   std::vector<std::string> dependencies;
 };
 
-cbor::Value yaml_value(const YAML::Node& node) {
-  if (!node || node.IsNull()) return nullptr;
-  if (node.IsSequence()) {
-    cbor::Value::Array result;
-    for (const auto& item : node) result.push_back(yaml_value(item));
-    return result;
-  }
-  if (node.IsMap()) {
-    cbor::Value::Map result;
-    for (const auto& item : node)
-      result[item.first.as<std::string>()] = yaml_value(item.second);
-    return result;
-  }
-  const auto text = node.Scalar();
-  if (text == "true") return true;
-  if (text == "false") return false;
-  try {
-    std::size_t used = 0;
-    const auto integer = std::stoll(text, &used);
-    if (used == text.size()) return static_cast<std::int64_t>(integer);
-  } catch (const std::exception&) {}
-  try {
-    std::size_t used = 0;
-    const auto number = std::stod(text, &used);
-    if (used == text.size()) return number;
-  } catch (const std::exception&) {}
-  return text;
-}
-
-Result<cbor::Value> parse_definition(const std::string& yaml) {
-  try {
-    const auto root = YAML::Load(yaml);
-    if (!root.IsMap() || !root["api"] || root["api"].as<std::string>() != "tokmon.workflow/v1" ||
-        !root["name"] || !root["nodes"] || !root["nodes"].IsMap())
-      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
-          "workflow YAML requires api tokmon.workflow/v1, name and nodes"));
-    const auto templates = root["templates"];
-    if (templates && !templates.IsMap())
-      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
-                                       "workflow templates must be a map"));
-    cbor::Value::Array nodes;
-    for (const auto& entry : root["nodes"]) {
+Result<cbor::Value> parse_definition(const std::string& source) {
+  auto parsed = yaml::parse(source, "workflow YAML");
+  if (!parsed) return tl::unexpected(parsed.error());
+  const auto* api = cbor::find(*parsed, "api");
+  const auto* name = cbor::find(*parsed, "name");
+  const auto* encoded_nodes = cbor::find(*parsed, "nodes");
+  if (!parsed->is_map() || !api || api->as_string() != "tokmon.workflow/v1" ||
+      !name || name->as_string().empty() || !encoded_nodes || !encoded_nodes->as_map())
+    return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+        "workflow YAML requires api tokmon.workflow/v1, name and nodes"));
+  const auto* templates = cbor::find(*parsed, "templates");
+  if (templates && !templates->as_map())
+    return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                     "workflow templates must be a map"));
+  cbor::Value::Array nodes;
+  for (const auto& [id, encoded] : *encoded_nodes->as_map()) {
       auto value = cbor::Value(cbor::Value::Map{});
-      if (entry.second["uses"]) {
-        const auto name = entry.second["uses"].as<std::string>();
-        if (!templates || !templates[name] || !templates[name].IsMap())
+      if (const auto* uses = cbor::find(encoded, "uses")) {
+        const auto template_name = uses->as_string();
+        const auto* selected = templates ? cbor::find(*templates, template_name) : nullptr;
+        if (!selected || !selected->is_map())
           return tl::unexpected(make_error(ErrorCode::schema_mismatch,
                                            "workflow node references an unknown template"));
-        value = yaml_value(templates[name]);
+        value = *selected;
       }
-      auto override = yaml_value(entry.second);
-      if (!override.is_map())
+      if (!encoded.is_map())
         return tl::unexpected(make_error(ErrorCode::schema_mismatch,
                                          "workflow node must be a map"));
-      for (const auto& [key, item] : *override.as_map())
+      for (const auto& [key, item] : *encoded.as_map())
         if (key != "uses") (*value.as_map())[key] = item;
-      if (!value.is_map()) value = cbor::Value::Map{};
-      const auto id = entry.first.as<std::string>();
       (*value.as_map())["id"] = id;
       if (const auto* needs = cbor::find(value, "needs"))
         (*value.as_map())["depends_on"] = *needs;
@@ -105,19 +76,18 @@ Result<cbor::Value> parse_definition(const std::string& yaml) {
       } else {
         nodes.push_back(std::move(value));
       }
-    }
-    return cbor::object({{"api", "tokmon.workflow/v1"},
-        {"name", root["name"].as<std::string>()}, {"nodes", std::move(nodes)},
-        {"inputs", root["inputs"] ? yaml_value(root["inputs"]) : cbor::Value::Map{}},
-        {"failure", root["failure"] ? yaml_value(root["failure"]) : cbor::Value("stop")},
-        {"max_parallel", root["max_parallel"] ? yaml_value(root["max_parallel"]) : cbor::Value(4)},
-        {"groups", root["groups"] ? yaml_value(root["groups"]) : cbor::Value::Map{}},
-        {"permissions", root["permissions"] ? yaml_value(root["permissions"])
-                                               : cbor::Value::Array{}}});
-  } catch (const YAML::Exception& error) {
-    return tl::unexpected(make_error(ErrorCode::schema_mismatch,
-                                     "invalid workflow YAML: " + std::string(error.what())));
   }
+  const auto copy_or = [&](const char* key, cbor::Value fallback) {
+    const auto* value = cbor::find(*parsed, key);
+    return value ? *value : std::move(fallback);
+  };
+  return cbor::object({{"api", "tokmon.workflow/v1"},
+      {"name", std::string(name->as_string())}, {"nodes", std::move(nodes)},
+      {"inputs", copy_or("inputs", cbor::Value::Map{})},
+      {"failure", copy_or("failure", cbor::Value("stop"))},
+      {"max_parallel", copy_or("max_parallel", cbor::Value(4))},
+      {"groups", copy_or("groups", cbor::Value::Map{})},
+      {"permissions", copy_or("permissions", cbor::Value::Array{})}});
 }
 
 Result<std::vector<WorkflowNode>> workflow_nodes(const Photon& definition) {

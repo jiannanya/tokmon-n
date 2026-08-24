@@ -6,7 +6,7 @@
 #include <thread>
 #include <vector>
 
-#include <catch2/catch_test_macros.hpp>
+#include "tests/support/test_framework.hpp"
 #include <sqlite3.h>
 
 #include "tokmon/tokmon.hpp"
@@ -68,7 +68,37 @@ TEST_CASE("JSON bridge preserves protocol objects") {
   auto parsed = tokmon::json::parse(text);
   REQUIRE(parsed);
   REQUIRE(tokmon::cbor::encode(*parsed) == tokmon::cbor::encode(value));
+  REQUIRE(tokmon::json::stringify(tokmon::cbor::Value::Bytes{1, 2, 255}) ==
+          "{\"bytes\":[1,2,255],\"subtype\":null}");
   REQUIRE_FALSE(tokmon::json::parse("{broken"));
+}
+
+TEST_CASE("YAML bridge preserves scalar types aliases and quoted nulls") {
+  auto parsed = tokmon::yaml::parse(
+      "text: \"null\"\nempty: \"\"\nnull_value: null\nboolean: true\n"
+      "integer: 42\nnumber: 1.25\nanchor: &shared value\nalias: *shared\n");
+  REQUIRE(parsed);
+  REQUIRE(tokmon::cbor::find(*parsed, "text")->as_string() == "null");
+  REQUIRE(tokmon::cbor::find(*parsed, "empty")->as_string().empty());
+  REQUIRE(tokmon::cbor::find(*parsed, "null_value")->is_null());
+  REQUIRE(tokmon::cbor::find(*parsed, "boolean")->as_bool());
+  REQUIRE(tokmon::cbor::find(*parsed, "integer")->as_integer() == 42);
+  REQUIRE(std::get<double>(tokmon::cbor::find(*parsed, "number")->data) == 1.25);
+  REQUIRE(tokmon::cbor::find(*parsed, "alias")->as_string() == "value");
+
+  auto emitted = tokmon::yaml::stringify(*parsed);
+  REQUIRE(emitted);
+  auto reparsed = tokmon::yaml::parse(*emitted);
+  REQUIRE(reparsed);
+  REQUIRE(tokmon::cbor::find(*reparsed, "text")->as_string() == "null");
+  REQUIRE(tokmon::cbor::find(*reparsed, "empty")->as_string().empty());
+  REQUIRE(tokmon::cbor::find(*reparsed, "null_value")->is_null());
+  REQUIRE(tokmon::cbor::find(*reparsed, "boolean")->as_bool());
+  REQUIRE(tokmon::cbor::find(*reparsed, "integer")->as_integer() == 42);
+  REQUIRE(std::get<double>(tokmon::cbor::find(*reparsed, "number")->data) == 1.25);
+  REQUIRE(tokmon::cbor::find(*reparsed, "alias")->as_string() == "value");
+  REQUIRE(tokmon::cbor::encode(*reparsed) == tokmon::cbor::encode(*parsed));
+  REQUIRE_FALSE(tokmon::yaml::parse("value: 1\nvalue: 2\n"));
 }
 
 TEST_CASE("slash command catalog parses aliases quotes and desktop matches") {
@@ -566,6 +596,14 @@ TEST_CASE("unknown YAML fields are rejected without publishing a path") {
   output << "engine:\n  max_beats: 4\n  silent_unknown: true\n";
   output.close();
   auto config = tokmon::load_config(workspace);
+  REQUIRE_FALSE(config);
+  REQUIRE(config.error().code == tokmon::ErrorCode::schema_mismatch);
+
+  {
+    std::ofstream invalid_type(workspace / ".tokmon" / "config.yaml", std::ios::trunc);
+    invalid_type << "security:\n  require_signatures: \"true\"\n";
+  }
+  config = tokmon::load_config(workspace);
   REQUIRE_FALSE(config);
   REQUIRE(config.error().code == tokmon::ErrorCode::schema_mismatch);
 }

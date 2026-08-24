@@ -16,8 +16,6 @@
 #include <thread>
 #include <unordered_map>
 
-#include <yaml-cpp/yaml.h>
-
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -28,10 +26,9 @@
 #include <unistd.h>
 #endif
 
-#include <spdlog/spdlog.h>
-
 #include "tokmon/tokmon.hpp"
 #include "tokmon/secret_store.hpp"
+#include "tokmon/yaml.hpp"
 
 namespace {
 std::atomic_bool running{true};
@@ -86,6 +83,27 @@ tokmon::SnowMessage snow_error(const tokmon::SnowMessage& request,
           {"message", error.describe()}})};
 }
 
+tokmon::Result<tokmon::cbor::Value> editable_yaml(
+    const std::filesystem::path& file) {
+  if (!std::filesystem::exists(file)) return tokmon::cbor::Value::Map{};
+  auto loaded = tokmon::yaml::load(file);
+  if (!loaded) return tl::unexpected(loaded.error());
+  if (!loaded->is_map()) return tokmon::cbor::Value::Map{};
+  return loaded;
+}
+
+tokmon::cbor::Value::Map& map_at(tokmon::cbor::Value& parent,
+                                 const std::string_view key) {
+  auto& map = *parent.as_map();
+  auto& child = map[std::string(key)];
+  if (!child.is_map()) child = tokmon::cbor::Value::Map{};
+  return *child.as_map();
+}
+
+tokmon::Result<void> publish_yaml(const std::filesystem::path& file,
+                                  const tokmon::cbor::Value& root,
+                                  std::string_view description);
+
 tokmon::Result<void> update_project_light_path(const std::filesystem::path& file,
                                                 const tokmon::cbor::Value& payload,
                                                 const std::string_view action) {
@@ -94,114 +112,43 @@ tokmon::Result<void> update_project_light_path(const std::filesystem::path& file
     return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::invalid_argument,
                                              "Lens id is required"));
   const auto id = std::string(id_field->as_string());
-  try {
-    YAML::Node root;
-    if (std::filesystem::exists(file)) root = YAML::LoadFile(file.string());
-    if (!root || !root.IsMap()) root = YAML::Node(YAML::NodeType::Map);
-    root["version"] = 1;
-    auto lenses = root["lenses"];
-    if (!lenses || !lenses.IsSequence()) lenses = YAML::Node(YAML::NodeType::Sequence);
-    std::size_t selected = lenses.size();
-    for (std::size_t index = 0; index < lenses.size(); ++index)
-      if (lenses[index]["id"] && lenses[index]["id"].as<std::string>() == id) {
-        selected = index; break;
-      }
-    YAML::Node entry = selected < lenses.size() ? lenses[selected] :
-                                                 YAML::Node(YAML::NodeType::Map);
-    entry["id"] = id;
+  auto loaded = editable_yaml(file);
+  if (!loaded) return tl::unexpected(loaded.error());
+  auto root = std::move(*loaded);
+  auto& root_map = *root.as_map();
+  root_map["version"] = 1;
+  auto& lenses_value = root_map["lenses"];
+  if (!lenses_value.as_array()) lenses_value = tokmon::cbor::Value::Array{};
+  auto& lenses = *std::get_if<tokmon::cbor::Value::Array>(&lenses_value.data);
+  std::size_t selected = lenses.size();
+  for (std::size_t index = 0; index < lenses.size(); ++index) {
+    const auto* mounted_id = tokmon::cbor::find(lenses[index], "id");
+    if (mounted_id && mounted_id->as_string() == id) {
+      selected = index;
+      break;
+    }
+  }
+  auto entry = selected < lenses.size() ? lenses[selected]
+                                        : tokmon::cbor::Value(tokmon::cbor::Value::Map{});
+  if (!entry.is_map()) entry = tokmon::cbor::Value::Map{};
+  auto& entry_map = *entry.as_map();
+  entry_map["id"] = id;
     if (action == "lens.unmount") {
-      entry["enabled"] = false;
+      entry_map["enabled"] = false;
     } else {
       const auto* artifact = tokmon::cbor::find(payload, "artifact");
       const auto* runtime = tokmon::cbor::find(payload, "runtime");
       if (!artifact || artifact->as_string().empty())
         return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::invalid_argument,
                                                  "Lens artifact is required"));
-      entry["artifact"] = std::string(artifact->as_string());
-      entry["runtime"] = runtime && !runtime->as_string().empty()
+      entry_map["artifact"] = std::string(artifact->as_string());
+      entry_map["runtime"] = runtime && !runtime->as_string().empty()
           ? std::string(runtime->as_string()) : "in_process";
-      entry["enabled"] = true;
+      entry_map["enabled"] = true;
     }
     if (selected < lenses.size()) lenses[selected] = entry;
     else lenses.push_back(entry);
-    root["lenses"] = lenses;
-    std::error_code error;
-    std::filesystem::create_directories(file.parent_path(), error);
-    if (error)
-      return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::io_error,
-          "cannot create project .tokmon directory: " + error.message()));
-    const auto temporary = file.string() + ".new";
-    {
-      std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-      if (!output)
-        return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::io_error,
-                                                 "cannot write LightPath candidate"));
-      output << root;
-      output.flush();
-      if (!output)
-        return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::io_error,
-                                                 "cannot flush LightPath candidate"));
-    }
-#if defined(_WIN32)
-    const auto source = std::filesystem::path(temporary).wstring();
-    const auto destination = file.wstring();
-    if (!MoveFileExW(source.c_str(), destination.c_str(),
-                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-      return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::io_error,
-                                               "cannot atomically publish LightPath YAML"));
-#else
-    std::filesystem::rename(temporary, file, error);
-    if (error)
-      return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::io_error,
-                                               "cannot atomically publish LightPath YAML"));
-#endif
-    return {};
-  } catch (const YAML::Exception& exception) {
-    return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::schema_mismatch,
-        "cannot update project LightPath: " + std::string(exception.what())));
-  }
-}
-
-YAML::Node yaml_from_cbor(const tokmon::cbor::Value& value) {
-  if (const auto* map = value.as_map()) {
-    YAML::Node result(YAML::NodeType::Map);
-    for (const auto& [key, child] : *map) result[key] = yaml_from_cbor(child);
-    return result;
-  }
-  if (const auto* array = value.as_array()) {
-    YAML::Node result(YAML::NodeType::Sequence);
-    for (const auto& child : *array) result.push_back(yaml_from_cbor(child));
-    return result;
-  }
-  if (const auto* text = std::get_if<std::string>(&value.data)) return YAML::Node(*text);
-  if (const auto* number = std::get_if<std::int64_t>(&value.data)) return YAML::Node(*number);
-  if (const auto* number = std::get_if<double>(&value.data)) return YAML::Node(*number);
-  if (const auto* boolean = std::get_if<bool>(&value.data)) return YAML::Node(*boolean);
-  return YAML::Node();
-}
-
-tokmon::cbor::Value cbor_from_yaml(const YAML::Node& value) {
-  if (!value || value.IsNull()) return nullptr;
-  if (value.IsMap()) {
-    tokmon::cbor::Value::Map result;
-    for (const auto& entry : value)
-      result[entry.first.as<std::string>()] = cbor_from_yaml(entry.second);
-    return result;
-  }
-  if (value.IsSequence()) {
-    tokmon::cbor::Value::Array result;
-    for (const auto& child : value) result.push_back(cbor_from_yaml(child));
-    return result;
-  }
-  const auto text = value.Scalar();
-  if (text == "true") return true;
-  if (text == "false") return false;
-  try {
-    std::size_t parsed = 0;
-    const auto integer = std::stoll(text, &parsed);
-    if (parsed == text.size()) return static_cast<std::int64_t>(integer);
-  } catch (...) {}
-  return text;
+  return publish_yaml(file, root, "LightPath");
 }
 
 tokmon::Result<void> update_project_settings(const std::filesystem::path& file,
@@ -210,63 +157,29 @@ tokmon::Result<void> update_project_settings(const std::filesystem::path& file,
   if (!values || !values->as_map())
     return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::schema_mismatch,
                                              "settings values must be a map"));
-  try {
-    YAML::Node root;
-    if (std::filesystem::exists(file)) root = YAML::LoadFile(file.string());
-    if (!root || !root.IsMap()) root = YAML::Node(YAML::NodeType::Map);
-    const auto navigation = root["ui"] ? root["ui"]["navigation"] : YAML::Node{};
-    root["ui"] = yaml_from_cbor(*values);
-    if (navigation) root["ui"]["navigation"] = navigation;
-    std::error_code error;
-    std::filesystem::create_directories(file.parent_path(), error);
-    if (error)
-      return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::io_error,
-          "cannot create project .tokmon directory: " + error.message()));
-    const auto temporary = std::filesystem::path(file.string() + ".new");
-    {
-      std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-      if (!output)
-        return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::io_error,
-                                                 "cannot write UI settings candidate"));
-      output << root;
-      output.flush();
-      if (!output)
-        return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::io_error,
-                                                 "cannot flush UI settings candidate"));
-    }
-#if defined(_WIN32)
-    if (!MoveFileExW(temporary.wstring().c_str(), file.wstring().c_str(),
-                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-      return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::io_error,
-                                               "cannot atomically publish UI settings YAML"));
-#else
-    std::filesystem::rename(temporary, file, error);
-    if (error)
-      return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::io_error,
-                                               "cannot atomically publish UI settings YAML"));
-#endif
-    return {};
-  } catch (const YAML::Exception& exception) {
-    return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::schema_mismatch,
-        "cannot update project UI settings: " + std::string(exception.what())));
-  }
+  auto loaded = editable_yaml(file);
+  if (!loaded) return tl::unexpected(loaded.error());
+  auto root = std::move(*loaded);
+  std::optional<tokmon::cbor::Value> navigation;
+  if (const auto* ui = tokmon::cbor::find(root, "ui"))
+    if (const auto* existing = tokmon::cbor::find(*ui, "navigation")) navigation = *existing;
+  auto replacement = *values;
+  if (navigation) (*replacement.as_map())["navigation"] = std::move(*navigation);
+  (*root.as_map())["ui"] = std::move(replacement);
+  return publish_yaml(file, root, "UI settings");
 }
 
 tokmon::Result<tokmon::cbor::Value> read_project_settings(
     const std::filesystem::path& file) {
-  try {
-    if (!std::filesystem::exists(file)) return tokmon::cbor::Value::Map{};
-    const auto root = YAML::LoadFile(file.string());
-    if (!root || !root.IsMap() || !root["ui"]) return tokmon::cbor::Value::Map{};
-    const auto value = cbor_from_yaml(root["ui"]);
-    if (!value.as_map())
-      return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::schema_mismatch,
-                                               "config ui must be a map"));
-    return value;
-  } catch (const YAML::Exception& exception) {
+  if (!std::filesystem::exists(file)) return tokmon::cbor::Value::Map{};
+  auto root = tokmon::yaml::load(file);
+  if (!root) return tl::unexpected(root.error());
+  const auto* value = tokmon::cbor::find(*root, "ui");
+  if (!value) return tokmon::cbor::Value::Map{};
+  if (!value->as_map())
     return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::schema_mismatch,
-        "cannot read project UI settings: " + std::string(exception.what())));
-  }
+                                             "config ui must be a map"));
+  return *value;
 }
 
 bool loopback_endpoint(const std::string_view endpoint) {
@@ -275,7 +188,7 @@ bool loopback_endpoint(const std::string_view endpoint) {
 }
 
 tokmon::Result<void> publish_yaml(const std::filesystem::path& file,
-                                  const YAML::Node& root,
+                                  const tokmon::cbor::Value& root,
                                   const std::string_view description) {
   std::error_code error;
   std::filesystem::create_directories(file.parent_path(), error);
@@ -283,12 +196,14 @@ tokmon::Result<void> publish_yaml(const std::filesystem::path& file,
     return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::io_error,
         "cannot create project .tokmon directory: " + error.message()));
   const auto temporary = std::filesystem::path(file.string() + ".new");
+  auto serialized = tokmon::yaml::stringify(root);
+  if (!serialized) return tl::unexpected(serialized.error());
   {
     std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
     if (!output)
       return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::io_error,
           "cannot write " + std::string(description) + " candidate"));
-    output << root;
+    output << *serialized;
     output.flush();
     if (!output)
       return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::io_error,
@@ -344,16 +259,12 @@ tokmon::Result<void> update_project_navigation(const std::filesystem::path& file
       return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::schema_mismatch,
                                                "navigation item is invalid"));
   }
-  try {
-    YAML::Node root;
-    if (std::filesystem::exists(file)) root = YAML::LoadFile(file.string());
-    if (!root || !root.IsMap()) root = YAML::Node(YAML::NodeType::Map);
-    root["ui"]["navigation"] = yaml_from_cbor(*items);
-    return publish_yaml(file, root, "desktop navigation");
-  } catch (const YAML::Exception& exception) {
-    return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::schema_mismatch,
-        "cannot update desktop navigation: " + std::string(exception.what())));
-  }
+  auto loaded = editable_yaml(file);
+  if (!loaded) return tl::unexpected(loaded.error());
+  auto root = std::move(*loaded);
+  auto& ui = map_at(root, "ui");
+  ui["navigation"] = *items;
+  return publish_yaml(file, root, "desktop navigation");
 }
 
 std::string provider_secret_ref(const std::string_view id) {
@@ -452,14 +363,16 @@ tokmon::Result<void> update_project_model_provider(const std::filesystem::path& 
       retry_backoff_ms < 0 || retry_backoff_ms > 60'000)
     return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::invalid_argument,
         "provider retry/token limits are outside the allowed range"));
-  try {
-    YAML::Node root;
-    if (std::filesystem::exists(file)) root = YAML::LoadFile(file.string());
-    if (!root || !root.IsMap()) root = YAML::Node(YAML::NodeType::Map);
-    auto providers = root["models"]["providers"];
-    if (!providers || !providers.IsMap()) providers = YAML::Node(YAML::NodeType::Map);
-    auto entry = providers[id];
-    if (!entry || !entry.IsMap()) entry = YAML::Node(YAML::NodeType::Map);
+  auto loaded = editable_yaml(file);
+  if (!loaded) return tl::unexpected(loaded.error());
+  auto root = std::move(*loaded);
+  auto& models = map_at(root, "models");
+  auto& providers_value = models["providers"];
+  if (!providers_value.is_map()) providers_value = tokmon::cbor::Value::Map{};
+  auto& providers = *providers_value.as_map();
+  auto& entry_value = providers[id];
+  if (!entry_value.is_map()) entry_value = tokmon::cbor::Value::Map{};
+  auto& entry = *entry_value.as_map();
     entry["protocol"] = protocol;
     entry["endpoint"] = endpoint;
     entry["model"] = model;
@@ -474,29 +387,18 @@ tokmon::Result<void> update_project_model_provider(const std::filesystem::path& 
     entry["max_output_tokens"] = max_output_tokens;
     entry["max_attempts"] = max_attempts;
     entry["retry_backoff_ms"] = retry_backoff_ms;
-    providers[id] = entry;
-    root["models"]["providers"] = providers;
     if (tokmon::cbor::find(payload, "default") &&
-        tokmon::cbor::find(payload, "default")->as_bool()) root["models"]["default"] = id;
-    return publish_yaml(file, root, "model provider");
-  } catch (const YAML::Exception& exception) {
-    return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::schema_mismatch,
-        "cannot update project model provider: " + std::string(exception.what())));
-  }
+        tokmon::cbor::find(payload, "default")->as_bool()) models["default"] = id;
+  return publish_yaml(file, root, "model provider");
 }
 
 tokmon::Result<void> select_project_model_provider(const std::filesystem::path& file,
                                                    const std::string_view id) {
-  try {
-    YAML::Node root;
-    if (std::filesystem::exists(file)) root = YAML::LoadFile(file.string());
-    if (!root || !root.IsMap()) root = YAML::Node(YAML::NodeType::Map);
-    root["models"]["default"] = std::string(id);
-    return publish_yaml(file, root, "default model provider");
-  } catch (const YAML::Exception& exception) {
-    return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::schema_mismatch,
-        "cannot select project model provider: " + std::string(exception.what())));
-  }
+  auto loaded = editable_yaml(file);
+  if (!loaded) return tl::unexpected(loaded.error());
+  auto root = std::move(*loaded);
+  map_at(root, "models")["default"] = std::string(id);
+  return publish_yaml(file, root, "default model provider");
 }
 
 tokmon::cbor::Value provider_value(const tokmon::ModelProviderConfig& provider,
@@ -1531,7 +1433,7 @@ int main(int argc, char** argv) {
   if (!snow_started) {
     std::cerr << snow_started.error().describe() << '\n'; return 2;
   }
-  spdlog::info("Snow endpoint listening at {}", endpoint.string());
+  tokmon::log_info("Snow endpoint listening at {}", endpoint.string());
 
   const std::vector<std::filesystem::path> watched_config{
       runtime.config().paths.user / "config.yaml",
@@ -1555,8 +1457,8 @@ int main(int argc, char** argv) {
           if (!idle_shutdown_at || requested > *idle_shutdown_at)
             idle_shutdown_at = requested;
         }
-        spdlog::warn("expired {} daemon client lease {}",
-                     iterator->second.kind, iterator->first);
+        tokmon::log_warn("expired {} daemon client lease {}",
+                         iterator->second.kind, iterator->first);
         iterator = client_leases.erase(iterator);
       }
       idle_stop_candidate = !daemon_pinned && client_leases.empty() &&
@@ -1569,7 +1471,7 @@ int main(int argc, char** argv) {
         const auto now = std::chrono::steady_clock::now();
         if (!daemon_pinned && client_leases.empty() && idle_shutdown_at &&
             now >= *idle_shutdown_at) {
-          spdlog::info("no client leases or active work remain; stopping tokmond");
+          tokmon::log_info("no client leases or active work remain; stopping tokmond");
           running.store(false, std::memory_order_release);
         }
       }
@@ -1588,7 +1490,8 @@ int main(int argc, char** argv) {
     if (changed) {
       std::scoped_lock lock(runtime_mutex);
       if (auto result = runtime.reconcile(); !result)
-        spdlog::error("configuration reconcile rejected: {}", result.error().describe());
+        tokmon::log_error("configuration reconcile rejected: {}",
+                          result.error().describe());
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(250));
   }

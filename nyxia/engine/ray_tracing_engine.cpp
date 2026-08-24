@@ -3,8 +3,6 @@
 #include <algorithm>
 #include <exception>
 
-#include <spdlog/spdlog.h>
-
 #include "tokmon/logging.hpp"
 
 namespace tokmon {
@@ -23,10 +21,10 @@ Result<Photon> RayTracingEngine::emit(PhotonDraft draft) {
 void RayTracingEngine::log(const std::string_view level, const std::string_view message,
                            const LensId& lens) {
   const auto safe = redact(message);
-  if (level == "error") spdlog::error("lens={} {}", lens, safe);
-  else if (level == "warn") spdlog::warn("lens={} {}", lens, safe);
-  else if (level == "debug") spdlog::debug("lens={} {}", lens, safe);
-  else spdlog::info("lens={} {}", lens, safe);
+  if (level == "error") log_error("lens={} {}", lens, safe);
+  else if (level == "warn") log_warn("lens={} {}", lens, safe);
+  else if (level == "debug") log_debug("lens={} {}", lens, safe);
+  else log_info("lens={} {}", lens, safe);
 }
 
 Result<SurfaceSnapshot> RayTracingEngine::view(const RayId& ray) {
