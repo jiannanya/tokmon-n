@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cctype>
 #include <condition_variable>
+#include <cmath>
 #include <cwchar>
 #include <cwctype>
 #include <deque>
@@ -1794,7 +1795,8 @@ class UiSnowController final {
       if (auto value = string_value("email")) handle->set_setting_email(*value);
       if (auto value = bool_value("cloud_sync")) handle->set_setting_cloud_sync(*value);
       if (auto value = bool_value("sidebar_visible")) handle->set_sidebar_visible(*value);
-      if (auto value = bool_value("code_visible")) handle->set_code_visible(*value);
+      if (auto value = bool_value("code_visible"))
+        handle->invoke_set_code_panel_visible(*value);
       if (auto value = bool_value("task_expanded")) handle->set_task_expanded(*value);
       if (auto value = string_value("update_channel")) handle->set_setting_channel(*value);
       if (auto value = string_value("file_access")) handle->set_setting_file_access(*value);
@@ -2912,6 +2914,27 @@ int main(int argc, char** argv) {
   });
   window->on_close_window([] {
     slint::quit_event_loop();
+  });
+  window->on_set_code_panel_visible([window](bool visible) {
+    if (visible == window->get_code_visible()) return;
+
+    const auto maximized = window->window().is_maximized();
+    auto physical_size = window->window().size();
+    const auto scale = window->window().scale_factor();
+    const auto panel_delta = static_cast<std::uint32_t>(std::lround(
+        (window->get_code_panel_width() + 1.0f) * scale));
+
+    window->set_code_visible(visible);
+    if (!maximized) {
+      if (visible) {
+        physical_size.width += panel_delta;
+      } else {
+        physical_size.width = physical_size.width > panel_delta
+            ? physical_size.width - panel_delta
+            : physical_size.width;
+      }
+      window->window().set_size(physical_size);
+    }
   });
   window->on_refresh_trace([&controller] {
     controller.publish_trace_view();
