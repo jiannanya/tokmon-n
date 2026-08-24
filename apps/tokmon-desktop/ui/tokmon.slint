@@ -113,6 +113,7 @@ export global Icons {
     out property<image> search: @image-url("../assets/figma/icon-03.svg");
     out property<image> plus-dim: @image-url("../assets/figma/icon-04.svg");
     out property<image> chev-down: @image-url("../assets/figma/icon-05.svg");
+    out property<image> folder-open: @image-url("../assets/figma/icon-06.svg");
     out property<image> chev-down-faint: @image-url("../assets/figma/icon-07.svg");
     out property<image> chev-right-faint: @image-url("../assets/figma/icon-11.svg");
     out property<image> chev-right: @image-url("../assets/figma/icon-12.svg");
@@ -148,6 +149,8 @@ export global Icons {
     out property<image> contrast: @image-url("../assets/figma/icon-46.svg");
     out property<image> keyboard: @image-url("../assets/figma/icon-47.svg");
     out property<image> sparkles: @image-url("../assets/figma/icon-48.svg");
+    out property<image> lock: @image-url("../assets/figma/icon-49.svg");
+    out property<image> git-branch: @image-url("../assets/figma/icon-50.svg");
 }
 
 component ToolIcon inherits Rectangle {
@@ -337,10 +340,14 @@ component SelectBox inherits Rectangle {
 component RowShell inherits Rectangle {
     in property <string> label;
     in property <bool> separated: true;
-    min-height: 47px;
+    in property <bool> tall: false;
+    height: !self.separated ? 41px : (self.tall ? 57px : 49px);
+    min-height: self.height;
+    max-height: self.height;
+    vertical-stretch: 0;
     HorizontalLayout {
-        padding-top: 12px;
-        padding-bottom: 16px;
+        padding-top: 0px;
+        padding-bottom: self.separated ? 16px : 0px;
         alignment: space-between;
         Text {
             text: root.label;
@@ -824,6 +831,187 @@ component TraceEventRow inherits Rectangle {
     }
 }
 
+component WorkspaceStatusBar inherits Rectangle {
+    in property <string> group-name;
+    in property <string> project-name;
+    in property <string> short-path;
+    in property <bool> has-git;
+    in property <string> branch-name;
+    in property <int> indexed-files;
+    in property <bool> locked;
+    callback change-workspace;
+
+    height: 27px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.95);
+    border-width: 0.67px;
+    border-color: Palette.border;
+    clip: true;
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 6px;
+        spacing: 8px;
+        alignment: space-between;
+
+        HorizontalLayout {
+            horizontal-stretch: 1;
+            spacing: 6px;
+            alignment: start;
+            Rectangle {
+                width: 18px;
+                height: 18px;
+                horizontal-stretch: 0;
+                border-radius: 5px;
+                background: #FEF8F4;
+                border-width: 0.67px;
+                border-color: #F5D9C3;
+                Image {
+                    source: Icons.folder-open;
+                    width: 11px;
+                    height: 11px;
+                    x: (parent.width - 11px) / 2;
+                    y: (parent.height - 11px) / 2;
+                }
+            }
+            Text {
+                text: root.group-name;
+                font-size: 10px;
+                font-weight: 500;
+                color: Palette.dim;
+                vertical-alignment: center;
+            }
+            Text {
+                text: "/";
+                font-size: 9px;
+                color: #D6D3D1;
+                vertical-alignment: center;
+            }
+            Text {
+                text: root.project-name;
+                font-size: 11px;
+                font-weight: 600;
+                letter-spacing: -0.2px;
+                color: Palette.ink;
+                vertical-alignment: center;
+            }
+            Rectangle {
+                width: Math.min(210px, path-label.preferred-width + 12px);
+                horizontal-stretch: 0;
+                height: 17px;
+                border-radius: 4px;
+                background: Palette.sep;
+                border-width: 0.67px;
+                border-color: Palette.border;
+                path-label := Text {
+                    x: 6px;
+                    width: parent.width - 12px;
+                    height: parent.height;
+                    text: root.short-path;
+                    font-family: "Consolas";
+                    font-size: 9.5px;
+                    color: Palette.dim;
+                    overflow: elide;
+                    vertical-alignment: center;
+                }
+            }
+            if root.has-git : Rectangle {
+                width: branch-label.preferred-width + 23px;
+                horizontal-stretch: 0;
+                height: 17px;
+                border-radius: 4px;
+                background: #FEF8F4;
+                border-width: 0.67px;
+                border-color: #F5D9C3;
+                Image {
+                    source: Icons.git-branch;
+                    x: 5px;
+                    y: (parent.height - 10px) / 2;
+                    width: 10px;
+                    height: 10px;
+                }
+                branch-label := Text {
+                    x: 17px;
+                    width: parent.width - 21px;
+                    height: parent.height;
+                    text: root.branch-name;
+                    font-family: "Consolas";
+                    font-size: 9px;
+                    color: Palette.accent;
+                    overflow: elide;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        HorizontalLayout {
+            horizontal-stretch: 0;
+            spacing: 8px;
+            alignment: end;
+            Rectangle {
+                width: ready-label.preferred-width + 23px;
+                horizontal-stretch: 0;
+                height: 17px;
+                border-radius: 4px;
+                background: Palette.sep;
+                border-width: 0.67px;
+                border-color: Palette.border;
+                Rectangle {
+                    x: 6px;
+                    y: (parent.height - 6px) / 2;
+                    width: 6px;
+                    height: 6px;
+                    border-radius: 999px;
+                    background: #16A34A;
+                }
+                ready-label := Text {
+                    x: 16px;
+                    width: parent.width - 20px;
+                    height: parent.height;
+                    text: root.indexed-files + " 文件就绪";
+                    font-size: 9.5px;
+                    color: Palette.dim;
+                    vertical-alignment: center;
+                }
+            }
+            if !root.locked : Rectangle {
+                width: 70px;
+                height: 19px;
+                horizontal-stretch: 0;
+                border-radius: 5px;
+                background: #FEF8F4;
+                border-width: 0.67px;
+                border-color: #F5D9C3;
+                HorizontalLayout {
+                    padding-left: 6px;
+                    padding-right: 6px;
+                    spacing: 4px;
+                    Image { source: Icons.folder-open; width: 10px; height: 10px; y: (parent.height - 10px) / 2; }
+                    Text { text: "更换目录"; font-size: 10px; font-weight: 500; color: Palette.accent; vertical-alignment: center; }
+                }
+                TouchArea {
+                    clicked => { root.change-workspace() }
+                    mouse-cursor: pointer;
+                }
+            }
+            if root.locked : Rectangle {
+                width: 72px;
+                height: 19px;
+                horizontal-stretch: 0;
+                border-radius: 5px;
+                background: Palette.sep;
+                HorizontalLayout {
+                    padding-left: 6px;
+                    padding-right: 6px;
+                    spacing: 4px;
+                    Image { source: Icons.lock; width: 10px; height: 10px; y: (parent.height - 10px) / 2; }
+                    Text { text: "目录已锁定"; font-size: 10px; color: Palette.faint; vertical-alignment: center; }
+                }
+            }
+        }
+    }
+}
+
 export component MainWindow inherits Window {
     title: "Tokmon — A Lens to Them All";
     no-frame: true;
@@ -1223,6 +1411,9 @@ export component MainWindow inherits Window {
                             Rectangle {
                                 vertical-stretch: 1;
                                 clip: true;
+                                property <length> nav-viewport-height: root.navigation.length * 30px;
+                                property <length> nav-thumb-height: Math.max(36px,
+                                    self.height * self.height / Math.max(self.height, self.nav-viewport-height));
                                 if root.search-text != "" && root.navigation.length == 0 : VerticalLayout {
                                     padding-top: 28px;
                                     padding-bottom: 16px;
@@ -1270,14 +1461,30 @@ export component MainWindow inherits Window {
                                         }
                                     }
                                 }
-                                ListView {
-                                    vertical-stretch: 1;
-                                    for item[index] in root.navigation : SidebarRow {
-                                        item: item;
-                                        row-index: index;
-                                        selected => { root.select-navigation(index) }
-                                        quick-create => { root.quick-create(index) }
+                                sidebar-nav := Flickable {
+                                    width: parent.width - 10px;
+                                    height: parent.height;
+                                    viewport-width: self.width;
+                                    viewport-height: parent.nav-viewport-height;
+                                    VerticalLayout {
+                                        width: sidebar-nav.width;
+                                        for item[index] in root.navigation : SidebarRow {
+                                            item: item;
+                                            row-index: index;
+                                            selected => { root.select-navigation(index) }
+                                            quick-create => { root.quick-create(index) }
+                                        }
                                     }
+                                }
+                                if self.nav-viewport-height > self.height : Rectangle {
+                                    x: parent.width - 5px;
+                                    y: Math.max(0px, Math.min(parent.height - self.height,
+                                        -sidebar-nav.viewport-y * (parent.height - self.height)
+                                            / (parent.nav-viewport-height - parent.height)));
+                                    width: 4px;
+                                    height: parent.nav-thumb-height;
+                                    border-radius: 999px;
+                                    background: #E7E4DC;
                                 }
                             }
                         }
@@ -1744,7 +1951,19 @@ export component MainWindow inherits Window {
                                         y: 18px;
                                         VerticalLayout {
                                             spacing: 7px;
-                                            Rectangle {
+                                            WorkspaceStatusBar {
+                                                group-name: root.workspace-group;
+                                                project-name: root.workspace-project;
+                                                short-path: root.workspace-short-path == "" ? root.setting-workspace : root.workspace-short-path;
+                                                has-git: root.workspace-has-git;
+                                                branch-name: root.workspace-branch;
+                                                indexed-files: root.workspace-indexed-files;
+                                                locked: root.workspace-locked;
+                                                change-workspace => { root.open-change-workspace() }
+                                            }
+                                            // Kept temporarily as a non-instantiated reference while the
+                                            // workspace bar is migrated into its own functional component.
+                                            if false : Rectangle {
                                                 height: 27px;
                                                 border-radius: 12px;
                                                 background: rgba(255, 255, 255, 0.95);
@@ -1792,6 +2011,8 @@ export component MainWindow inherits Window {
                                                         vertical-alignment: center;
                                                     }
                                                     Rectangle {
+                                                        width: Math.min(210px, workspace-path-text.preferred-width + 12px);
+                                                        horizontal-stretch: 0;
                                                         height: 17px;
                                                         border-radius: 4px;
                                                         background: Palette.sep;
@@ -1800,7 +2021,7 @@ export component MainWindow inherits Window {
                                                         HorizontalLayout {
                                                             padding-left: 5px;
                                                             padding-right: 5px;
-                                                            Text {
+                                                            workspace-path-text := Text {
                                                                 text: root.workspace-short-path == "" ? root.setting-workspace : root.workspace-short-path;
                                                                 font-family: "Consolas";
                                                                 font-size: 9.5px;
@@ -1811,6 +2032,8 @@ export component MainWindow inherits Window {
                                                         }
                                                     }
                                                     if root.workspace-has-git : Rectangle {
+                                                        width: workspace-branch-text.preferred-width + 14px;
+                                                        horizontal-stretch: 0;
                                                         height: 17px;
                                                         border-radius: 4px;
                                                         background: #FEF8F4;
@@ -1820,7 +2043,7 @@ export component MainWindow inherits Window {
                                                             padding-left: 5px;
                                                             padding-right: 5px;
                                                             spacing: 3px;
-                                                            Text {
+                                                            workspace-branch-text := Text {
                                                                 text: root.workspace-branch;
                                                                 font-family: "Consolas";
                                                                 font-size: 9px;
@@ -1831,6 +2054,8 @@ export component MainWindow inherits Window {
                                                     }
                                                     Rectangle { horizontal-stretch: 1; }
                                                     Rectangle {
+                                                        width: workspace-ready-text.preferred-width + 23px;
+                                                        horizontal-stretch: 0;
                                                         height: 17px;
                                                         border-radius: 4px;
                                                         background: Palette.sep;
@@ -1847,7 +2072,7 @@ export component MainWindow inherits Window {
                                                                 background: #16A34A;
                                                                 y: (parent.height - 6px) / 2;
                                                             }
-                                                            Text {
+                                                            workspace-ready-text := Text {
                                                                 text: root.workspace-indexed-files + " 文件就绪";
                                                                 font-size: 9.5px;
                                                                 color: Palette.dim;
@@ -1856,6 +2081,8 @@ export component MainWindow inherits Window {
                                                         }
                                                     }
                                                     if !root.workspace-locked : Rectangle {
+                                                        width: 70px;
+                                                        horizontal-stretch: 0;
                                                         height: 19px;
                                                         border-radius: 5px;
                                                         background: #FEF8F4;
@@ -1883,14 +2110,29 @@ export component MainWindow inherits Window {
                                                             mouse-cursor: pointer;
                                                         }
                                                     }
-                                                    if root.workspace-locked : HorizontalLayout {
+                                                    if root.workspace-locked : Rectangle {
+                                                        width: 70px;
+                                                        height: 19px;
+                                                        horizontal-stretch: 0;
+                                                        border-radius: 5px;
+                                                        background: Palette.sep;
+                                                        HorizontalLayout {
+                                                            padding-left: 6px;
+                                                            padding-right: 6px;
                                                         spacing: 4px;
-                                                        alignment: end;
+                                                            alignment: center;
+                                                            Text {
+                                                                text: "▢";
+                                                                font-size: 9px;
+                                                                color: Palette.faint;
+                                                                vertical-alignment: center;
+                                                            }
                                                         Text {
                                                             text: "目录已锁定";
                                                             font-size: 10px;
                                                             color: Palette.faint;
                                                             vertical-alignment: center;
+                                                        }
                                                         }
                                                     }
                                                 }
@@ -2430,8 +2672,12 @@ export component MainWindow inherits Window {
 if root.trajectory-selected : Rectangle {
     width: parent.width;
     height: parent.height;
-    ScrollView {
+    clip: true;
+    trace-scroll := ScrollView {
+        viewport-width: self.visible-width;
+        horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
         VerticalLayout {
+            width: trace-scroll.visible-width;
             padding-top: 20px;
             padding-bottom: 20px;
             padding-left: 20px;
@@ -2670,7 +2916,8 @@ if root.trajectory-selected : Rectangle {
             HorizontalLayout {
                 spacing: 16px;
                 Rectangle {
-                    horizontal-stretch: 1;
+                    width: Math.max(520px, trace-scroll.visible-width - 56px - trace-details.width);
+                    horizontal-stretch: 0;
                     border-radius: 16px;
                     background: Palette.white;
                     border-width: 0.67px;
@@ -2832,8 +3079,8 @@ if root.trajectory-selected : Rectangle {
                         }
                     }
                 }
-                Rectangle {
-                    width: 380px;
+                trace-details := Rectangle {
+                    width: Math.min(320px, (trace-scroll.visible-width - 40px) * 0.34);
                     horizontal-stretch: 0;
                     border-radius: 16px;
                     background: Palette.white;
@@ -3876,8 +4123,8 @@ if root.trajectory-selected : Rectangle {
             }
         }
         Rectangle {
-            width: Math.min(1120px, parent.width - 32px);
-            height: Math.min(720px, parent.height - 32px);
+            width: Math.min(1120px, parent.width * 0.92);
+            height: Math.min(720px, parent.height * 0.86);
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
             border-radius: 16px;
@@ -3890,6 +4137,8 @@ if root.trajectory-selected : Rectangle {
             clip: true;
             TouchArea { clicked => { hs.focus() } }
             VerticalLayout {
+                width: parent.width;
+                height: parent.height;
                 Rectangle {
                     height: 56px;
                     HorizontalLayout {
@@ -3954,7 +4203,8 @@ if root.trajectory-selected : Rectangle {
                     }
                 }
                 HorizontalLayout {
-                    vertical-stretch: 1;
+                    height: parent.height - 112px;
+                    vertical-stretch: 0;
                     Rectangle {
                         width: 220px;
                         horizontal-stretch: 0;
@@ -4006,6 +4256,7 @@ if root.trajectory-selected : Rectangle {
                             VerticalLayout {
                                 padding: 24px;
                                 if root.settings-page == 0 : VerticalLayout {
+                                    spacing: 24px;
                                     RowShell {
                                         label: "应用语言";
                                         SelectBox {
@@ -4016,6 +4267,7 @@ if root.trajectory-selected : Rectangle {
                                     }
                                     RowShell {
                                         label: "启动时打开";
+                                        tall: true;
                                         SegTrack {
                                             options: ["首页", "上次打开的会话"];
                                             selected: root.startup-selected();
@@ -4033,6 +4285,7 @@ if root.trajectory-selected : Rectangle {
                                     RowShell {
                                         label: "更新通道";
                                         separated: false;
+                                        tall: true;
                                         SegTrack {
                                             warm: true;
                                             options: ["稳定版", "测试版"];
@@ -4042,6 +4295,7 @@ if root.trajectory-selected : Rectangle {
                                     }
                                 }
                                 if root.settings-page == 1 : VerticalLayout {
+                                    spacing: 24px;
                                     RowShell {
                                         label: "默认智能体";
                                         SelectBox {
@@ -4057,6 +4311,7 @@ if root.trajectory-selected : Rectangle {
                                     }
                                     RowShell {
                                         label: "模型提供方";
+                                        tall: true;
                                         SegTrack {
                                             options: ["Tokmon 官方", "自定义"];
                                             selected: root.provider-kind == "自定义" ? 1 : 0;
@@ -4132,6 +4387,7 @@ if root.trajectory-selected : Rectangle {
                                     }
                                     RowShell {
                                         label: "推理强度";
+                                        tall: true;
                                         SegTrack {
                                             warm: true;
                                             options: ["低", "标准", "高", "最高"];
@@ -4167,6 +4423,7 @@ if root.trajectory-selected : Rectangle {
                                     }
                                 }
                                 if root.settings-page == 2 : VerticalLayout {
+                                    spacing: 24px;
                                     RowShell {
                                         label: "文件访问";
                                         SelectBox {
@@ -4177,6 +4434,7 @@ if root.trajectory-selected : Rectangle {
                                     }
                                     RowShell {
                                         label: "命令审批";
+                                        tall: true;
                                         SegTrack {
                                             warm: true;
                                             options: ["自动执行", "按需确认", "禁止执行"];
@@ -4201,6 +4459,7 @@ if root.trajectory-selected : Rectangle {
                                     }
                                 }
                                 if root.settings-page == 3 : VerticalLayout {
+                                    spacing: 24px;
                                     RowShell {
                                         label: "默认工作区";
                                         HorizontalLayout {
@@ -4265,6 +4524,7 @@ if root.trajectory-selected : Rectangle {
                                     }
                                 }
                                 if root.settings-page == 4 : VerticalLayout {
+                                    spacing: 24px;
                                     RowShell {
                                         label: "启用通知";
                                         ToggleSwitch {
@@ -4300,8 +4560,10 @@ if root.trajectory-selected : Rectangle {
                                     }
                                 }
                                 if root.settings-page == 5 : VerticalLayout {
+                                    spacing: 24px;
                                     RowShell {
                                         label: "主题模式";
+                                        tall: true;
                                         SegTrack {
                                             warm: true;
                                             options: ["浅色", "深色"];
@@ -4323,6 +4585,7 @@ if root.trajectory-selected : Rectangle {
                                     }
                                     RowShell {
                                         label: "界面密度";
+                                        tall: true;
                                         SegTrack {
                                             warm: true;
                                             options: ["紧凑", "舒适", "宽松"];
@@ -4627,14 +4890,7 @@ if root.trajectory-selected : Rectangle {
                         padding-right: 24px;
                         spacing: 12px;
                         alignment: space-between;
-                        Text {
-                            text: root.settings-status;
-                            font-size: 11.5px;
-                            color: Palette.faint;
-                            overflow: elide;
-                            vertical-alignment: center;
-                            horizontal-stretch: 1;
-                        }
+                        Rectangle { horizontal-stretch: 1; }
                         HorizontalLayout {
                             spacing: 12px;
                             alignment: end;
