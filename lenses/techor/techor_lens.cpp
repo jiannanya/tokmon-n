@@ -55,6 +55,49 @@ ToolDefinition calculator() {
       .risk = RiskClass::observe};
 }
 
+ToolDefinition read_file() {
+  return ToolDefinition{.name = "read_file",
+      .description = "Read a UTF-8 text file inside the active workspace and return verified content",
+      .act_kind = "fs.read", .act_schema = "tokmon.fs.read.v1",
+      .target = "org.tokmon.lens.cove",
+      .input_schema = cbor::object({{"type", "object"},
+          {"properties", cbor::object({{"path", cbor::object({
+              {"type", "string"}, {"minLength", 1}, {"maxLength", 4096}})}})},
+          {"required", cbor::Value::Array{"path"}},
+          {"additionalProperties", false}}),
+      .risk = RiskClass::observe};
+}
+
+ToolDefinition write_file() {
+  return ToolDefinition{.name = "write_file",
+      .description = "Create or replace a UTF-8 text file inside the active workspace; the write is read back and hashed",
+      .act_kind = "fs.write", .act_schema = "tokmon.fs.write.v1",
+      .target = "org.tokmon.lens.cove",
+      .input_schema = cbor::object({{"type", "object"},
+          {"properties", cbor::object({
+              {"path", cbor::object({{"type", "string"}, {"minLength", 1},
+                                       {"maxLength", 4096}})},
+              {"content", cbor::object({{"type", "string"},
+                                          {"maxLength", 1'048'576}})}})},
+          {"required", cbor::Value::Array{"path", "content"}},
+          {"additionalProperties", false}}),
+      .risk = RiskClass::reversible};
+}
+
+ToolDefinition run_command() {
+  return ToolDefinition{.name = "run_command",
+      .description = "Run one executable directly (no shell) in the active workspace and return bounded stdout, stderr, and exit status",
+      .act_kind = "process.exec", .act_schema = "tokmon.process.exec.v1",
+      .target = "org.tokmon.lens.styx",
+      .input_schema = cbor::object({{"type", "object"},
+          {"properties", cbor::object({{"argv", cbor::object({
+              {"type", "array"}, {"minItems", 1}, {"maxItems", 128},
+              {"items", cbor::object({{"type", "string"}, {"maxLength", 8192}})}})}})},
+          {"required", cbor::Value::Array{"argv"}},
+          {"additionalProperties", false}}),
+      .risk = RiskClass::external};
+}
+
 ToolDefinition registered_tool(const Photon& photon) {
   return ToolDefinition{.name = string_field(photon.payload, "name"),
       .description = string_field(photon.payload, "description"),
@@ -95,6 +138,9 @@ std::map<std::string, std::vector<ToolDefinition>, std::less<>> tool_catalog(
     const PhotonWindow& photons) {
   std::map<std::string, std::vector<ToolDefinition>, std::less<>> catalog;
   catalog["calculate"].push_back(calculator());
+  catalog["read_file"].push_back(read_file());
+  catalog["write_file"].push_back(write_file());
+  catalog["run_command"].push_back(run_command());
   std::set<std::string, std::less<>> unregistered;
   for (const auto& photon : photons.photons()) {
     if (photon.kind == "tool.unregistered") {
@@ -317,7 +363,13 @@ Result<void> TechorLens::view(const PhotonWindow& photons, SurfaceBuilder& surfa
   }
 
   const auto* call = photons.latest("model.tool-call");
-  const auto* result = photons.latest("tool.result");
+  const Photon* result = nullptr;
+  for (const auto& photon : photons.photons())
+    if ((photon.kind == "tool.result" || photon.kind == "fs.changed" ||
+         photon.kind == "fs.read-completed" || photon.kind == "process.exited" ||
+         photon.kind == "process.timed-out" || photon.kind == "process.cancelled") &&
+        (!result || photon.sequence > result->sequence))
+      result = &photon;
   if (!call || (result && result->sequence > call->sequence)) return {};
   const auto name = string_field(call->payload, "tool");
   const auto found = catalog.find(name);
@@ -341,6 +393,23 @@ Result<void> TechorLens::view(const PhotonWindow& photons, SurfaceBuilder& surfa
   if (!decoded)
     return surface.add("diagnostic.tool-decode", call->id,
         cbor::object({{"status", "rejected"}, {"reason", decoded.error().describe()}}), 100);
+  const auto* input = photons.latest("user.input");
+  const auto* workspace = input ? cbor::find(input->payload, "workspace_root") : nullptr;
+  if ((decoded->kind.starts_with("fs.") || decoded->kind == "process.exec") &&
+      (!workspace || workspace->as_string().empty()))
+    return surface.add("diagnostic.tool-decode", call->id,
+        cbor::object({{"status", "rejected"},
+                      {"reason", "active workspace root is unavailable"}}), 100);
+  if (decoded->kind.starts_with("fs."))
+    (*decoded->parameters.as_map())["workspace_root"] = *workspace;
+  if (decoded->kind == "process.exec") {
+    (*decoded->parameters.as_map())["cwd"] = *workspace;
+    (*decoded->parameters.as_map())["allowed_root"] = *workspace;
+    (*decoded->parameters.as_map())["network_mode"] = "host";
+    (*decoded->parameters.as_map())["require_strength"] =
+        "process-tree/resource-limits";
+    (*decoded->parameters.as_map())["max_output_bytes"] = 262'144;
+  }
   if (auto added = surface.add("act.candidates", decoded->id, to_cbor(*decoded), 50); !added)
     return added;
   return surface.propose(std::move(*decoded));

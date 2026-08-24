@@ -1,11 +1,91 @@
 #include "lenses/janus/janus_lens.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <map>
 
 #include "tokmon/hash.hpp"
 
 namespace tokmon::builtin {
+namespace {
+
+cbor::Value agent_tool(std::string name, std::string description,
+                       cbor::Value input_schema) {
+  return cbor::object({{"name", std::move(name)},
+      {"description", std::move(description)},
+      {"input_schema", std::move(input_schema)}});
+}
+
+cbor::Value agent_tools(const std::string_view access_mode) {
+  cbor::Value::Array tools;
+  tools.push_back(agent_tool("read_file",
+      "Read a UTF-8 text file inside the active workspace and return verified content",
+      cbor::object({{"type", "object"}, {"properties", cbor::object({
+          {"path", cbor::object({{"type", "string"}, {"minLength", 1},
+                                   {"maxLength", 4096}})}})},
+          {"required", cbor::Value::Array{"path"}}, {"additionalProperties", false}})));
+  const bool read_only = access_mode == "read-only" || access_mode == "只读" ||
+      access_mode == "只读访问";
+  if (!read_only) {
+    tools.push_back(agent_tool("write_file",
+        "Create or replace a UTF-8 text file inside the active workspace; the write is read back and hashed",
+        cbor::object({{"type", "object"}, {"properties", cbor::object({
+            {"path", cbor::object({{"type", "string"}, {"minLength", 1},
+                                     {"maxLength", 4096}})},
+            {"content", cbor::object({{"type", "string"},
+                                        {"maxLength", 1'048'576}})}})},
+            {"required", cbor::Value::Array{"path", "content"}},
+            {"additionalProperties", false}})));
+    tools.push_back(agent_tool("run_command",
+        "Run one executable directly without an implicit shell in the active workspace and return bounded output and exit status. Put the executable in argv[0]; for shell expressions invoke the platform shell explicitly (powershell.exe or cmd.exe on Windows, sh on Unix)",
+        cbor::object({{"type", "object"}, {"properties", cbor::object({
+            {"argv", cbor::object({{"type", "array"}, {"minItems", 1},
+                {"maxItems", 128}, {"items", cbor::object({
+                    {"type", "string"}, {"maxLength", 8192}})}})}})},
+            {"required", cbor::Value::Array{"argv"}},
+            {"additionalProperties", false}})));
+  }
+  tools.push_back(agent_tool("calculate", "Calculate a deterministic binary arithmetic expression",
+      cbor::object({{"type", "object"}, {"properties", cbor::object({
+          {"expression", cbor::object({{"type", "string"}, {"minLength", 3},
+                                         {"maxLength", 256}})}})},
+          {"required", cbor::Value::Array{"expression"}},
+          {"additionalProperties", false}})));
+  return tools;
+}
+
+bool agent_tool_result(const Photon& photon) {
+  return photon.kind == "tool.result" || photon.kind == "fs.changed" ||
+      photon.kind == "fs.read-completed" || photon.kind == "process.exited" ||
+      photon.kind == "process.timed-out" || photon.kind == "process.cancelled";
+}
+
+std::chrono::milliseconds model_call_deadline(const cbor::Value& parameters) {
+  // The Beam deadline must cover every HTTP attempt plus all deterministic
+  // retry waits. Otherwise the outer scheduler can cancel Rhea halfway through
+  // the configured 5s -> 10s -> 20s -> 40s -> 60s recovery sequence.
+  const auto* attempts_value = cbor::find(parameters, "max_attempts");
+  const auto* backoff_value = cbor::find(parameters, "retry_backoff_ms");
+  const auto attempts = std::clamp<std::int64_t>(
+      attempts_value ? attempts_value->as_integer(6) : 6, 1, 10);
+  const auto base_backoff = std::clamp<std::int64_t>(
+      backoff_value ? backoff_value->as_integer(5'000) : 5'000, 0, 60'000);
+  std::int64_t retry_wait_ms = 0;
+  std::int64_t wait_ms = base_backoff;
+  for (std::int64_t retry = 0; retry + 1 < attempts; ++retry) {
+    retry_wait_ms += std::min<std::int64_t>(wait_ms, 60'000);
+    wait_ms = std::min<std::int64_t>(wait_ms * 2, 60'000);
+  }
+  const auto* first_token_value = cbor::find(parameters, "first_token_timeout_ms");
+  const auto per_attempt_ms = std::clamp<std::int64_t>(
+      first_token_value ? first_token_value->as_integer(60'000) : 60'000,
+      1'000, 300'000);
+  constexpr std::int64_t scheduler_margin_ms = 15'000;
+  return std::chrono::milliseconds(
+      attempts * per_attempt_ms + retry_wait_ms + scheduler_margin_ms);
+}
+
+}  // namespace
 
 JanusLens::JanusLens() : LensBase(make_manifest("janus", "Janus / 默认 Agent 双面反射镜",
     {"ray.status", "model.intent"},
@@ -36,12 +116,22 @@ Result<void> JanusLens::view(const PhotonWindow& photons, SurfaceBuilder& surfac
         {"terminal", true}}));
   const auto* answer = photons.latest("assistant.message");
   const auto* call = photons.latest("model.tool-call");
-  const auto* result = photons.latest("tool.result");
-  const bool complete = answer && answer->sequence > start_sequence;
+  const Photon* result = nullptr;
+  const Photon* process_output = nullptr;
+  for (const auto& photon : photons.photons()) {
+    if (photon.sequence <= start_sequence) continue;
+    if (agent_tool_result(photon) && (!result || photon.sequence > result->sequence))
+      result = &photon;
+    if ((photon.kind == "process.stdout" || photon.kind == "process.stderr") &&
+        (!process_output || photon.sequence > process_output->sequence))
+      process_output = &photon;
+  }
   const bool pending_tool = call && call->sequence > start_sequence &&
       (!result || result->sequence < call->sequence);
   const bool result_ready = result && result->sequence > start_sequence &&
       (!call || result->sequence > call->sequence);
+  const bool complete = answer && answer->sequence > start_sequence && !pending_tool &&
+      (!result_ready || answer->sequence > result->sequence);
   std::int64_t model_calls = 0; std::int64_t tool_calls = 0;
   std::int64_t used_tokens = 0; std::int64_t cost_microunits = 0;
   std::int64_t steps = 0; std::int64_t consecutive_failures = 0;
@@ -98,19 +188,54 @@ Result<void> JanusLens::view(const PhotonWindow& photons, SurfaceBuilder& surfac
     return surface.propose(std::move(act));
   }
   const auto& source = result_ready ? *result : *input;
+  const auto* access_mode = cbor::find(input->payload, "access_mode");
+  const auto access = access_mode ? std::string(access_mode->as_string())
+                                  : std::string("full");
+  auto tools = agent_tools(access);
   const auto model_surface_hash = sha256_hex(cbor::encode(cbor::object({
       {"input", input->payload},
       {"tool_result", result_ready ? result->payload : cbor::Value(nullptr)}})));
-  const auto tool_schema_hash = sha256_hex("calculate@tokmon.math.calculate.v1");
+  const auto tool_schema_hash = sha256_hex(cbor::encode(tools));
   const auto* selected_model = cbor::find(input->payload, "model");
-  const auto* access_mode = cbor::find(input->payload, "access_mode");
   const auto* effort = cbor::find(input->payload, "effort");
+  cbor::Value::Array messages{cbor::object({{"role", "system"},
+      {"content", "You are the Tokmon workspace agent. Use the provided tools for file, command, or calculation work. Call only one tool at a time. Never claim that an action is complete until its tool result has been returned and verified. Never repeat a successfully completed tool unless its verified result requires corrective work. After a tool result, continue with the next required tool or provide the final answer."}}),
+      cbor::object({{"role", "user"}, {"content", text(*input)}})};
+  if (result_ready) {
+    std::string evidence = "Completed action ledger for this turn, in chronological order:";
+    for (const auto& photon : photons.photons()) {
+      if (photon.sequence <= start_sequence) continue;
+      const bool requested_tool = photon.kind == "model.tool-call";
+      const bool verified_result = agent_tool_result(photon);
+      const bool command_output = photon.kind == "process.stdout" ||
+          photon.kind == "process.stderr";
+      if (!requested_tool && !verified_result && !command_output) continue;
+      auto entry = cbor::diagnostic(photon.payload);
+      if (entry.size() > 2'048u) entry.resize(2'048u);
+      evidence.append("\n- ");
+      evidence.append(requested_tool ? "Agent requested " :
+          verified_result ? "Tokmon verified " : "Command output ");
+      evidence.append(photon.kind);
+      evidence.append(": ");
+      evidence.append(entry);
+      if (evidence.size() > 24'576u) {
+        evidence.resize(24'576u);
+        evidence.append(" [ledger truncated]");
+        break;
+      }
+    }
+    if (process_output && evidence.find("Command output") == std::string::npos)
+      evidence.append("\n- Command output: " + cbor::diagnostic(process_output->payload));
+    messages.push_back(cbor::object({{"role", "system"},
+        {"content", evidence +
+            "\nUse this ledger as authoritative state. Do not redo a successful entry. Continue the original task by calling the next missing tool, or give the final answer only when every requested action and verification is complete."}}));
+  }
   auto parameters = cbor::object({
           {"prompt", steering && steering->sequence > input->sequence ? text(*steering) : text(*input)},
+          {"messages", std::move(messages)}, {"tools", std::move(tools)},
           {"model", selected_model ? std::string(selected_model->as_string())
                                     : std::string("local-deterministic")},
-          {"access_mode", access_mode ? std::string(access_mode->as_string())
-                                       : std::string("完全访问")},
+          {"access_mode", access},
           {"effort", effort ? std::string(effort->as_string()) : std::string("标准")},
           {"input_photon", input->id},
           {"after_tool_result", result_ready},
@@ -121,11 +246,13 @@ Result<void> JanusLens::view(const PhotonWindow& photons, SurfaceBuilder& surfac
   // are never part of a Photon or Act.
   for (const auto* key : {"provider", "protocol", "endpoint", "secret_ref", "auth",
                           "allow_anonymous", "thinking", "reasoning_effort",
-                          "max_output_tokens", "max_attempts", "retry_backoff_ms"})
+                          "max_output_tokens", "max_attempts", "retry_backoff_ms",
+                          "first_token_timeout_ms", "idle_timeout_ms", "workspace_root"})
     if (const auto* value = cbor::find(input->payload, key))
       (*parameters.as_map())[key] = *value;
   auto act = propose(source, "model.call", "tokmon.model.call.v1",
       "org.tokmon.lens.rhea", std::move(parameters), RiskClass::external);
+  act.timeout = model_call_deadline(act.parameters);
   return surface.propose(std::move(act));
 }
 

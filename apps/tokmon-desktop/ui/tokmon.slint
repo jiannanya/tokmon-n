@@ -444,7 +444,9 @@ component PillBadge inherits Rectangle {
     background: self.tone == "USER" ? #E0F2FE
         : self.tone == "CONTEXT" ? #DCFCE7
         : self.tone == "ASSISTANT" ? #F3E8FF
+        : self.tone == "MODEL" ? #EDE9FE
         : self.tone == "TOOL" ? #FEF3D6
+        : self.tone == "LENS" ? #ECFDF5
         : self.tone == "ERROR" ? #FEE2E2 : #ECFDF5;
     HorizontalLayout {
         padding-left: 8px;
@@ -457,7 +459,9 @@ component PillBadge inherits Rectangle {
             color: root.tone == "USER" ? #0284C7
                 : root.tone == "CONTEXT" ? #16A34A
                 : root.tone == "ASSISTANT" ? #9333EA
+                : root.tone == "MODEL" ? #7C3AED
                 : root.tone == "TOOL" ? #B45309
+                : root.tone == "LENS" ? #059669
                 : root.tone == "ERROR" ? #DC2626 : #059669;
             vertical-alignment: center;
         }
@@ -583,7 +587,7 @@ component SidebarRow inherits Rectangle {
 component WorkflowStepRow inherits Rectangle {
     in property <TimelineItem> item;
     property <bool> running-progress: root.item.progress >= 0 && root.item.progress < 100;
-    property <bool> completed-card: root.item.kind == "act.completed" || root.item.kind == "task.completed" || (root.item.tone == "success" && (root.item.title == "任务已完成" || root.item.title == "act.completed"));
+    property <bool> completed-card: root.item.kind == "task.completed";
     HorizontalLayout {
         alignment: start;
         spacing: 0px;
@@ -615,7 +619,7 @@ component WorkflowStepRow inherits Rectangle {
                 Image {
                     source: root.item.kind == "fs.read" || root.item.kind == "fs.written" || root.item.kind == "fs.created" || root.item.kind == "fs.deleted" ? Icons.folder-dim
                         : root.item.kind == "process.started" || root.item.kind == "process.output" || root.item.kind == "process.exit" || root.item.kind == "tool.result" ? Icons.terminal
-                        : root.item.kind == "model.tool-call" ? Icons.bot
+                        : root.item.kind == "model.tool-call" || root.item.kind == "model.reasoning-summary" ? Icons.bot
                         : Icons.doc;
                     width: 14px;
                     height: 14px;
@@ -660,7 +664,7 @@ component WorkflowStepRow inherits Rectangle {
                             y: (parent.height - 16px) / 2;
                         }
                         Text {
-                            text: root.item.title == "act.completed" ? "任务已完成" : root.item.title;
+                            text: root.item.title;
                             font-size: 12.5px;
                             font-weight: 600;
                             color: #15803D;
@@ -764,7 +768,7 @@ component TraceEventRow inherits Rectangle {
             width: 140px;
             horizontal-stretch: 0;
             PillBadge {
-                label: root.event.tone == "OTHER" ? "PHOTON" : root.event.tone;
+                label: root.event.tone;
                 tone: root.event.tone;
                 y: (parent.height - 16px) / 2;
                 x: 0px;
@@ -2268,6 +2272,7 @@ export component MainWindow inherits Window {
                                 }
                                 TouchArea { clicked => { root.trace-filter-open = false } }
                             }
+}
 if root.trajectory-selected : Rectangle {
     width: parent.width;
     height: parent.height;
@@ -2753,7 +2758,6 @@ if root.trajectory-selected : Rectangle {
             }
         }
     }
-}
 }
 }
 }

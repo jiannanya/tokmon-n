@@ -1,7 +1,8 @@
 # Tokmon OpenCode、Desktop 与工作区端到端实现验收报告
 
-> 验收日期：2026-08-23  
-> 验收工作区：`E:\cc\AI\tokmon\tokmon_work_test`  
+> 验收日期：2026-08-24
+>
+> 验收工作区：`E:\cc\AI\tokmon\tokmon_work_test\test2`
 > 实现：C++20、Slint C++、YAML、`tl::expected`、chLog
 > 语义边界：Fact → Lens → Act；Photon 只能追加；产品题记为 **A Lens to Them All**
 
@@ -11,7 +12,7 @@
 
 - 项目级 `.tokmon/config.yaml` 使用 `OPENCODE_API_KEY` 引导系统凭据，YAML、Photon 和日志不保存 Key 明文；
 - 默认平台为 `opencode`，协议为 `openai-compatible`，模型为 `x-preview-f-free`；
-- CLI 与 Desktop 均完成过真实联网成功请求；上游随后出现的 HTTP 503 也按两次重试、`model.failed`、`act.failed` 的路径如实追加，不伪装为成功；
+- CLI 与 Desktop 均完成真实联网请求；Desktop 鼠标验收现场命中“空内容 → 5 秒重试 → HTTP 503 → 10 秒重试 → 成功”，错误与恢复均如实追加；
 - Desktop 的分组、项目、会话、标题、选择和折叠状态原子保存到项目 YAML；
 - 项目节点绑定真实文件系统工作空间；会话默认继承所在项目，也可保存独立覆盖目录。选择节点会同步切换 Snow endpoint、tokmond、模型配置、Ray 与文件工具根目录；
 - 会话节点现在绑定真实 Ray。切到新会话后再切回旧会话，会通过 `surface(ray)` 恢复用户输入、回答、失败信息和完整 Photon 轨迹；
@@ -51,7 +52,7 @@
 验收文件位于：
 
 ```text
-E:\cc\AI\tokmon\tokmon_work_test\.tokmon\config.yaml
+E:\cc\AI\tokmon\tokmon_work_test\test2\.tokmon\config.yaml
 ```
 
 模型配置为：
@@ -72,8 +73,8 @@ models:
       thinking: false
       reasoning_effort: high
       max_output_tokens: 4096
-      max_attempts: 2
-      retry_backoff_ms: 500
+      max_attempts: 6
+      retry_backoff_ms: 5000
 ```
 
 没有写入 `api_key` 或 `secret` 字段。Windows 启动时按“进程环境 → 当前用户环境 → 本机环境”读取 `secret_env`，导入 Credential Manager 后仅使用 `secret_ref`。这样从较早启动的 Codex/Desktop 进程也能发现后来写入的本机 `OPENCODE_API_KEY`。
@@ -95,13 +96,13 @@ tokmon --workspace E:\cc\AI\tokmon\tokmon_work_test `
 
 ### 3.2 Desktop 成功样本
 
-通过 Desktop 输入框和发送按钮提交：
+通过 Desktop 输入框填入内容，再使用真实 Win32 鼠标点击发送按钮提交：
 
 ```text
-只回复：TOKMON_DESKTOP_REBUILT_OK
+Reply exactly: TOKMON_DESKTOP_EVENT_FLOW_OK
 ```
 
-界面真实显示 `TOKMON_DESKTOP_REBUILT_OK`。等待超过 18 秒后结果未被旧 `/status` 或全局 Photon 尾覆盖，证明空闲轮询覆盖会话的问题已修复。
+界面真实显示 `TOKMON_DESKTOP_EVENT_FLOW_OK`，完成任务 `1/1`；对话页保留人类可读步骤，轨迹页显示同一 Ray 的完整事件、时间条、provider/model、usage 与结果。
 
 ### 3.3 上游 503 样本
 
@@ -111,7 +112,7 @@ tokmon --workspace E:\cc\AI\tokmon\tokmon_work_test `
 HTTP 503: Upstream request failed: Endpoint is unavailable.
 ```
 
-Rhea 按 `max_attempts: 2` 实际重试，光流追加 `model.dispatched`、`model.failed` 与 `act.failed`。这说明认证、端点选择和请求发出均已发生；失败来自外部 endpoint 可用性。UI 已补充失败投影：对话区显示脱敏错误摘要，轨迹保留完整因果证据，状态变为“执行失败”。
+Rhea 现在按 `max_attempts: 6` 执行 1 次初始请求和 5 次重试，确定性退避为 `5s → 10s → 20s → 40s → 60s`。每次等待前追加 `model.retry-scheduled`，第六次请求仍失败后才追加最终 `model.failed` 与 `act.failed`。这说明认证、端点选择和请求发出均已发生；失败来自外部 endpoint 可用性。UI 的对话区显示本轮人类可读事件流，轨迹页保留完整不可变因果证据，最终状态变为“执行失败”。
 
 ## 4. 分组、项目与会话
 
@@ -191,8 +192,8 @@ Desktop 启动参数 `--workspace` 指定导航工作空间。导航树保存在
 | 设置保存 | 修改后保存再恢复 | YAML 原子更新，provider 与 navigation 均保留 |
 | Provider 测试 | 点击“测试真实连接” | 真实请求进入同一 Fact → Lens → Act 光路 |
 | 文件/代码状态 | 新会话无工具修改 | 显示“当前会话尚无文件变更”，不展示伪造 Python |
-| 当前回合工作流 | 输入“请计算 27 * 4，并说明你调用的透镜” | 对话页显示 16 个真实 Photon 投影步骤，包括模型请求、推理、透镜行动、工具结果与最终答复 |
-| 新版轨迹页 | 切换到“轨迹” | 显示 26 个追加事件、1.1s、1 回合、2 次调用、34/2 input/output tokens，Provider/Model 为 `local/local-deterministic` |
+| 当前回合工作流 | 真实鼠标发送文件写入、回读与命令验证任务 | 对话页只显示 Agent 的分析、写文件、回读、命令及验证结果，不再显示请求派发、Act 生命周期或透镜日志 |
+| 新版轨迹页 | 切换到“轨迹” | 完整保留 70 个 Photon/Act/模型/工具事件、1m17s、7 次模型调用、4,671 tokens，并展示真实时间条和事件分类 |
 | 八个新版设置页 | 分别以设置页 0..7 打开并检查特征控件 | 通用、模型、权限、工作区、通知、外观、快捷键、账户均成功渲染并可操作 |
 | Desktop 生命周期复验 | 自绘关闭按钮与 `WM_CLOSE` 两种方式退出 | Desktop 退出后 `tokmond` 进程数归零 |
 
@@ -221,6 +222,11 @@ Desktop 启动参数 `--workspace` 指定导航工作空间。导航树保存在
 21. 轨迹页替换为新版统计、时间条、事件表与 Request 摘要布局，并绑定真实 usage/provider/model/outcome；
 22. 主界面和八个设置页迁移到新版暖白、棕橙主题，设置搜索移入顶栏；
 23. Windows 启动后再次强制清除原生 caption style，确保自绘标题栏是唯一窗口标题栏。
+24. 对话工作流由原始 Photon 日志改为 Agent 语义事件；模型请求、派发、重试和 Act 生命周期只保留在轨迹页；
+25. 任务完成必须同时满足工具调用、可验证结果和结果后的最终回复，纯文本承诺不再误标 `1/1` 完成；
+26. Janus/Rhea/Techor 接通真实 `write_file`、`read_file`、`run_command` 和 `calculate` 工具链，并向后续模型轮次携带完整的已验证行动账本；
+27. 模型失败采用 5/10/20/40/60 秒五次确定性重试，外层 Act 截止时间覆盖完整请求与等待预算；
+28. OpenCode 含工具请求改为非流式协议，并将首包窗口对齐到 60 秒，避免工具规划在 10 秒被误切断。
 
 ## 7. 构建与自动化测试
 
@@ -229,7 +235,7 @@ cmake --build build/windows-msvc-ui-debug --config Debug --parallel
 ctest --test-dir build/windows-msvc-ui-debug -C Debug --output-on-failure
 ```
 
-结果：构建成功，CTest `84/84` 通过，0 失败；本次工作空间改动后的最终完整回归耗时 13.71 秒。覆盖 append-only Photon store、20 个内置透镜、C ABI hot swap、Snow、Rhea HTTP retry、MCP、LSP、PTY、Node.js、CPython、Git、RAG、凭据绑定和 daemon 租约等路径。
+结果：构建成功，CTest `3/3` 测试入口通过，0 失败，最终完整回归耗时 12.80 秒。覆盖 append-only Photon store、20 个内置透镜、Janus Agent 行动账本、Rhea HTTP retry、Snow、MCP、LSP、PTY、Node.js、CPython、Git、RAG、凭据绑定和 daemon 租约等路径。
 
 CLI 冒烟结果：
 
@@ -271,10 +277,12 @@ SECRET_ENV_REF=True
 | `E:\cc\AI\tokmon\tokmon_work_test\desktop-new-theme-trace.png` | 新主题轨迹页、真实时间条、事件表与 Request 摘要 |
 | `E:\cc\AI\tokmon\tokmon_work_test\desktop-new-theme-settings-account.png` | 新主题设置弹窗、顶部搜索、账户页和右侧概览 |
 | `E:\cc\AI\tokmon\tokmon_work_test\desktop-new-theme-frameless.png` | 无边框自绘标题栏与完整新主题工作台 |
+| `build/ui-qa-current/desktop-real-task-final.png` | 真实 Agent 写入、回读、命令验证和完成判据的对话工作流 |
+| `build/ui-qa-current/desktop-real-task-trace.png` | 同一 Ray 的完整轨迹统计、时间条与 70 项事件明细 |
 
 ## 10. 外部状态与工具链
 
-验收末段 OpenCode endpoint 持续返回 HTTP 503。这是外部服务状态；Tokmon 已正确重试、失败闭环和显示，早先同一配置已有真实成功结果。重新运行以下命令即可复验恢复：
+验收期间 OpenCode endpoint 曾返回 HTTP 503；Tokmon 实际记录了 5 秒和 10 秒重试后恢复，并完成同一真实任务。成功 Ray 为 `ray_01a033df32bd00000058bfa1ba1d09a61c31`：写入 24 bytes、回读 SHA-256 校验、`cmd.exe` 存在性检查输出 `FILE_EXISTS` 且退出码为 0，最终精确回复 `TOKMON_REAL_WORKFLOW_OK`。
 
 ```powershell
 tokmon --workspace E:\cc\AI\tokmon\tokmon_work_test `

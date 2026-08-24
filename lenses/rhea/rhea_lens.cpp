@@ -154,6 +154,34 @@ cbor::Value request_messages(const cbor::Value& parameters, const std::string& p
   return cbor::Value::Array{cbor::object({{"role", "user"}, {"content", prompt}})};
 }
 
+cbor::Value request_tools(const ProviderPlan& plan, const cbor::Value& tools) {
+  if (!tools.as_array()) return tools;
+  cbor::Value::Array normalized;
+  for (const auto& tool : *tools.as_array()) {
+    const auto name = string_field(tool, "name");
+    const auto description = string_field(tool, "description");
+    const auto* schema = cbor::find(tool, "input_schema");
+    if (name.empty() || !schema) {
+      normalized.push_back(tool);
+      continue;
+    }
+    if (plan.protocol == "openai-compatible")
+      normalized.push_back(cbor::object({{"type", "function"},
+          {"function", cbor::object({{"name", name}, {"description", description},
+                                      {"parameters", *schema}})}}));
+    else if (plan.protocol == "anthropic")
+      normalized.push_back(cbor::object({{"name", name}, {"description", description},
+                                         {"input_schema", *schema}}));
+    else
+      normalized.push_back(cbor::object({{"name", name}, {"description", description},
+                                         {"parameters", *schema}}));
+  }
+  if (plan.protocol == "gemini")
+    return cbor::Value::Array{cbor::object({{"functionDeclarations",
+                                             std::move(normalized)}})};
+  return normalized;
+}
+
 cbor::Value request_body(const ProviderPlan& plan, const cbor::Value& parameters,
                          const std::string& prompt) {
   if (const auto* supplied = cbor::find(parameters, "request_body");
@@ -165,7 +193,7 @@ cbor::Value request_body(const ProviderPlan& plan, const cbor::Value& parameters
     auto body = cbor::object({{"model", plan.model}, {"messages", std::move(messages)},
         {"max_tokens", max_tokens}, {"stream", true}});
     if (const auto* tools = cbor::find(parameters, "tools"))
-      (*body.as_map())["tools"] = *tools;
+      (*body.as_map())["tools"] = request_tools(plan, *tools);
     return body;
   }
   if (plan.protocol == "gemini") {
@@ -178,18 +206,24 @@ cbor::Value request_body(const ProviderPlan& plan, const cbor::Value& parameters
     }
     auto body = cbor::object({{"contents", std::move(contents)}});
     if (const auto* tools = cbor::find(parameters, "tools"))
-      (*body.as_map())["tools"] = *tools;
+      (*body.as_map())["tools"] = request_tools(plan, *tools);
     return body;
   }
+  const auto* tools = cbor::find(parameters, "tools");
+  const bool has_tools = tools && tools->as_array() && !tools->as_array()->empty();
+  const bool stream = cbor::find(parameters, "stream")
+      ? cbor::find(parameters, "stream")->as_bool() : !has_tools;
   auto body = cbor::object({{"model", plan.model}, {"messages", std::move(messages)},
-      {"stream", true}, {"max_tokens", max_tokens}});
+      {"stream", stream}, {"max_tokens", max_tokens}});
+  if (stream)
+    (*body.as_map())["stream_options"] = cbor::object({{"include_usage", true}});
   if (const auto* thinking = cbor::find(parameters, "thinking");
       thinking && thinking->as_bool())
     (*body.as_map())["thinking"] = cbor::object({{"type", "enabled"}});
   if (const auto effort = string_field(parameters, "reasoning_effort"); !effort.empty())
     (*body.as_map())["reasoning_effort"] = effort;
-  if (const auto* tools = cbor::find(parameters, "tools"))
-    (*body.as_map())["tools"] = *tools;
+  if (tools)
+    (*body.as_map())["tools"] = request_tools(plan, *tools);
   return body;
 }
 
@@ -476,14 +510,14 @@ Result<RefractionResult> RheaLens::refract(const PhotonWindow& photons, const Ac
       cbor::find(act.parameters, "allow_anonymous")->as_bool();
   const auto attempts_per_provider = std::clamp<std::int64_t>(
       cbor::find(act.parameters, "max_attempts")
-          ? cbor::find(act.parameters, "max_attempts")->as_integer(2) : 2, 1, 5);
+          ? cbor::find(act.parameters, "max_attempts")->as_integer(6) : 6, 1, 10);
   const auto backoff_ms = std::clamp<std::int64_t>(
       cbor::find(act.parameters, "retry_backoff_ms")
-          ? cbor::find(act.parameters, "retry_backoff_ms")->as_integer(100) : 100,
-      0, 2'000);
+          ? cbor::find(act.parameters, "retry_backoff_ms")->as_integer(5'000) : 5'000,
+      0, 60'000);
   const auto first_token_timeout = std::chrono::milliseconds(std::clamp<std::int64_t>(
       cbor::find(act.parameters, "first_token_timeout_ms")
-          ? cbor::find(act.parameters, "first_token_timeout_ms")->as_integer(10'000) : 10'000,
+          ? cbor::find(act.parameters, "first_token_timeout_ms")->as_integer(60'000) : 60'000,
       1, act.timeout.count()));
   const auto idle_timeout = std::chrono::milliseconds(std::clamp<std::int64_t>(
       cbor::find(act.parameters, "idle_timeout_ms")
@@ -582,12 +616,24 @@ Result<RefractionResult> RheaLens::refract(const PhotonWindow& photons, const Ac
                 cbor::object({{"text", final_text}, {"provider", plan.provider},
                               {"model", plan.model}, {"attempt", global_attempt}})); !result)
               return tl::unexpected(result.error());
+          // Some OpenAI-compatible gateways omit usage from otherwise valid
+          // streaming responses. Preserve useful accounting for the trace UI,
+          // while making the fallback explicit in the append-only Photon.
+          const auto input_tokens = parsed->input_tokens > 0
+              ? parsed->input_tokens
+              : static_cast<std::int64_t>(prompt.size() / 3u + 1u);
+          const auto output_tokens = parsed->output_tokens > 0
+              ? parsed->output_tokens
+              : static_cast<std::int64_t>(final_text.size() / 3u + 1u);
+          const auto usage_estimated = parsed->input_tokens <= 0 ||
+              parsed->output_tokens <= 0;
           if (auto result = append("model.usage", "tokmon.model.usage.v1",
-              cbor::object({{"input_tokens", parsed->input_tokens},
-                            {"output_tokens", parsed->output_tokens},
-                            {"cost_usd", (static_cast<double>(parsed->input_tokens) *
+              cbor::object({{"input_tokens", input_tokens},
+                            {"output_tokens", output_tokens},
+                            {"estimated", usage_estimated},
+                            {"cost_usd", (static_cast<double>(input_tokens) *
                                 number_field(act.parameters, "input_cost_per_million") +
-                                static_cast<double>(parsed->output_tokens) *
+                                static_cast<double>(output_tokens) *
                                 number_field(act.parameters,
                                              "output_cost_per_million")) / 1'000'000.0},
                             {"provider", plan.provider}, {"model", plan.model},
@@ -605,11 +651,23 @@ Result<RefractionResult> RheaLens::refract(const PhotonWindow& photons, const Ac
       }
       if (attempt_index + 1 < attempts_per_provider &&
           (backoff_ms > 0 || retry_after_ms > 0)) {
-        const auto exponential = std::min<std::int64_t>(
-            30'000, backoff_ms * (std::int64_t{1} << attempt_index));
-        const auto jitter = exponential * ((global_attempt * 37) % 26) / 100;
-        const auto wait = std::chrono::milliseconds(
-            std::max(retry_after_ms, exponential + jitter));
+        // Keep retry timing deterministic so the user-facing event stream and
+        // the actual request schedule agree exactly. With the product defaults
+        // this is 5s -> 10s -> 20s -> 40s -> 60s.
+        const auto scheduled_ms = std::min<std::int64_t>(
+            60'000, backoff_ms * (std::int64_t{1} << std::min<std::int64_t>(
+                attempt_index, 20)));
+        const auto wait_ms = std::max(scheduled_ms,
+            std::clamp<std::int64_t>(retry_after_ms, 0, 60'000));
+        if (auto result = append("model.retry-scheduled", "tokmon.model.retry.v1",
+            cbor::object({{"provider", plan.provider}, {"model", plan.model},
+                          {"attempt", global_attempt},
+                          {"next_attempt", global_attempt + 1},
+                          {"wait_ms", wait_ms},
+                          {"error", redact(last_error.message)},
+                          {"retryable", last_error.retryable}})); !result)
+          return tl::unexpected(result.error());
+        const auto wait = std::chrono::milliseconds(wait_ms);
         const auto deadline = std::chrono::steady_clock::now() + wait;
         while (std::chrono::steady_clock::now() < deadline && !beam.stop_requested())
           std::this_thread::sleep_for(std::chrono::milliseconds(10));

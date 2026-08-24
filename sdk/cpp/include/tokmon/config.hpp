@@ -70,8 +70,10 @@ struct ModelProviderConfig {
   bool thinking{false};
   std::string reasoning_effort;
   std::int64_t max_output_tokens{4096};
-  std::int64_t max_attempts{2};
-  std::int64_t retry_backoff_ms{250};
+  // One initial request plus five retries. The base delay expands to the
+  // product retry schedule: 5s, 10s, 20s, 40s, 60s.
+  std::int64_t max_attempts{6};
+  std::int64_t retry_backoff_ms{5'000};
 };
 
 struct RuntimeConfig {

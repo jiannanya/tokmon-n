@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -209,7 +210,8 @@ TEST_CASE("Janus forwards a platform-neutral protocol envelope to Rhea") {
           {"provider", "private-cloud"}, {"protocol", "openai-compatible"},
           {"endpoint", "https://models.example.test/v1/chat/completions"},
           {"model", "custom-model"}, {"secret_ref", "model-provider/private-cloud"},
-          {"auth", "bearer"}, {"thinking", true}, {"max_output_tokens", 8192}}),
+          {"auth", "bearer"}, {"thinking", true}, {"max_output_tokens", 8192},
+          {"max_attempts", 6}, {"retry_backoff_ms", 5'000}}),
       .epoch = 7, .hash = std::string(64, 'a')};
   tokmon::SurfaceBuilder surface(lens->manifest().id);
   REQUIRE(lens->view(tokmon::PhotonWindow({input}), surface));
@@ -222,6 +224,44 @@ TEST_CASE("Janus forwards a platform-neutral protocol envelope to Rhea") {
   REQUIRE(tokmon::cbor::find(parameters, "secret_ref")->as_string() ==
           "model-provider/private-cloud");
   REQUIRE(tokmon::cbor::find(parameters, "api_key") == nullptr);
+  // Six HTTP attempts plus 5/10/20/40/60 second waits must fit inside the
+  // enclosing Act. This guards against the old fixed 30-second cutoff.
+  REQUIRE(surface.proposals().front().timeout == std::chrono::milliseconds(510'000));
+}
+
+TEST_CASE("Janus carries the verified Agent action ledger into the next model turn") {
+  const auto lens = tokmon::make_builtin_lens("janus");
+  const auto make = [](std::uint64_t sequence, std::string id, std::string kind,
+                       tokmon::cbor::Value payload) {
+    return tokmon::Photon{.sequence = sequence, .id = std::move(id),
+        .ray = "ray-ledger", .kind = std::move(kind), .schema = "tokmon.test.v1",
+        .payload = std::move(payload), .epoch = 2, .hash = std::string(64, 'b')};
+  };
+  auto input = make(1, "input", "user.input",
+      tokmon::cbor::object({{"text", "write and read result.txt"}}));
+  auto write_call = make(2, "write-call", "model.tool-call",
+      tokmon::cbor::object({{"tool", "write_file"}, {"arguments",
+          tokmon::cbor::object({{"path", "result.txt"}, {"content", "ok"}})}}));
+  auto written = make(3, "written", "fs.changed",
+      tokmon::cbor::object({{"path", "result.txt"}, {"write_verified", true}}));
+  auto read_call = make(4, "read-call", "model.tool-call",
+      tokmon::cbor::object({{"tool", "read_file"}, {"arguments",
+          tokmon::cbor::object({{"path", "result.txt"}})}}));
+  auto read = make(5, "read", "fs.read-completed",
+      tokmon::cbor::object({{"path", "result.txt"}, {"content", "ok"}}));
+  tokmon::SurfaceBuilder surface(lens->manifest().id);
+  REQUIRE(lens->view(tokmon::PhotonWindow({input, write_call, written, read_call, read}),
+                     surface));
+  REQUIRE(surface.proposals().size() == 1);
+  const auto* messages = tokmon::cbor::find(surface.proposals().front().parameters,
+                                            "messages");
+  REQUIRE(messages != nullptr);
+  const auto diagnostic = tokmon::cbor::diagnostic(*messages);
+  REQUIRE(diagnostic.find("write_file") != std::string::npos);
+  REQUIRE(diagnostic.find("fs.changed") != std::string::npos);
+  REQUIRE(diagnostic.find("read_file") != std::string::npos);
+  REQUIRE(diagnostic.find("fs.read-completed") != std::string::npos);
+  REQUIRE(diagnostic.find("Do not redo a successful entry") != std::string::npos);
 }
 
 TEST_CASE("Styx executes argv without a shell and captures bounded output") {
@@ -557,6 +597,12 @@ TEST_CASE("Rhea streams an OpenAI-compatible provider and retries transient fail
   REQUIRE(std::count_if(host.drafts.begin(), host.drafts.end(), [](const auto& draft) {
     return draft.kind == "model.dispatched";
   }) == 2);
+  const auto retry = std::find_if(host.drafts.begin(), host.drafts.end(),
+      [](const auto& draft) { return draft.kind == "model.retry-scheduled"; });
+  REQUIRE(retry != host.drafts.end());
+  REQUIRE(tokmon::cbor::find(retry->payload, "attempt")->as_integer() == 1);
+  REQUIRE(tokmon::cbor::find(retry->payload, "next_attempt")->as_integer() == 2);
+  REQUIRE(tokmon::cbor::find(retry->payload, "wait_ms")->as_integer() == 1);
   const auto reasoning = std::find_if(host.drafts.begin(), host.drafts.end(),
       [](const auto& draft) { return draft.kind == "model.reasoning-chunk"; });
   REQUIRE(reasoning != host.drafts.end());
@@ -572,6 +618,68 @@ TEST_CASE("Rhea streams an OpenAI-compatible provider and retries transient fail
       [](const auto& draft) { return draft.kind == "model.usage"; });
   REQUIRE(usage != host.drafts.end());
   REQUIRE(tokmon::cbor::find(usage->payload, "input_tokens")->as_integer() == 3);
+  server.join();
+  REQUIRE(server_result);
+  REQUIRE(*server_result);
+  REQUIRE((*server_result)->exit_code == 0);
+}
+
+TEST_CASE("Rhea performs five retries before publishing a terminal model failure") {
+  const auto root = lens_temporary_directory("rhea-five-retries");
+  const auto ready = root / "ready.port";
+  std::optional<tokmon::Result<tokmon::builtin::ProcessOutput>> server_result;
+  std::jthread server([&] {
+    server_result = tokmon::builtin::run_process(tokmon::builtin::ProcessRequest{
+        .argv = {TOKMON_PYTHON_EXECUTABLE,
+            (std::filesystem::path(TOKMON_SOURCE_DIR) /
+             "tests/fixtures/model_sse_server.py").string(),
+            "0", ready.string(), "6", "6"},
+        .cwd = root, .timeout = std::chrono::seconds(15),
+        .max_output_bytes = 16u * 1024u});
+  });
+  const auto ready_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (!std::filesystem::exists(ready) &&
+         std::chrono::steady_clock::now() < ready_deadline)
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  REQUIRE(std::filesystem::exists(ready));
+  std::ifstream port_input(ready);
+  std::string port;
+  port_input >> port;
+  REQUIRE_FALSE(port.empty());
+
+  const auto lens = tokmon::make_builtin_lens("rhea");
+  RecordingHost host;
+  auto result = refract(lens, "model.call", "tokmon.model.call.v1",
+      tokmon::cbor::object({{"provider", "fixture-cloud"},
+          {"protocol", "openai-compatible"}, {"model", "fixture-model"},
+          {"prompt", "hello"},
+          {"endpoint", "http://127.0.0.1:" + port + "/v1/chat/completions"},
+          {"allow_anonymous", true}, {"max_attempts", 6},
+          {"retry_backoff_ms", 1}}), host);
+  REQUIRE(result);
+  REQUIRE(result->status == tokmon::RefractionStatus::failed);
+  REQUIRE(std::count_if(host.drafts.begin(), host.drafts.end(), [](const auto& draft) {
+    return draft.kind == "model.dispatched";
+  }) == 6);
+  REQUIRE(std::count_if(host.drafts.begin(), host.drafts.end(), [](const auto& draft) {
+    return draft.kind == "model.retry-scheduled";
+  }) == 5);
+  REQUIRE(std::count_if(host.drafts.begin(), host.drafts.end(), [](const auto& draft) {
+    return draft.kind == "model.failed";
+  }) == 1);
+  const std::array<std::int64_t, 5> expected_waits{1, 2, 4, 8, 16};
+  std::size_t retry_index = 0;
+  for (const auto& draft : host.drafts) {
+    if (draft.kind != "model.retry-scheduled") continue;
+    REQUIRE(retry_index < expected_waits.size());
+    REQUIRE(tokmon::cbor::find(draft.payload, "wait_ms")->as_integer() ==
+            expected_waits[retry_index]);
+    ++retry_index;
+  }
+  REQUIRE(retry_index == expected_waits.size());
+  const auto terminal = std::find_if(host.drafts.begin(), host.drafts.end(),
+      [](const auto& draft) { return draft.kind == "model.failed"; });
+  REQUIRE(tokmon::cbor::find(terminal->payload, "attempts")->as_integer() == 6);
   server.join();
   REQUIRE(server_result);
   REQUIRE(*server_result);

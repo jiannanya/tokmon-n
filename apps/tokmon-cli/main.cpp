@@ -457,8 +457,8 @@ int main(int argc, char** argv) {
       catch (...) { std::cerr << "invalid numeric option " << option << '\n'; return false; }
     };
     if (!integer_option("--max-output-tokens", "max_output_tokens", 4096) ||
-        !integer_option("--max-attempts", "max_attempts", 2) ||
-        !integer_option("--retry-backoff-ms", "retry_backoff_ms", 250)) return 2;
+        !integer_option("--max-attempts", "max_attempts", 6) ||
+        !integer_option("--retry-backoff-ms", "retry_backoff_ms", 5'000)) return 2;
     auto response = intent(client, std::move(payload));
     if (!response) { print_error(response.error()); return 1; }
     if (output_format == OutputFormat::human)

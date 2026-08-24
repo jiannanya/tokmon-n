@@ -170,11 +170,11 @@ models:
       thinking: false
       reasoning_effort: high
       max_output_tokens: 4096
-      max_attempts: 2
-      retry_backoff_ms: 500
+      max_attempts: 6
+      retry_backoff_ms: 5000
 ```
 
-`x-preview-f-free` 不接受 `medium`，应使用 `low`、`high` 或 `max`。本次 Windows 现场验收使用 `high`。完整 CLI/Desktop 记录见 [OPENCODE-DESKTOP-ACCEPTANCE-REPORT.md](OPENCODE-DESKTOP-ACCEPTANCE-REPORT.md)。
+`x-preview-f-free` 不接受 `medium`，应使用 `low`、`high` 或 `max`。本次 Windows 现场验收使用 `high`。远程模型默认执行 1 次初始请求和 5 次重试，确定性等待为 5 秒、10 秒、20 秒、40 秒、60 秒；只有五次重试都失败后才追加最终 `model.failed`。每次等待前追加 `model.retry-scheduled`，对话页显示人类可读状态，轨迹页保留完整 Photon。完整 CLI/Desktop 记录见 [OPENCODE-DESKTOP-ACCEPTANCE-REPORT.md](OPENCODE-DESKTOP-ACCEPTANCE-REPORT.md)。
 
 用户级 `~/.tokmon/config.yaml` 与项目级 `<workspace>/.tokmon/config.yaml` 使用同一 schema。先合并用户级，再按 provider id 合并项目级；项目可以覆盖 model、endpoint 或预算，但 SecretRef 必须严格等于自己的 `model-provider/<id>`，不能引用其他 provider 或其他透镜的凭据。`models.default` 必须指向存在且启用的 provider。
 

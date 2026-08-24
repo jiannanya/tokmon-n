@@ -345,9 +345,9 @@ tokmon::Result<void> update_project_model_provider(const std::filesystem::path& 
   const auto max_output_tokens = tokmon::cbor::find(payload, "max_output_tokens")
       ? tokmon::cbor::find(payload, "max_output_tokens")->as_integer(4096) : 4096;
   const auto max_attempts = tokmon::cbor::find(payload, "max_attempts")
-      ? tokmon::cbor::find(payload, "max_attempts")->as_integer(2) : 2;
+      ? tokmon::cbor::find(payload, "max_attempts")->as_integer(6) : 6;
   const auto retry_backoff_ms = tokmon::cbor::find(payload, "retry_backoff_ms")
-      ? tokmon::cbor::find(payload, "retry_backoff_ms")->as_integer(250) : 250;
+      ? tokmon::cbor::find(payload, "retry_backoff_ms")->as_integer(5'000) : 5'000;
   if (!std::regex_match(id, id_pattern) || id == "local" || !protocols.contains(protocol) ||
       !auth_modes.contains(auth) || endpoint.empty() || model.empty())
     return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::invalid_argument,
@@ -441,6 +441,7 @@ tokmon::Result<tokmon::cbor::Value> resolved_model_context(
       {"max_output_tokens", provider.max_output_tokens},
       {"max_attempts", provider.max_attempts},
       {"retry_backoff_ms", provider.retry_backoff_ms},
+      {"workspace_root", config.paths.project.parent_path().generic_string()},
       {"access_mode", tokmon::cbor::find(payload, "access_mode")
           ? std::string(tokmon::cbor::find(payload, "access_mode")->as_string())
           : std::string("完全访问")},
