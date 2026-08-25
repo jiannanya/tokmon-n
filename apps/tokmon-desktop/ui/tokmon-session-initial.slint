@@ -69,20 +69,15 @@ component StarterCard inherits Rectangle {
 export component SessionEmptyState inherits Rectangle {
     in property <string> workspace-project;
     in property <string> workspace-path;
-    callback change-workspace();
     callback starter-chosen(string);
 
     background: transparent;
-    property <bool> wide-cards: root.width >= 880px;
 
     content := Rectangle {
         x: (parent.width - self.width) / 2;
-        // At the desktop's compact center-pane width the environment card
-        // occupies the upper-right corner, so the two-row starter grid starts
-        // slightly lower to keep the question fully readable.
-        y: Math.max(24px, (parent.height - 158px - self.height) / 2) + (root.wide-cards ? 0px : 72px);
+        y: Math.max(24px, (parent.height - 158px - self.height) / 2);
         width: Math.min(840px, parent.width - 48px);
-        height: root.wide-cards ? 296px : 436px;
+        height: 296px;
         background: transparent;
 
         Rectangle {
@@ -122,41 +117,15 @@ export component SessionEmptyState inherits Rectangle {
                 color: Palette.ink;
                 vertical-alignment: center;
             }
-            workspace-button := Rectangle {
-                width: Math.min(240px, workspace-heading.preferred-width + 8px);
-                height: 34px;
-                horizontal-stretch: 0;
-                background: transparent;
-                workspace-heading := Text {
-                    x: 4px;
-                    y: 0px;
-                    width: parent.width - 8px;
-                    height: 31px;
-                    text: root.workspace-project == "" ? "当前工作空间" : root.workspace-project;
-                    font-size: 23px;
-                    font-weight: 650;
-                    letter-spacing: -0.35px;
-                    color: workspace-touch.has-hover ? Palette.accent : Palette.ink;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                    overflow: elide;
-                }
-                HorizontalLayout {
-                    x: 3px;
-                    y: 32px;
-                    width: parent.width - 6px;
-                    height: 2px;
-                    spacing: 3px;
-                    for dash in [0, 1, 2, 3, 4, 5, 6, 7] : Rectangle {
-                        height: 2px;
-                        border-radius: 1px;
-                        background: workspace-touch.has-hover ? Palette.accent : Palette.faint;
-                    }
-                }
-                workspace-touch := TouchArea {
-                    mouse-cursor: pointer;
-                    clicked => { root.change-workspace(); }
-                }
+            Text {
+                text: root.workspace-project == "" ? "当前工作空间" : root.workspace-project;
+                max-width: 240px;
+                font-size: 23px;
+                font-weight: 650;
+                letter-spacing: -0.35px;
+                color: Palette.ink;
+                vertical-alignment: center;
+                overflow: elide;
             }
             Text {
                 text: "中构建什么？";
@@ -204,7 +173,7 @@ export component SessionEmptyState inherits Rectangle {
             }
         }
 
-        if root.wide-cards : HorizontalLayout {
+        HorizontalLayout {
             x: 0px;
             y: 170px;
             width: parent.width;
@@ -245,58 +214,6 @@ export component SessionEmptyState inherits Rectangle {
                 title: "修复问题和失败";
                 detail: "诊断报错堆栈并修复异常";
                 chosen => { root.starter-chosen("请帮我诊断当前工作空间中的报错和运行异常，定位原因并提供修复补丁。"); }
-            }
-        }
-
-        if !root.wide-cards : VerticalLayout {
-            x: 0px;
-            y: 170px;
-            width: parent.width;
-            height: 266px;
-            spacing: 14px;
-            HorizontalLayout {
-                height: 126px;
-                spacing: 14px;
-                StarterCard {
-                    icon: @image-url("../assets/figma/starter-explore.svg");
-                    icon-background: #F0F9FF;
-                    icon-border: #E0F2FE;
-                    accent: #0EA5E9;
-                    title: "探索并理解代码";
-                    detail: "梳理架构、依赖与核心逻辑";
-                    chosen => { root.starter-chosen("请全面分析并梳理当前工作空间（" + (root.workspace-project == "" ? "当前工作空间" : root.workspace-project) + "）的代码架构、模块依赖与核心实现逻辑。"); }
-                }
-                StarterCard {
-                    icon: @image-url("../assets/figma/starter-build.svg");
-                    icon-background: #FAF5FF;
-                    icon-border: #F3E8FF;
-                    accent: #A855F7;
-                    title: "构建新功能、应用或工具";
-                    detail: "设计方案并编写实现代码";
-                    chosen => { root.starter-chosen("我想为当前工作空间（" + (root.workspace-project == "" ? "当前工作空间" : root.workspace-project) + "）构建一个新功能，请帮我规划设计方案并编写实现代码。"); }
-                }
-            }
-            HorizontalLayout {
-                height: 126px;
-                spacing: 14px;
-                StarterCard {
-                    icon: @image-url("../assets/figma/starter-review.svg");
-                    icon-background: #ECFDF5;
-                    icon-border: #D1FAE5;
-                    accent: #10B981;
-                    title: "审查代码并提出修改建议";
-                    detail: "排查隐患与提升代码规范";
-                    chosen => { root.starter-chosen("请对当前项目代码进行全面审查，指出潜在质量风险、规范问题并提出优化重构建议。"); }
-                }
-                StarterCard {
-                    icon: @image-url("../assets/figma/starter-fix.svg");
-                    icon-background: #FFF7ED;
-                    icon-border: #FFEDD5;
-                    accent: #C86A28;
-                    title: "修复问题和失败";
-                    detail: "诊断报错堆栈并修复异常";
-                    chosen => { root.starter-chosen("请帮我诊断当前工作空间中的报错和运行异常，定位原因并提供修复补丁。"); }
-                }
             }
         }
     }

@@ -1464,23 +1464,27 @@ private:
         auto workflow = conversation_workflow_;
         auto code = code_;
         auto window = window_;
-        (void)slint::invoke_from_event_loop([timeline, workflow, code, window] {
-          timeline->clear();
-          workflow->clear();
-          code->clear();
-          if (auto locked = window.lock()) {
-            auto handle = *locked;
-            handle->set_assistant_text("");
-            handle->set_last_message("");
-            handle->set_chat_time("");
-            handle->set_status_text("等待输入");
-            handle->set_chat_empty(true);
-            handle->set_workspace_locked(false);
-            handle->set_selected_file_name("");
-            handle->set_file_added_lines(0);
-            handle->set_preview_content("");
-          }
-        });
+        const bool reset_environment_panel = command.kind == "new-session";
+        (void)slint::invoke_from_event_loop(
+            [timeline, workflow, code, window, reset_environment_panel] {
+              timeline->clear();
+              workflow->clear();
+              code->clear();
+              if (auto locked = window.lock()) {
+                auto handle = *locked;
+                handle->set_assistant_text("");
+                handle->set_last_message("");
+                handle->set_chat_time("");
+                handle->set_status_text("等待输入");
+                handle->set_chat_empty(true);
+                handle->set_workspace_locked(false);
+                if (reset_environment_panel)
+                  handle->set_environment_panel_open(false);
+                handle->set_selected_file_name("");
+                handle->set_file_added_lines(0);
+                handle->set_preview_content("");
+              }
+            });
         if (command.kind == "new-session" || command.text.empty())
           continue;
         active_ray_ = command.text;

@@ -91,6 +91,7 @@ export component MainWindow inherits Window {
     in property <int> workspace-indexed-files: 0;
     in property <bool> workspace-has-git: false;
     in-out property <bool> workspace-locked: false;
+    in-out property <bool> environment-panel-open: false;
     in-out property <string> selected-file-name;
     in-out property <string> preview-search;
     in-out property <string> preview-content;
@@ -320,6 +321,7 @@ export component MainWindow inherits Window {
                 workspace-indexed-files: root.workspace-indexed-files;
                 workspace-has-git: root.workspace-has-git;
                 workspace-locked: root.workspace-locked;
+                environment-panel-open <=> root.environment-panel-open;
                 chat-empty: root.chat-empty;
                 trace-selected-num <=> root.trace-selected-num;
                 trace-page <=> root.trace-page;

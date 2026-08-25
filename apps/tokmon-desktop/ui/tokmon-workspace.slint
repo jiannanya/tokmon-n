@@ -46,6 +46,7 @@ export component WorkspacePanel inherits Rectangle {
     in property <bool> workspace-has-git;
     in property <bool> workspace-locked;
     in property <bool> chat-empty;
+    in-out property <bool> environment-panel-open;
     in-out property <int> trace-selected-num;
     in-out property <int> trace-page;
     in-out property <int> trace-page-size;
@@ -274,7 +275,6 @@ export component WorkspacePanel inherits Rectangle {
                                 height: parent.height;
                                 workspace-project: root.workspace-project;
                                 workspace-path: root.workspace-short-path == "" ? root.setting-workspace : root.workspace-short-path;
-                                change-workspace => { root.open-change-workspace(); }
                                 starter-chosen(prompt) => {
                                     root.composer-text = prompt;
                                     composer-edit.focus();
@@ -1050,6 +1050,7 @@ environment-panel := EnvironmentPanel {
     indexed-files: root.workspace-indexed-files;
     has-git: root.workspace-has-git;
     locked: root.workspace-locked;
+    open <=> root.environment-panel-open;
     open-project-file(index) => {
         root.select-project-file(index);
         root.set-code-panel-visible(true);
