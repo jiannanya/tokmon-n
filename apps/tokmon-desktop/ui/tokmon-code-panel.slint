@@ -1,0 +1,496 @@
+import { ListView, ScrollView } from "std-widgets.slint";
+import { Palette, Icons } from "tokmon-theme.slint";
+import { CodeLine, ProjectFile } from "tokmon-models.slint";
+import { ToolIcon, MenuOption } from "tokmon-components.slint";
+
+export component CodePanelSlot inherits Rectangle {
+    in property <bool> code-visible;
+    in property <length> host-width;
+    in property <bool> sidebar-visible;
+    in property <length> sidebar-width;
+    in property <[ProjectFile]> project-files;
+    in property <[CodeLine]> code-lines;
+    in property <[CodeLine]> preview-lines;
+    in property <int> file-added-lines;
+    in property <string> selected-file-name;
+    in property <string> preview-content;
+    in property <string> status-text;
+    in property <string> trace-result;
+    in property <string> assistant-text;
+    in-out property <length> code-panel-width;
+    in-out property <bool> file-preview-selected;
+    in-out property <bool> code-menu-open;
+    in-out property <bool> file-menu-open;
+    in-out property <bool> copy-notice-visible;
+    in-out property <string> preview-search;
+    in-out property <bool> issues-open;
+
+    callback return-focus();
+    callback drag-window();
+    callback minimize-window();
+    callback toggle-maximize-window();
+    callback close-window();
+    callback set-code-panel-visible(bool);
+    callback select-project-file(int);
+    callback reconcile();
+    callback copy-text(string);
+    callback filter-preview(string);
+                width: root.code-visible ? root.code-panel-width + 1px : 0px;
+                horizontal-stretch: 0;
+                vertical-stretch: 1;
+                background: transparent;
+                Rectangle {
+                    visible: root.code-visible;
+                    x: 0px;
+                    width: 1px;
+                    height: parent.height;
+                    background: cpt.has-hover || cpt.pressed ? Palette.accent : Palette.border;
+                    cpt := TouchArea {
+                        x: -3px;
+                        width: 7px;
+                        moved => {
+                            root.code-panel-width = Math.max(320px,
+                                Math.min(Math.min(720px, root.host-width
+                                    - (root.sidebar-visible ? root.sidebar-width + 1px : 0px)
+                                    - 481px),
+                                root.code-panel-width - (self.mouse-x - self.pressed-x)));
+                        }
+                        mouse-cursor: ew-resize;
+                    }
+                }
+                Rectangle {
+                    visible: root.code-visible;
+                    x: 1px;
+                    width: root.code-panel-width;
+                    height: parent.height;
+                    clip: true;
+                    background: Palette.white;
+                VerticalLayout {
+                    Rectangle {
+                        height: 46px;
+                        header-drag := TouchArea {
+                            moved => { root.drag-window() }
+                            clicked => { root.return-focus(); }
+                        }
+                        HorizontalLayout {
+                            padding-left: 16px;
+                            padding-right: 4px;
+                            alignment: space-between;
+                            HorizontalLayout {
+                                spacing: 24px;
+                                alignment: start;
+                                horizontal-stretch: 0;
+                                Rectangle {
+                                    width: ct1.width + 4px;
+                                    horizontal-stretch: 0;
+                                    ct1 := Text {
+                                        y: (parent.height - self.preferred-height) / 2;
+                                        text: "代码审阅";
+                                        font-size: 12.5px;
+                                        font-weight: root.file-preview-selected ? 500 : 700;
+                                        color: root.file-preview-selected ? (code-tab-touch.has-hover ? Palette.ink : Palette.dim) : Palette.accent-text;
+                                    }
+                                    Rectangle {
+                                        y: parent.height - 2px;
+                                        height: 2px;
+                                        width: parent.width;
+                                        background: root.file-preview-selected ? transparent : Palette.accent;
+                                    }
+                                    code-tab-touch := TouchArea {
+                                        clicked => { root.file-preview-selected = false; root.return-focus(); }
+                                        mouse-cursor: pointer;
+                                    }
+                                }
+                                Rectangle {
+                                    width: ct2.width + 4px;
+                                    horizontal-stretch: 0;
+                                    ct2 := Text {
+                                        y: (parent.height - self.preferred-height) / 2;
+                                        text: "文件预览";
+                                        font-size: 12.5px;
+                                        font-weight: root.file-preview-selected ? 700 : 500;
+                                        color: root.file-preview-selected ? Palette.accent-text : (preview-tab-touch.has-hover ? Palette.ink : Palette.dim);
+                                    }
+                                    Rectangle {
+                                        y: parent.height - 2px;
+                                        height: 2px;
+                                        width: parent.width;
+                                        background: root.file-preview-selected ? Palette.accent : transparent;
+                                    }
+                                    preview-tab-touch := TouchArea {
+                                        clicked => { root.file-preview-selected = true; root.return-focus(); }
+                                        mouse-cursor: pointer;
+                                    }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: 0px;
+                                horizontal-stretch: 0;
+                                ToolIcon { source: Icons.minus; icon-size: 14px; clicked => { root.minimize-window() } }
+                                ToolIcon { source: Icons.stop; icon-size: 12px; clicked => { root.toggle-maximize-window() } }
+                                ToolIcon { source: Icons.close; icon-size: 14px; clicked => { root.close-window() } }
+                            }
+                        }
+                        Rectangle {
+                            y: parent.height - 0.67px;
+                            width: parent.width;
+                            height: 0.67px;
+                            background: Palette.hairline;
+                        }
+                    }
+                    if !root.file-preview-selected : Rectangle {
+                        height: 34px;
+                        background: Palette.surface;
+                        HorizontalLayout {
+                            padding-left: 14px;
+                            padding-right: 14px;
+                            alignment: space-between;
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: start;
+                                Rectangle {
+                                    height: 22px;
+                                    border-radius: 6px;
+                                    background: Palette.white;
+                                    border-width: 0.67px;
+                                    border-color: Palette.border;
+                                    HorizontalLayout {
+                                        padding-left: 8px;
+                                        padding-right: 8px;
+                                        spacing: 4px;
+                                        Image { source: Icons.file-code; width: 13px; height: 13px; y: (parent.height - 13px) / 2; }
+                                        Text {
+                                            text: root.selected-file-name == "" ? (root.project-files.length > 0 ? root.project-files[0].name : "会话文件") : root.selected-file-name;
+                                            font-family: "Consolas";
+                                            font-size: 12px;
+                                            font-weight: 500;
+                                            color: Palette.strong;
+                                            vertical-alignment: center;
+                                        }
+                                        Image { source: Icons.chev-down-faint; width: 9px; height: 5px; y: (parent.height - 5px) / 2; }
+                                    }
+                                    TouchArea {
+                                        clicked => { root.code-menu-open = false; root.file-menu-open = !root.file-menu-open }
+                                        mouse-cursor: pointer;
+                                    }
+                                    if root.file-menu-open : Rectangle {
+                                        x: 0px;
+                                        y: parent.height + 6px;
+                                        width: 220px;
+                                        height: Math.min(root.project-files.length, 8) * 30px + 8px;
+                                        background: Palette.white;
+                                        border-radius: 12px;
+                                        border-width: 0.67px;
+                                        border-color: Palette.border;
+                                        drop-shadow-color: rgba(0, 0, 0, 0.14);
+                                        drop-shadow-offset-y: 5px;
+                                        drop-shadow-blur: 14px;
+                                        VerticalLayout {
+                                            padding: 4px;
+                                            if root.project-files.length == 0 : Text {
+                                                text: "会话尚未产生文件投影";
+                                                font-size: 11px;
+                                                color: Palette.faint;
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
+                                                height: 26px;
+                                            }
+                                            for file[fi] in root.project-files : MenuOption {
+                                                label: file.name;
+                                                active: file.name == root.selected-file-name;
+                                                chosen => {
+                                                    root.select-project-file(fi);
+                                                    root.file-menu-open = false;
+                                                    root.return-focus();
+                                                }
+                                            }
+                                        }
+                                        TouchArea { clicked => { root.file-menu-open = false } }
+                                    }
+                                }
+                                Rectangle {
+                                    height: 20px;
+                                    border-radius: 4px;
+                                    background: #DCFCE7;
+                                    HorizontalLayout {
+                                        padding-left: 6px;
+                                        padding-right: 6px;
+                                        Text {
+                                            text: "+" + (root.file-added-lines == 0 ? root.code-lines.length : root.file-added-lines) + " -0";
+                                            font-family: "Consolas";
+                                            font-size: 11px;
+                                            font-weight: 700;
+                                            color: #15803D;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                alignment: end;
+                                ToolIcon { source: Icons.download; icon-size: 13px; clicked => { root.reconcile() } }
+                            }
+                        }
+                        Rectangle {
+                            y: parent.height - 0.67px;
+                            height: 0.67px;
+                            width: parent.width;
+                            background: Palette.sep;
+                        }
+                    }
+                    if !root.file-preview-selected : ListView {
+                        vertical-stretch: 1;
+                        for line in root.code-lines : Rectangle {
+                            height: 22px;
+                            HorizontalLayout {
+                                Text {
+                                    width: 40px;
+                                    horizontal-stretch: 0;
+                                    text: line.number;
+                                    font-family: "Consolas";
+                                    font-size: 11px;
+                                    color: Palette.faint;
+                                    horizontal-alignment: right;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    horizontal-stretch: 1;
+                                    text: line.text == "" ? " " : line.text;
+                                    font-family: "Consolas";
+                                    font-size: 12px;
+                                    color: line.tone == "comment" ? #99A1AF : #1E2939;
+                                    overflow: elide;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+                    if root.file-preview-selected : Rectangle {
+                        vertical-stretch: 1;
+                        VerticalLayout {
+                            padding: 12px;
+                            spacing: 10px;
+                            if root.copy-notice-visible : Rectangle {
+                                height: 34px;
+                                border-radius: 8px;
+                                background: Palette.green-bg;
+                                border-width: 0.67px;
+                                border-color: Palette.green-line;
+                                HorizontalLayout {
+                                    padding-left: 9px;
+                                    padding-right: 7px;
+                                    alignment: space-between;
+                                    Text {
+                                        text: "✓ 已成功复制全条字幕内容！";
+                                        font-size: 12px;
+                                        color: Palette.green-ink;
+                                        vertical-alignment: center;
+                                    }
+                                    ToolIcon {
+                                        source: Icons.close;
+                                        icon-size: 12px;
+                                        clicked => { root.copy-notice-visible = false }
+                                    }
+                                }
+                            }
+                            HorizontalLayout {
+                                alignment: space-between;
+                                Text {
+                                    text: "内容预览" + (root.selected-file-name == "" ? "" : " · " + root.selected-file-name);
+                                    font-size: 12.5px;
+                                    font-weight: 600;
+                                    color: Palette.ink;
+                                    vertical-alignment: center;
+                                }
+                                Rectangle {
+                                    height: 24px;
+                                    border-radius: 8px;
+                                    background: Palette.sep;
+                                    border-width: 0.67px;
+                                    border-color: Palette.border;
+                                    HorizontalLayout {
+                                        padding-left: 8px;
+                                        padding-right: 8px;
+                                        spacing: 4px;
+                                        Image { source: Icons.doc; width: 11px; height: 11px; y: (parent.height - 11px) / 2; }
+                                        Text { text: "复制内容"; font-size: 11px; font-weight: 500; color: Palette.mid; vertical-alignment: center; }
+                                    }
+                                    TouchArea {
+                                        clicked => {
+                                            root.copy-text(root.preview-content);
+                                            root.copy-notice-visible = true;
+                                        }
+                                        mouse-cursor: pointer;
+                                    }
+                                }
+                            }
+                            Rectangle {
+                                height: 28px;
+                                border-radius: 8px;
+                                background: Palette.input;
+                                border-width: 0.67px;
+                                border-color: Palette.border;
+                                Image {
+                                    source: Icons.search;
+                                    x: 9px;
+                                    y: (parent.height - 13px) / 2;
+                                    width: 13px;
+                                    height: 13px;
+                                }
+                                preview-q := TextInput {
+                                    x: 29px;
+                                    width: parent.width - 37px;
+                                    height: parent.height;
+                                    vertical-alignment: center;
+                                    font-size: 12px;
+                                    color: Palette.body;
+                                    text <=> root.preview-search;
+                                    edited => { root.filter-preview(self.text) }
+                                    accepted => { root.filter-preview(self.text) }
+                                }
+                                if root.preview-search == "" : Text {
+                                    x: 29px;
+                                    height: parent.height;
+                                    text: "在投影内容中搜索...";
+                                    font-size: 12px;
+                                    color: Palette.faint;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            ScrollView {
+                                vertical-stretch: 1;
+                                VerticalLayout {
+                                    spacing: 6px;
+                                    for line in root.preview-lines : Rectangle {
+                                        height: text-item.preferred-height + 16px;
+                                        border-radius: 10px;
+                                        background: Palette.surface;
+                                        border-width: 0.67px;
+                                        border-color: Palette.border;
+                                        VerticalLayout {
+                                            padding-left: 10px;
+                                            padding-right: 10px;
+                                            padding-top: 8px;
+                                            padding-bottom: 8px;
+                                            HorizontalLayout {
+                                                alignment: space-between;
+                                                Text {
+                                                    text: "#" + line.number;
+                                                    font-family: "Consolas";
+                                                    font-size: 10.5px;
+                                                    font-weight: 600;
+                                                    color: Palette.amber;
+                                                    vertical-alignment: center;
+                                                }
+                                                Text { horizontal-stretch: 1; }
+                                            }
+                                            text-item := Text {
+                                                text: line.text == "" ? " " : line.text;
+                                                font-size: 12.5px;
+                                                color: Palette.ink;
+                                                wrap: word-wrap;
+                                            }
+                                        }
+                                    }
+                                    if root.preview-lines.length == 0 : Text {
+                                        text: "// 暂无可预览的投影内容。";
+                                        font-family: "Consolas";
+                                        font-size: 12px;
+                                        color: Palette.faint;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Rectangle {
+                        height: 30px;
+                        background: Palette.surface;
+                        Rectangle {
+                            y: 0px;
+                            height: 0.67px;
+                            width: parent.width;
+                            background: Palette.border;
+                        }
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 8px;
+                            spacing: 12px;
+                            alignment: space-between;
+                            HorizontalLayout {
+                                spacing: 6px;
+                                Image { source: Icons.check-circle-green; width: 14px; height: 14px; y: (parent.height - 14px) / 2; }
+                                Text { text: root.status-text; font-size: 11.5px; font-weight: 500; color: Palette.green; vertical-alignment: center; overflow: elide; }
+                            }
+                            HorizontalLayout {
+                                spacing: 12px;
+                                alignment: end;
+                                Text { text: "UTF-8"; font-size: 11.5px; color: Palette.dim; vertical-alignment: center; }
+                                Rectangle {
+                                    height: 20px;
+                                    border-radius: 6px;
+                                    horizontal-stretch: 0;
+                                    HorizontalLayout {
+                                        padding-left: 8px;
+                                        padding-right: 8px;
+                                        spacing: 4px;
+                                        Image { source: Icons.dots; width: 12px; height: 12px; y: (parent.height - 12px) / 2; }
+                                        Text { text: "问题"; font-size: 11.5px; color: Palette.mid; vertical-alignment: center; }
+                                    }
+                                    TouchArea {
+                                        clicked => { root.issues-open = !root.issues-open; }
+                                        mouse-cursor: pointer;
+                                    }
+                                    if root.issues-open : Rectangle {
+                                        x: parent.width - 230px;
+                                        y: -110px;
+                                        width: 220px;
+                                        background: Palette.white;
+                                        border-radius: 12px;
+                                        border-width: 0.67px;
+                                        border-color: Palette.border;
+                                        drop-shadow-color: rgba(0, 0, 0, 0.14);
+                                        drop-shadow-blur: 14px;
+                                        VerticalLayout {
+                                            padding: 12px;
+                                            spacing: 6px;
+                                            Text { text: "问题面板"; font-size: 12px; font-weight: 600; color: Palette.ink; }
+                                            Text { text: root.trace-result == "执行失败" ? root.assistant-text : "当前投影没有发现问题。"; font-size: 11.5px; color: Palette.dim; wrap: word-wrap; overflow: elide; }
+                                        }
+                                        TouchArea { clicked => { root.issues-open = false } }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if root.code-menu-open : Rectangle {
+                    x: parent.width - 170px;
+                    y: 44px;
+                    width: 160px;
+                    background: Palette.white;
+                    border-radius: 12px;
+                    border-width: 0.67px;
+                    border-color: Palette.border;
+                    drop-shadow-color: rgba(0, 0, 0, 0.14);
+                    drop-shadow-offset-y: 5px;
+                    drop-shadow-blur: 14px;
+                    VerticalLayout {
+                        padding: 4px;
+                        MenuOption {
+                            label: "重新审阅";
+                            active: false;
+                            chosen => { root.reconcile(); root.code-menu-open = false; root.return-focus(); }
+                        }
+                        MenuOption {
+                            label: "关闭面板";
+                            active: false;
+                            chosen => { root.set-code-panel-visible(false); root.code-menu-open = false; root.return-focus(); }
+                        }
+                    }
+                    TouchArea { clicked => { root.code-menu-open = false } }
+                }
+                }
+            
+}
+

@@ -1,0 +1,65 @@
+export struct NavigationItem {
+    id: string,
+    ray: string,
+    workspace: string,
+    kind: string,
+    title: string,
+    icon: image,
+    indent: int,
+    selected: bool,
+    expandable: bool,
+    expanded: bool,
+}
+
+export struct ModelChoice {
+    provider: string,
+    model: string,
+    label: string,
+}
+
+export struct TimelineItem {
+    time: string,
+    kind: string,
+    title: string,
+    detail: string,
+    tone: string,
+    progress: int,
+}
+
+export struct CodeLine {
+    number: int,
+    text: string,
+    tone: string,
+}
+
+export struct SlashCommandItem {
+    command: string,
+    usage: string,
+    summary: string,
+    category: string,
+}
+
+export struct ProjectFile {
+    name: string,
+    path: string,
+    group-title: string,
+}
+
+export struct GanttSegment {
+    row: int,
+    start: float,
+    span: float,
+    tint: color,
+}
+
+export struct TraceEvent {
+    num: int,
+    time: string,
+    tone: string,
+    role: string,
+    title: string,
+    detail: string,
+    dur: string,
+    tokens: string,
+}
+

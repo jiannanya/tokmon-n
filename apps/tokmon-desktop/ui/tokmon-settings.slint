@@ -1,0 +1,894 @@
+import { LineEdit, ScrollView, Slider } from "std-widgets.slint";
+import { Palette, Icons } from "tokmon-theme.slint";
+import { ToolIcon, ToggleSwitch, SegTrack, SelectBox, RowShell, OverviewLine, KeyCap, SwatchDot } from "tokmon-components.slint";
+
+export component SettingsOverlay inherits Rectangle {
+    in-out property <string> settings-search;
+    in-out property <int> settings-page;
+    in-out property <bool> settings-open;
+    in-out property <string> model-name;
+    in-out property <string> provider-kind;
+    in-out property <int> account-field;
+    in property <[string]> agent-options;
+    in-out property <int> setting-accent;
+    in-out property <string> setting-autosave;
+    in-out property <string> setting-channel;
+    in-out property <bool> setting-cloud-sync;
+    in-out property <string> setting-command-approval;
+    in-out property <bool> setting-dark-theme;
+    in-out property <string> setting-density;
+    in-out property <bool> setting-desktop-notifications;
+    in-out property <string> setting-email;
+    in-out property <string> setting-file-access;
+    in-out property <int> setting-font-scale;
+    in-out property <bool> setting-git;
+    in-out property <bool> setting-high-risk;
+    in-out property <string> setting-index-mode;
+    in-out property <string> setting-language;
+    in-out property <string> setting-main-model;
+    in-out property <bool> setting-message-alerts;
+    in-out property <bool> setting-network;
+    in-out property <string> setting-nickname;
+    in-out property <bool> setting-notifications;
+    in-out property <string> setting-provider;
+    in-out property <string> setting-provider-auth;
+    in-out property <string> setting-provider-credential;
+    in-out property <string> setting-provider-endpoint;
+    in-out property <string> setting-provider-protocol;
+    in-out property <string> setting-provider-secret;
+    in-out property <bool> setting-provider-thinking;
+    in-out property <string> setting-quiet-hours;
+    in-out property <string> setting-reasoning;
+    in-out property <string> setting-startup;
+    in-out property <string> setting-workspace;
+    in-out property <bool> setting-workspace-sync;
+
+    callback return-focus();
+    pure callback accent-hex(int) -> color;
+    pure callback accent-name(int) -> string;
+    pure callback approval-selected() -> int;
+    callback cancel-settings();
+    callback choose-attachment(bool) -> string;
+    pure callback effort-selected() -> int;
+    callback reset-settings();
+    callback save-settings();
+    callback settings-searched(string);
+    pure callback startup-selected() -> int;
+    callback store-provider-secret(string, string);
+    callback test-provider(string);
+    callback setting-provider-at(int) -> string;
+    callback setting-model-at(int) -> string;
+
+        background: rgba(0, 0, 0, 0.35);
+        TouchArea {
+            clicked => {
+                root.cancel-settings();
+                root.settings-open = false;
+                root.return-focus();
+            }
+        }
+        Rectangle {
+            width: Math.min(1120px, parent.width * 0.92);
+            height: Math.min(720px, parent.height * 0.86);
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            border-radius: 16px;
+            background: Palette.white;
+            border-width: 0.67px;
+            border-color: Palette.border;
+            drop-shadow-color: rgba(0, 0, 0, 0.25);
+            drop-shadow-offset-y: 20px;
+            drop-shadow-blur: 50px;
+            clip: true;
+            TouchArea { clicked => { root.return-focus() } }
+            VerticalLayout {
+                width: parent.width;
+                height: parent.height;
+                Rectangle {
+                    height: 56px;
+                    HorizontalLayout {
+                        padding-left: 28px;
+                        padding-right: 16px;
+                        alignment: space-between;
+                        Text { text: "设置"; font-size: 22px; font-weight: 700; letter-spacing: -0.5px; color: Palette.ink; vertical-alignment: center; }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: end;
+                            Rectangle {
+                                width: 360px;
+                                horizontal-stretch: 0;
+                                height: 33px;
+                                border-radius: 12px;
+                                background: Palette.input;
+                                border-width: 0.67px;
+                                border-color: Palette.border;
+                                Image {
+                                    source: Icons.search;
+                                    x: 14px;
+                                    y: (parent.height - 16px) / 2;
+                                    width: 16px;
+                                    height: 16px;
+                                }
+                                TextInput {
+                                    x: 36px;
+                                    width: parent.width - 44px;
+                                    height: parent.height;
+                                    vertical-alignment: center;
+                                    font-size: 13px;
+                                    color: Palette.body;
+                                    text <=> root.settings-search;
+                                    edited => { root.settings-searched(self.text) }
+                                    accepted => { root.settings-searched(self.text) }
+                                }
+                                if root.settings-search == "" : Text {
+                                    x: 36px;
+                                    height: parent.height;
+                                    text: "搜索设置项";
+                                    font-size: 13px;
+                                    color: Palette.faint;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            ToolIcon {
+                                source: Icons.close;
+                                icon-size: 20px;
+                                clicked => {
+                                    root.cancel-settings();
+                                    root.settings-open = false;
+                                    root.return-focus();
+                                }
+                            }
+                        }
+                    }
+                    Rectangle {
+                        y: parent.height - 0.67px;
+                        height: 0.67px;
+                        width: parent.width;
+                        background: Palette.hairline;
+                    }
+                }
+                HorizontalLayout {
+                    height: parent.height - 112px;
+                    vertical-stretch: 0;
+                    Rectangle {
+                        width: 220px;
+                        horizontal-stretch: 0;
+                        background: Palette.rail;
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 6px;
+                            for nav-item[ni] in ["通用", "智能体与模型", "权限与安全", "工作区", "通知", "外观", "快捷键", "账户"] : Rectangle {
+                                height: 40px;
+                                border-radius: 12px;
+                                background: root.settings-page == ni ? Palette.accent-bg : (nta.has-hover ? rgba(0, 0, 0, 0.03) : transparent);
+                                drop-shadow-color: root.settings-page == ni ? Palette.shadow : transparent;
+                                drop-shadow-offset-y: 1px;
+                                drop-shadow-blur: 0px;
+                                HorizontalLayout {
+                                    padding-left: 14px;
+                                    padding-right: 14px;
+                                    spacing: 12px;
+                                    alignment: start;
+                                    Image {
+                                        source: ni == 0 ? Icons.gear : ni == 1 ? Icons.bot : ni == 2 ? Icons.shield : ni == 3 ? Icons.folder : ni == 4 ? Icons.bell : ni == 5 ? Icons.contrast : ni == 6 ? Icons.keyboard : Icons.person-amber;
+                                        width: 16px;
+                                        height: 16px;
+                                        y: (parent.height - 16px) / 2;
+                                    }
+                                    Text {
+                                        text: nav-item;
+                                        font-size: 13.5px;
+                                        font-weight: root.settings-page == ni ? 600 : 500;
+                                        color: root.settings-page == ni ? Palette.accent-text : Palette.mid;
+                                        overflow: elide;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                nta := TouchArea {
+                                    clicked => {
+                                        root.settings-page = ni;
+                                        root.return-focus();
+                                    }
+                                    mouse-cursor: pointer;
+                                }
+                            }
+                        }
+                    }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        clip: true;
+                        ScrollView {
+                            VerticalLayout {
+                                padding: 24px;
+                                if root.settings-page == 0 : VerticalLayout {
+                                    spacing: 24px;
+                                    RowShell {
+                                        label: "应用语言";
+                                        SelectBox {
+                                            value: root.setting-language;
+                                            options: ["简体中文", "English"];
+                                            selected(i, o) => { root.setting-language = o }
+                                        }
+                                    }
+                                    RowShell {
+                                        label: "启动时打开";
+                                        tall: true;
+                                        SegTrack {
+                                            options: ["首页", "上次打开的会话"];
+                                            selected: root.startup-selected();
+                                            picked(i, o) => { root.setting-startup = o }
+                                        }
+                                    }
+                                    RowShell {
+                                        label: "自动保存";
+                                        SelectBox {
+                                            value: root.setting-autosave;
+                                            options: ["关闭", "1 分钟", "5 分钟", "15 分钟"];
+                                            selected(i, o) => { root.setting-autosave = o }
+                                        }
+                                    }
+                                    RowShell {
+                                        label: "更新通道";
+                                        separated: false;
+                                        tall: true;
+                                        SegTrack {
+                                            warm: true;
+                                            options: ["稳定版", "测试版"];
+                                            selected: root.setting-channel == "稳定版" ? 0 : 1;
+                                            picked(i, o) => { root.setting-channel = o }
+                                        }
+                                    }
+                                }
+                                if root.settings-page == 1 : VerticalLayout {
+                                    spacing: 24px;
+                                    RowShell {
+                                        label: "默认智能体";
+                                        SelectBox {
+                                            value: root.setting-provider == "" ? "选择智能体档案" : root.setting-provider;
+                                            options: root.agent-options;
+                                            drop-up: false;
+                                            selected(i, o) => {
+                                                root.setting-provider = root.setting-provider-at(i);
+                                                root.setting-main-model = root.setting-model-at(i);
+                                                root.model-name = root.setting-model-at(i);
+                                            }
+                                        }
+                                    }
+                                    RowShell {
+                                        label: "模型提供方";
+                                        tall: true;
+                                        SegTrack {
+                                            options: ["Tokmon 官方", "自定义"];
+                                            selected: root.provider-kind == "自定义" ? 1 : 0;
+                                            picked(i, o) => { root.provider-kind = o }
+                                        }
+                                    }
+                                    if root.provider-kind == "自定义" : VerticalLayout {
+                                        RowShell {
+                                            label: "协议";
+                                            SelectBox {
+                                                value: root.setting-provider-protocol;
+                                                options: ["openai-compatible", "anthropic", "responses"];
+                                                selected(i, o) => { root.setting-provider-protocol = o }
+                                            }
+                                        }
+                                        RowShell {
+                                            label: "服务端点";
+                                            LineEdit {
+                                                width: 280px;
+                                                text <=> root.setting-provider-endpoint;
+                                                font-size: 12.5px;
+                                            }
+                                        }
+                                        RowShell {
+                                            label: "鉴权方式";
+                                            SelectBox {
+                                                value: root.setting-provider-auth;
+                                                options: ["bearer", "api-key", "none"];
+                                                selected(i, o) => { root.setting-provider-auth = o }
+                                            }
+                                        }
+                                    }
+                                    RowShell {
+                                        label: "主模型";
+                                        SelectBox {
+                                            value: root.setting-main-model == "" ? "选择模型" : root.setting-main-model;
+                                            options: root.agent-options;
+                                            box-width: 237px;
+                                            mono: true;
+                                            selected(i, o) => {
+                                                root.setting-main-model = root.setting-model-at(i);
+                                                root.model-name = root.setting-model-at(i);
+                                            }
+                                        }
+                                    }
+                                    if root.provider-kind == "自定义" : RowShell {
+                                        label: "API Key";
+                                        HorizontalLayout {
+                                            spacing: 8px;
+                                            LineEdit {
+                                                width: 200px;
+                                                text <=> root.setting-provider-secret;
+                                                placeholder-text: root.setting-provider-credential;
+                                                font-size: 12px;
+                                            }
+                                            Rectangle {
+                                                height: 30px;
+                                                border-radius: 10px;
+                                                background: Palette.accent-bg;
+                                                border-width: 0.67px;
+                                                border-color: Palette.accent-border;
+                                                HorizontalLayout {
+                                                    padding-left: 12px;
+                                                    padding-right: 12px;
+                                                    Text { text: "保存密钥"; font-size: 11.5px; font-weight: 500; color: Palette.accent-text; vertical-alignment: center; }
+                                                }
+                                                TouchArea {
+                                                    clicked => { root.store-provider-secret(root.setting-provider, root.setting-provider-secret) }
+                                                    mouse-cursor: pointer;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    RowShell {
+                                        label: "推理强度";
+                                        tall: true;
+                                        SegTrack {
+                                            warm: true;
+                                            options: ["低", "标准", "高", "最高"];
+                                            selected: root.effort-selected();
+                                            picked(i, o) => { root.setting-reasoning = o }
+                                        }
+                                    }
+                                    RowShell {
+                                        label: "思考模式";
+                                        separated: false;
+                                        ToggleSwitch {
+                                            checked <=> root.setting-provider-thinking;
+                                            toggled(v) => { root.setting-provider-thinking = v }
+                                        }
+                                    }
+                                    RowShell {
+                                        label: "连接测试";
+                                        separated: false;
+                                        Rectangle {
+                                            height: 30px;
+                                            border-radius: 10px;
+                                            background: Palette.sep;
+                                            HorizontalLayout {
+                                                padding-left: 12px;
+                                                padding-right: 12px;
+                                                Text { text: "测试当前提供商"; font-size: 11.5px; font-weight: 500; color: Palette.mid; vertical-alignment: center; }
+                                            }
+                                            TouchArea {
+                                                clicked => { root.test-provider(root.setting-provider) }
+                                                mouse-cursor: pointer;
+                                            }
+                                        }
+                                    }
+                                }
+                                if root.settings-page == 2 : VerticalLayout {
+                                    spacing: 24px;
+                                    RowShell {
+                                        label: "文件访问";
+                                        SelectBox {
+                                            value: root.setting-file-access;
+                                            options: ["受信路径", "仅工作区", "全部"];
+                                            selected(i, o) => { root.setting-file-access = o }
+                                        }
+                                    }
+                                    RowShell {
+                                        label: "命令审批";
+                                        tall: true;
+                                        SegTrack {
+                                            warm: true;
+                                            options: ["自动执行", "按需确认", "禁止执行"];
+                                            selected: root.approval-selected();
+                                            picked(i, o) => { root.setting-command-approval = o }
+                                        }
+                                    }
+                                    RowShell {
+                                        label: "网络访问";
+                                        ToggleSwitch {
+                                            checked <=> root.setting-network;
+                                            toggled(v) => { root.setting-network = v }
+                                        }
+                                    }
+                                    RowShell {
+                                        label: "高风险二次确认";
+                                        separated: false;
+                                        ToggleSwitch {
+                                            checked <=> root.setting-high-risk;
+                                            toggled(v) => { root.setting-high-risk = v }
+                                        }
+                                    }
+                                }
+                                if root.settings-page == 3 : VerticalLayout {
+                                    spacing: 24px;
+                                    RowShell {
+                                        label: "默认工作区";
+                                        HorizontalLayout {
+                                            spacing: 8px;
+                                            Rectangle {
+                                                width: 280px;
+                                                height: 32px;
+                                                border-radius: 12px;
+                                                background: Palette.surface;
+                                                border-width: 0.67px;
+                                                border-color: Palette.border;
+                                                clip: true;
+                                                TextInput {
+                                                    x: 12px;
+                                                    width: parent.width - 40px;
+                                                    height: parent.height;
+                                                    vertical-alignment: center;
+                                                    font-family: "Consolas";
+                                                    font-size: 12.5px;
+                                                    color: Palette.ink;
+                                                    text <=> root.setting-workspace;
+                                                }
+                                                Image {
+                                                    source: Icons.folder;
+                                                    x: parent.width - 26px;
+                                                    y: (parent.height - 16px) / 2;
+                                                    width: 16px;
+                                                    height: 16px;
+                                                }
+                                                TouchArea {
+                                                    clicked => {
+                                                        root.setting-workspace = root.choose-attachment(true);
+                                                        root.return-focus();
+                                                    }
+                                                    mouse-cursor: pointer;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    RowShell {
+                                        label: "索引模式";
+                                        SelectBox {
+                                            value: root.setting-index-mode;
+                                            options: ["标准", "智能索引", "深度索引"];
+                                            selected(i, o) => { root.setting-index-mode = o }
+                                        }
+                                    }
+                                    RowShell {
+                                        label: "自动同步";
+                                        ToggleSwitch {
+                                            checked <=> root.setting-workspace-sync;
+                                            toggled(v) => { root.setting-workspace-sync = v }
+                                        }
+                                    }
+                                    RowShell {
+                                        label: "Git 集成";
+                                        separated: false;
+                                        ToggleSwitch {
+                                            checked <=> root.setting-git;
+                                            toggled(v) => { root.setting-git = v }
+                                        }
+                                    }
+                                }
+                                if root.settings-page == 4 : VerticalLayout {
+                                    spacing: 24px;
+                                    RowShell {
+                                        label: "启用通知";
+                                        ToggleSwitch {
+                                            checked <=> root.setting-notifications;
+                                            toggled(v) => { root.setting-notifications = v }
+                                        }
+                                    }
+                                    RowShell {
+                                        label: "桌面通知";
+                                        ToggleSwitch {
+                                            checked <=> root.setting-desktop-notifications;
+                                            toggled(v) => { root.setting-desktop-notifications = v }
+                                        }
+                                    }
+                                    RowShell {
+                                        label: "消息提醒";
+                                        ToggleSwitch {
+                                            checked <=> root.setting-message-alerts;
+                                            toggled(v) => { root.setting-message-alerts = v }
+                                        }
+                                    }
+                                    RowShell {
+                                        label: "免打扰";
+                                        separated: false;
+                                        SelectBox {
+                                            value: root.setting-quiet-hours;
+                                            options: ["关闭", "22:00 - 08:00", "23:00 - 07:00"];
+                                            mono: true;
+                                            drop-up: true;
+                                            box-width: 147px;
+                                            selected(i, o) => { root.setting-quiet-hours = o }
+                                        }
+                                    }
+                                }
+                                if root.settings-page == 5 : VerticalLayout {
+                                    spacing: 24px;
+                                    RowShell {
+                                        label: "主题模式";
+                                        tall: true;
+                                        SegTrack {
+                                            warm: true;
+                                            options: ["浅色", "深色"];
+                                            selected: root.setting-dark-theme ? 1 : 0;
+                                            picked(i, o) => { root.setting-dark-theme = o == "深色" }
+                                        }
+                                    }
+                                    RowShell {
+                                        label: "强调色";
+                                        HorizontalLayout {
+                                            spacing: 12px;
+                                            alignment: start;
+                                            for swatch[si] in [0, 1, 2, 3, 4, 5] : SwatchDot {
+                                                fill: root.accent-hex(si);
+                                                active: root.setting-accent == si;
+                                                picked => { root.setting-accent = si }
+                                            }
+                                        }
+                                    }
+                                    RowShell {
+                                        label: "界面密度";
+                                        tall: true;
+                                        SegTrack {
+                                            warm: true;
+                                            options: ["紧凑", "舒适", "宽松"];
+                                            selected: root.setting-density == "紧凑" ? 0 : root.setting-density == "宽松" ? 2 : 1;
+                                            picked(i, o) => { root.setting-density = o }
+                                        }
+                                    }
+                                    RowShell {
+                                        label: "字体大小";
+                                        separated: false;
+                                        HorizontalLayout {
+                                            spacing: 10px;
+                                            Slider {
+                                                width: 196px;
+                                                minimum: 80;
+                                                maximum: 140;
+                                                value: root.setting-font-scale;
+                                                released(v) => {
+                                                    root.setting-font-scale = Math.round(v / 5) * 5;
+                                                    root.return-focus();
+                                                }
+                                            }
+                                            Text {
+                                                text: root.setting-font-scale + "%";
+                                                font-family: "Consolas";
+                                                font-size: 12px;
+                                                color: Palette.dim;
+                                                vertical-alignment: center;
+                                                width: 44px;
+                                                horizontal-stretch: 0;
+                                            }
+                                        }
+                                    }
+                                }
+                                if root.settings-page == 6 : VerticalLayout {
+                                    spacing: 14px;
+                                    property <[string]> actions: ["新建会话", "打开设置", "发送消息", "命令面板"];
+                                    for action[ai] in self.actions : Rectangle {
+                                        height: 54px;
+                                        border-radius: 12px;
+                                        background: Palette.surface;
+                                        border-width: 0.67px;
+                                        border-color: Palette.border;
+                                        HorizontalLayout {
+                                            padding-left: 12px;
+                                            padding-right: 12px;
+                                            alignment: space-between;
+                                            Text { text: action; font-size: 13px; font-weight: 500; color: Palette.ink; vertical-alignment: center; }
+                                            HorizontalLayout {
+                                                spacing: 4px;
+                                                alignment: end;
+                                                if ai == 0 : HorizontalLayout {
+                                                    spacing: 4px;
+                                                    KeyCap { label: "Ctrl"; }
+                                                    Text { text: "+"; font-family: "Consolas"; font-size: 12px; color: Palette.faint; vertical-alignment: center; }
+                                                    KeyCap { label: "N"; }
+                                                }
+                                                if ai == 1 : HorizontalLayout {
+                                                    spacing: 4px;
+                                                    KeyCap { label: "Ctrl"; }
+                                                    Text { text: "+"; font-family: "Consolas"; font-size: 12px; color: Palette.faint; vertical-alignment: center; }
+                                                    KeyCap { label: ","; }
+                                                }
+                                                if ai == 2 : KeyCap { label: "Enter"; }
+                                                if ai == 3 : HorizontalLayout {
+                                                    spacing: 4px;
+                                                    KeyCap { label: "Ctrl"; }
+                                                    Text { text: "+"; font-family: "Consolas"; font-size: 12px; color: Palette.faint; vertical-alignment: center; }
+                                                    KeyCap { label: "Shift"; }
+                                                    Text { text: "+"; font-family: "Consolas"; font-size: 12px; color: Palette.faint; vertical-alignment: center; }
+                                                    KeyCap { label: "P"; }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Text {
+                                        text: "快捷键立即生效：命令面板会聚焦输入框并列出 /lens、/lenses 等透镜指令。";
+                                        font-size: 11.5px;
+                                        color: Palette.dim;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                                if root.settings-page == 7 : VerticalLayout {
+                                    spacing: 0px;
+                                    HorizontalLayout {
+                                        alignment: center;
+                                        padding-top: 8px; padding-bottom: 8px; padding-left: 0px; padding-right: 0px;
+                                        Rectangle {
+                                            width: 64px;
+                                            height: 64px;
+                                            border-radius: 999px;
+                                            background: #FEF08A;
+                                            border-width: 2px;
+                                            border-color: #FDE68A;
+                                            Image {
+                                                source: Icons.avatar-person;
+                                                width: 32px;
+                                                height: 32px;
+                                                x: (parent.width - 32px) / 2;
+                                                y: (parent.height - 32px) / 2;
+                                            }
+                                        }
+                                    }
+                                    VerticalLayout {
+                                        padding-top: 16px;
+                                        spacing: 8px;
+                                        Rectangle {
+                                            height: 52px;
+                                            border-radius: 12px;
+                                            background: Palette.surface;
+                                            border-width: 0.67px;
+                                            border-color: Palette.border;
+                                            HorizontalLayout {
+                                                padding-left: 14px;
+                                                padding-right: 14px;
+                                                alignment: space-between;
+                                                Text { text: "昵称"; font-size: 13px; font-weight: 500; color: Palette.ink; vertical-alignment: center; }
+                                                HorizontalLayout {
+                                                    spacing: 6px;
+                                                    if root.account-field != 0 : Text { text: root.setting-nickname; font-size: 13px; color: Palette.mid; vertical-alignment: center; }
+                                                    if root.account-field == 0 : LineEdit {
+                                                        width: 200px;
+                                                        text <=> root.setting-nickname;
+                                                        font-size: 12.5px;
+                                                        accepted => { root.account-field = -1 }
+                                                    }
+                                                    if root.account-field != 0 : Image { source: Icons.chev-right-faint; width: 16px; height: 16px; y: (parent.height - 16px) / 2; }
+                                                    TouchArea {
+                                                        clicked => { root.account-field = 0 }
+                                                        mouse-cursor: pointer;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Rectangle {
+                                            height: 52px;
+                                            border-radius: 12px;
+                                            background: Palette.surface;
+                                            border-width: 0.67px;
+                                            border-color: Palette.border;
+                                            HorizontalLayout {
+                                                padding-left: 14px;
+                                                padding-right: 14px;
+                                                alignment: space-between;
+                                                Text { text: "登录邮箱"; font-size: 13px; font-weight: 500; color: Palette.ink; vertical-alignment: center; }
+                                                HorizontalLayout {
+                                                    spacing: 6px;
+                                                    if root.account-field != 1 : Text { text: root.setting-email == "" ? "未绑定邮箱" : root.setting-email; font-size: 13px; color: Palette.mid; vertical-alignment: center; }
+                                                    if root.account-field == 1 : LineEdit {
+                                                        width: 220px;
+                                                        text <=> root.setting-email;
+                                                        font-size: 12.5px;
+                                                        accepted => { root.account-field = -1 }
+                                                    }
+                                                    if root.account-field != 1 : Image { source: Icons.chev-right-faint; width: 16px; height: 16px; y: (parent.height - 16px) / 2; }
+                                                    TouchArea {
+                                                        clicked => { root.account-field = 1 }
+                                                        mouse-cursor: pointer;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Rectangle {
+                                            height: 52px;
+                                            border-radius: 12px;
+                                            background: Palette.surface;
+                                            border-width: 0.67px;
+                                            border-color: Palette.border;
+                                            HorizontalLayout {
+                                                padding-left: 14px;
+                                                padding-right: 14px;
+                                                alignment: space-between;
+                                                Text { text: "当前方案"; font-size: 13px; font-weight: 500; color: Palette.ink; vertical-alignment: center; }
+                                                HorizontalLayout {
+                                                    spacing: 6px;
+                                                    Text { text: "Pro"; font-size: 13px; font-weight: 600; color: Palette.amber; vertical-alignment: center; }
+                                                    Image { source: Icons.chev-right-faint; width: 16px; height: 16px; y: (parent.height - 16px) / 2; }
+                                                }
+                                            }
+                                        }
+                                        Rectangle {
+                                            height: 52px;
+                                            border-radius: 12px;
+                                            background: Palette.surface;
+                                            border-width: 0.67px;
+                                            border-color: Palette.border;
+                                            HorizontalLayout {
+                                                padding-left: 14px;
+                                                padding-right: 14px;
+                                                alignment: space-between;
+                                                Text { text: "云同步"; font-size: 13px; font-weight: 500; color: Palette.ink; vertical-alignment: center; }
+                                                ToggleSwitch {
+                                                    checked <=> root.setting-cloud-sync;
+                                                    toggled(v) => { root.setting-cloud-sync = v }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Rectangle {
+                        width: 230px;
+                        horizontal-stretch: 0;
+                        background: Palette.rail-warm;
+                        VerticalLayout {
+                            padding: 20px;
+                            Rectangle {
+                                vertical-stretch: 1;
+                                VerticalLayout {
+                                    Text {
+                                        text: root.settings-page == 0 ? "通用概览" : root.settings-page == 1 ? "模型概览" : root.settings-page == 2 ? "安全概览" : root.settings-page == 3 ? "工作区概览" : root.settings-page == 4 ? "通知概览" : root.settings-page == 5 ? "外观概览" : root.settings-page == 6 ? "快捷键概览" : "账户概览";
+                                        font-size: 13px;
+                                        font-weight: 700;
+                                        color: Palette.ink;
+                                    }
+                                    Rectangle {
+                                        height: 0.67px;
+                                        width: parent.width;
+                                        background: #F3F1E9;
+                                    }
+                                    VerticalLayout {
+                                        padding-top: 12px;
+                                        spacing: 8px;
+                                        if root.settings-page == 0 : VerticalLayout {
+                                            spacing: 8px;
+                                            OverviewLine { key: "语言:"; val: root.setting-language; }
+                                            OverviewLine { key: "启动:"; val: root.setting-startup; }
+                                            OverviewLine { key: "更新通道:"; val: root.setting-channel; }
+                                        }
+                                        if root.settings-page == 1 : VerticalLayout {
+                                            spacing: 8px;
+                                            OverviewLine { key: "默认智能体:"; val: root.setting-provider; }
+                                            OverviewLine { key: "模型提供方:"; val: root.provider-kind == "自定义" ? "自定义" : "Tokmon 官方"; }
+                                            OverviewLine { key: "主模型:"; val: root.setting-main-model; mono-value: true; }
+                                        }
+                                        if root.settings-page == 2 : VerticalLayout {
+                                            spacing: 8px;
+                                            OverviewLine { key: "文件访问:"; val: root.setting-file-access; }
+                                            OverviewLine { key: "命令审批:"; val: root.setting-command-approval; }
+                                            OverviewLine { key: "确认状态:"; val: root.setting-high-risk ? "已开启二次确认" : "已关闭二次确认"; value-color: root.setting-high-risk ? #16A34A : #DC2626; }
+                                        }
+                                        if root.settings-page == 3 : VerticalLayout {
+                                            spacing: 8px;
+                                            OverviewLine { key: "路径:"; val: root.setting-workspace; mono-value: true; }
+                                            OverviewLine { key: "索引模式:"; val: root.setting-index-mode; }
+                                            OverviewLine { key: "自动同步:"; val: root.setting-workspace-sync ? "已开启" : "已关闭"; }
+                                        }
+                                        if root.settings-page == 4 : VerticalLayout {
+                                            spacing: 8px;
+                                            OverviewLine { key: "通知状态:"; val: root.setting-notifications ? "已启用" : "已禁用"; value-color: root.setting-notifications ? #16A34A : #DC2626; }
+                                            OverviewLine { key: "桌面通知:"; val: root.setting-desktop-notifications ? "已启用" : "已禁用"; }
+                                            OverviewLine { key: "免打扰时间:"; val: root.setting-quiet-hours; mono-value: true; }
+                                        }
+                                        if root.settings-page == 5 : VerticalLayout {
+                                            spacing: 8px;
+                                            OverviewLine { key: "主题:"; val: root.setting-dark-theme ? "深色" : "浅色"; }
+                                            OverviewLine { key: "强调色:"; val: root.accent-name(root.setting-accent); }
+                                            OverviewLine { key: "密度:"; val: root.setting-density; }
+                                        }
+                                        if root.settings-page == 6 : VerticalLayout {
+                                            spacing: 8px;
+                                            OverviewLine { key: "预设方案:"; val: "Tokmon 默认"; }
+                                            OverviewLine { key: "已修改:"; val: "0 项"; }
+                                            OverviewLine { key: "冲突状态:"; val: "无冲突"; value-color: #16A34A; }
+                                        }
+                                        if root.settings-page == 7 : VerticalLayout {
+                                            spacing: 8px;
+                                            OverviewLine { key: "昵称:"; val: root.setting-nickname; }
+                                            OverviewLine { key: "方案:"; val: "Pro"; value-color: Palette.amber; }
+                                            OverviewLine { key: "云同步:"; val: root.setting-cloud-sync ? "● 已开启" : "● 已关闭"; value-color: root.setting-cloud-sync ? #16A34A : #DC2626; }
+                                        }
+                                    }
+                                }
+                            }
+                            Rectangle {
+                                height: 30px;
+                                border-radius: 12px;
+                                background: Palette.white;
+                                border-width: 0.67px;
+                                border-color: Palette.border;
+                                HorizontalLayout {
+                                    alignment: center;
+                                    Text { text: "恢复默认设置"; font-size: 11.5px; color: Palette.mid; vertical-alignment: center; }
+                                }
+                                TouchArea {
+                                    clicked => {
+                                        root.reset-settings();
+                                        root.return-focus();
+                                    }
+                                    mouse-cursor: pointer;
+                                }
+                            }
+                        }
+                    }
+                }
+                Rectangle {
+                    height: 56px;
+                    HorizontalLayout {
+                        padding-left: 24px;
+                        padding-right: 24px;
+                        spacing: 12px;
+                        alignment: space-between;
+                        Rectangle { horizontal-stretch: 1; }
+                        HorizontalLayout {
+                            spacing: 12px;
+                            alignment: end;
+                            Rectangle {
+                                width: 76px;
+                                height: 36px;
+                                border-radius: 12px;
+                                background: Palette.sep;
+                                HorizontalLayout {
+                                    alignment: center;
+                                    Text { text: "取消"; font-size: 13px; font-weight: 500; color: Palette.mid; vertical-alignment: center; }
+                                }
+                                TouchArea {
+                                    clicked => {
+                                        root.cancel-settings();
+                                        root.settings-open = false;
+                                        root.return-focus();
+                                    }
+                                    mouse-cursor: pointer;
+                                }
+                            }
+                            Rectangle {
+                                width: 96px;
+                                height: 36px;
+                                border-radius: 12px;
+                                background: Palette.accent-bg;
+                                border-width: 0.67px;
+                                border-color: Palette.accent-border;
+                                drop-shadow-color: Palette.shadow;
+                                drop-shadow-offset-y: 1px;
+                                drop-shadow-blur: 0px;
+                                HorizontalLayout {
+                                    alignment: center;
+                                    Text { text: "保存更改"; font-size: 13px; font-weight: 600; color: Palette.accent-text; vertical-alignment: center; }
+                                }
+                                TouchArea {
+                                    clicked => {
+                                        root.save-settings();
+                                        root.settings-open = false;
+                                        root.return-focus();
+                                    }
+                                    mouse-cursor: pointer;
+                                }
+                            }
+                        }
+                    }
+                    Rectangle {
+                        y: 0px;
+                        height: 0.67px;
+                        width: parent.width;
+                        background: Palette.hairline;
+                    }
+                }
+            }
+        }
+}
