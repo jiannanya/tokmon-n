@@ -557,12 +557,12 @@ tokmon::Result<tokmon::cbor::Value> execute_slash_command(
     set("display", "已开始新会话；原会话光子仍完整保留。\n下一条消息将创建一束新光线。");
   } else if (name == "exit") {
     set("close_client", true);
-    set("display", "正在关闭当前客户端；tokmond 将按客户端租约规则安全退出。");
+    set("display", "正在关闭当前客户端；后台服务将按客户端租约规则安全退出。");
   } else if (name == "status") {
     auto all = runtime.history_all(0);
     if (!all) return tl::unexpected(all.error());
     std::ostringstream output;
-    output << "tokmond: healthy\nLightPath: epoch " << runtime.light_path()->epoch
+    output << "Tokmon daemon: healthy\nLightPath: epoch " << runtime.light_path()->epoch
            << ", " << runtime.light_path()->lenses.size() << " Lenses\nprovider: "
            << runtime.config().default_model_provider << "\nPhoton tail: "
            << (all->empty() ? 0 : all->back().sequence) << "\nactive ray: "
@@ -1011,7 +1011,7 @@ int tokmon::app::daemon_main(int argc, char** argv) {
       std::scoped_lock lifecycle_lock(lifecycle_mutex);
       if (!running.load(std::memory_order_acquire))
         return snow_error(request, tokmon::make_error(
-            tokmon::ErrorCode::invalid_state, "tokmond is already stopping"));
+            tokmon::ErrorCode::invalid_state, "Tokmon daemon is already stopping"));
       if (early_action == "daemon.client.attach") {
         const auto* kind_field = tokmon::cbor::find(request.payload, "client_kind");
         const auto kind = kind_field
@@ -1473,7 +1473,7 @@ int tokmon::app::daemon_main(int argc, char** argv) {
         const auto now = std::chrono::steady_clock::now();
         if (!daemon_pinned && client_leases.empty() && idle_shutdown_at &&
             now >= *idle_shutdown_at) {
-          tokmon::log_info("no client leases or active work remain; stopping tokmond");
+          tokmon::log_info("no client leases or active work remain; stopping Tokmon daemon");
           running.store(false, std::memory_order_release);
         }
       }

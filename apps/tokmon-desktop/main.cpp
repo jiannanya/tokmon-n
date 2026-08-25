@@ -1892,7 +1892,7 @@ class UiSnowController final {
       const auto* credential = tokmon::cbor::find(chosen, "credential_present");
       handle->set_setting_provider_credential(
           credential && credential->as_bool() ? "凭据已安全保存（输入可轮换）" : "尚未配置 API Key");
-      handle->set_settings_status("provider 配置已由 tokmond 验证并载入");
+      handle->set_settings_status("provider 配置已由后台服务验证并载入");
     });
   }
 
@@ -1951,7 +1951,7 @@ class UiSnowController final {
   void show_error(std::string message) {
     TimelineItem item;
     item.time = "now"; item.kind = "snow.error";
-    item.title = "tokmond 连接失败"; item.detail = display_string(message);
+    item.title = "后台服务连接失败"; item.detail = display_string(message);
     item.progress = -1; item.tone = "danger";
     auto model = timeline_;
     update_daemon_state("后台服务连接失败");
@@ -2020,7 +2020,7 @@ class UiSnowController final {
           .workspace = *target,
           .executable = daemon_executable_});
       if (!connected) {
-        show_workspace_error("无法启动工作空间 tokmond：" + connected.error().describe());
+        show_workspace_error("无法启动工作空间后台服务：" + connected.error().describe());
         return false;
       }
       started = connected->started;
@@ -2032,7 +2032,7 @@ class UiSnowController final {
           .idle_timeout = std::chrono::milliseconds(250),
           .lease_ttl = std::chrono::seconds(6)});
       if (!attached) {
-        show_workspace_error("无法附着工作空间 tokmond：" + attached.error().describe());
+        show_workspace_error("无法附着工作空间后台服务：" + attached.error().describe());
         return false;
       }
       next_lease.emplace(std::move(*attached));
@@ -2214,7 +2214,7 @@ class UiSnowController final {
       update_daemon_state("后台服务已连接");
       if (response->kind == tokmon::SnowMessageKind::error) {
         const auto* message = tokmon::cbor::find(response->payload, "message");
-        show_error(message ? std::string(message->as_string()) : "tokmond 拒绝了请求");
+        show_error(message ? std::string(message->as_string()) : "后台服务拒绝了请求");
         if (command.kind == "settings-load") {
           const auto* include = tokmon::cbor::find(command.payload, "include_navigation");
           if (include && include->as_bool()) finish_initialization();
@@ -2376,9 +2376,9 @@ int main(int argc, char** argv) {
   const auto endpoint = tokmon::workspace_snow_endpoint(
       paths->run, paths->project.parent_path());
 #if defined(_WIN32)
-  const auto daemon_executable = executable.parent_path() / "tokmond.exe";
+  const auto daemon_executable = executable.parent_path() / "tokmon.exe";
 #else
-  const auto daemon_executable = executable.parent_path() / "tokmond";
+  const auto daemon_executable = executable.parent_path() / "tokmon";
 #endif
   auto connected = tokmon::ensure_daemon(tokmon::DaemonLaunchOptions{
       .endpoint = endpoint,
@@ -2891,7 +2891,7 @@ int main(int argc, char** argv) {
     controller.select_provider(std::string(window->get_setting_provider()));
     window->set_model_name(window->get_setting_main_model());
     window->set_effort(window->get_setting_reasoning());
-    window->set_settings_status("正在通过 tokmond 原子保存…");
+    window->set_settings_status("正在通过后台服务原子保存…");
   });
   window->on_reset_settings([window] {
     window->set_settings_status("已恢复默认值；点击“保存更改”后写入");

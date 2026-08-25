@@ -263,21 +263,7 @@ Result<std::filesystem::path> first_existing(
 Result<std::filesystem::path> worker_supervisor() {
   auto executable = current_executable();
   if (!executable) return tl::unexpected(executable.error());
-#if defined(TOKMON_MONOLITHIC_EXECUTABLE)
   return *executable;
-#else
-#if defined(_WIN32)
-  constexpr auto name = "tokmon-lens-worker.exe";
-#else
-  constexpr auto name = "tokmon-lens-worker";
-#endif
-  return first_existing({executable->parent_path() / name,
-                         executable->parent_path().parent_path() / "bin" / name,
-#if defined(TOKMON_BUILD_BIN_DIR)
-                         std::filesystem::path(TOKMON_BUILD_BIN_DIR) / name,
-#endif
-                        }, "tokmon-lens-worker");
-#endif
 }
 
 Result<std::filesystem::path> language_runtime(const RuntimeConfig& config,
@@ -500,7 +486,7 @@ Result<std::size_t> recover_inflight_acts(PhotonStore& store) {
             {"act_hash", cbor::find(start.payload, "act_hash") ?
                 *cbor::find(start.payload, "act_hash") : cbor::Value("")},
             {"started_sequence", static_cast<std::int64_t>(start.sequence)},
-            {"reason", "tokmond restarted before observing a terminal result"},
+            {"reason", "Tokmon daemon restarted before observing a terminal result"},
             {"retry_automatically", false}}),
         .epoch = start.epoch, .caused_by_act = act_id});
     if (!appended) return tl::unexpected(appended.error());

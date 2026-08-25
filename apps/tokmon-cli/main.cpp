@@ -70,7 +70,7 @@ void help() {
   std::cout << R"HELP(Tokmon — A Lens to Them All
 
 Usage:
-  tokmon run <message>           Submit one headless causal ray through tokmond
+  tokmon run <message>           Submit one headless causal ray through the daemon
   tokmon chat [message]          Interactive conversation
   tokmon history [ray-id]        Print committed photons
   tokmon stdio                   Concurrent JSON Lines stdio server
@@ -101,7 +101,7 @@ Options:
   --provider <id>                Use a configured platform for run/chat
   --no-color                     Disable decoration (accepted for CI)
 
-All stateful commands attach to or automatically start the workspace tokmond.
+All stateful commands attach to or automatically start the workspace daemon.
 Interactive CLI sessions stop it on exit; one-shot commands keep a 15 s reuse window.
 An explicit `daemon start` remains alive until `daemon stop`.
 )HELP";
@@ -142,7 +142,7 @@ tokmon::Result<std::string> read_secret() {
   return value;
 }
 
-std::filesystem::path sibling_daemon(const char* argv0) {
+std::filesystem::path unified_executable(const char* argv0) {
   std::error_code error;
 #if defined(_WIN32)
   std::wstring module(32'768, L'\0');
@@ -150,22 +150,12 @@ std::filesystem::path sibling_daemon(const char* argv0) {
                                       static_cast<DWORD>(module.size()));
   if (size > 0 && size < module.size()) {
     module.resize(size);
-#if defined(TOKMON_MONOLITHIC_EXECUTABLE)
     return std::filesystem::path(module);
-#else
-    return std::filesystem::path(module).parent_path() / "tokmond.exe";
-#endif
   }
 #endif
   auto executable = std::filesystem::absolute(argv0, error);
   if (error) executable = std::filesystem::current_path() / argv0;
-#if defined(TOKMON_MONOLITHIC_EXECUTABLE)
   return executable;
-#elif defined(_WIN32)
-  return executable.parent_path() / "tokmond.exe";
-#else
-  return executable.parent_path() / "tokmond";
-#endif
 }
 
 int run_stdio(const tokmon::SnowClient& client) {
@@ -237,7 +227,7 @@ tokmon::Result<tokmon::SnowMessage> intent(const tokmon::SnowClient& client,
   if (response->kind == tokmon::SnowMessageKind::error) {
     const auto* field = tokmon::cbor::find(response->payload, "message");
     return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::protocol_error,
-        field ? std::string(field->as_string()) : "tokmond rejected the intent"));
+        field ? std::string(field->as_string()) : "Tokmon daemon rejected the intent"));
   }
   return response;
 }
@@ -392,12 +382,14 @@ int tokmon::app::cli_main(int argc, char** argv) {
     auto available = tokmon::daemon_available(endpoint);
     if (!available) { print_error(available.error()); return 1; }
     if (!*available) {
-      if (output_format == OutputFormat::human) *output << "tokmond is already stopped\n";
+      if (output_format == OutputFormat::human)
+        *output << "Tokmon daemon is already stopped\n";
       return 0;
     }
     auto stopped = tokmon::shutdown_daemon(endpoint);
     if (!stopped) { print_error(stopped.error()); return 1; }
-    if (output_format == OutputFormat::human) *output << "tokmond stopped gracefully\n";
+    if (output_format == OutputFormat::human)
+      *output << "Tokmon daemon stopped gracefully\n";
     else write_value(*output, tokmon::cbor::object({{"stopped", true}}), output_format);
     return 0;
   }
@@ -405,13 +397,14 @@ int tokmon::app::cli_main(int argc, char** argv) {
   auto connection = tokmon::ensure_daemon(tokmon::DaemonLaunchOptions{
       .endpoint = endpoint,
       .workspace = paths->project.parent_path(),
-      .executable = sibling_daemon(argv[0])});
+      .executable = unified_executable(argv[0])});
   if (!connection) { print_error(connection.error()); return 1; }
   if (daemon_command && arguments.size() > 1 && arguments[1] == "start") {
     auto pinned = tokmon::pin_daemon(endpoint);
     if (!pinned) { print_error(pinned.error()); return 1; }
     if (output_format == OutputFormat::human)
-      *output << (connection->started ? "tokmond started" : "tokmond already running")
+      *output << (connection->started ? "Tokmon daemon started"
+                                      : "Tokmon daemon already running")
               << " and pinned until `tokmon daemon stop`\nendpoint="
               << endpoint.string() << '\n';
     else write_value(*output, tokmon::cbor::object({{"running", true},

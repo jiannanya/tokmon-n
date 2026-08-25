@@ -4,6 +4,10 @@
 > 实现标准：C++20、`tl::expected`、chLog
 > 更新日期：2026-08-23
 
+> 统一运行时说明：本文中的 `tokmond` 表示 daemon 逻辑角色。当前发行版由
+> `tokmon.exe --tokmon-internal-daemon` 承载该角色，不再分发独立的
+> `tokmond.exe`。构建与迁移说明见 `docs/UNIFIED-RUNTIME-BUILD.md`。
+
 ## 1. 目标
 
 `tokmond` 按规范化 workspace 隔离，每个 workspace 最多一个实例。客户端不再以“谁创建进程谁就无条件杀死进程”判断所有权，而是向 daemon 注册带超时的客户端租约。这样既能让 Desktop 关闭后回收对应 daemon，也不会误杀另一个 Desktop、CLI 会话或正在执行的模型/Act。Desktop 的项目/会话树可以在运行期切换工作空间：导航工作空间租约保持树可保存，当前活动项目另持一个可交接租约。

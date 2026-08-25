@@ -4,30 +4,30 @@
   "configurePresets": [
     {
       "name": "windows-msvc-debug",
-      "displayName": "Windows MSVC Debug",
+      "displayName": "Windows MSVC Debug - Desktop",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/windows-msvc-ui-debug",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_C_COMPILER": "cl",
         "CMAKE_CXX_COMPILER": "cl",
-        "CMAKE_PREFIX_PATH": "${sourceDir}/.deps/slint"
+        "CMAKE_PREFIX_PATH": "${sourceDir}/.deps/slint",
+        "TOKMON_BUILD_DESKTOP": "ON",
+        "TOKMON_BUILD_EXTERNAL_LENSES": "OFF"
       },
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
     },
     {
       "name": "windows-msvc-release",
-      "displayName": "Windows MSVC Release - Split (3 EXEs)",
+      "displayName": "Windows MSVC Release - Unified CLI",
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
-      "binaryDir": "${sourceDir}/build/windows-msvc-release-cli",
+      "binaryDir": "${sourceDir}/build/windows-msvc-release",
       "cacheVariables": {
         "CMAKE_CONFIGURATION_TYPES": "Release",
         "BUILD_TESTING": "OFF",
-        "TOKMON_DISTRIBUTION_MODE": "SPLIT",
-        "TOKMON_BUILD_UI": "OFF",
-        "TOKMON_BUILD_LAUNCHER": "OFF",
-        "TOKMON_BUILD_LENS_MODULES": "OFF",
+        "TOKMON_BUILD_DESKTOP": "OFF",
+        "TOKMON_BUILD_EXTERNAL_LENSES": "OFF",
         "TOKMON_BUILD_TESTS": "OFF",
         "TOKMON_BUILD_SCRIPT_SDK_TESTS": "OFF",
         "TOKMON_OPTIMIZE_RELEASE_SIZE": "ON"
@@ -35,15 +35,17 @@
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
     },
     {
-      "name": "windows-msvc-release-dynamic",
-      "displayName": "Windows MSVC Release - Dynamic Lenses",
+      "name": "windows-msvc-release-desktop",
+      "displayName": "Windows MSVC Release - Desktop",
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
-      "binaryDir": "${sourceDir}/build/windows-msvc-release-dynamic",
+      "binaryDir": "${sourceDir}/build/windows-msvc-release-desktop",
       "cacheVariables": {
         "CMAKE_CONFIGURATION_TYPES": "Release",
+        "CMAKE_PREFIX_PATH": "${sourceDir}/.deps/slint",
         "BUILD_TESTING": "OFF",
-        "TOKMON_DISTRIBUTION_MODE": "DYNAMIC",
+        "TOKMON_BUILD_DESKTOP": "ON",
+        "TOKMON_BUILD_EXTERNAL_LENSES": "OFF",
         "TOKMON_BUILD_TESTS": "OFF",
         "TOKMON_BUILD_SCRIPT_SDK_TESTS": "OFF",
         "TOKMON_OPTIMIZE_RELEASE_SIZE": "ON"
@@ -51,15 +53,16 @@
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
     },
     {
-      "name": "windows-msvc-release-monolithic",
-      "displayName": "Windows MSVC Release - Monolithic (1 EXE)",
+      "name": "windows-msvc-release-external-lenses",
+      "displayName": "Windows MSVC Release - External Lens Plugins",
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
-      "binaryDir": "${sourceDir}/build/windows-msvc-release-monolithic",
+      "binaryDir": "${sourceDir}/build/windows-msvc-release-external-lenses",
       "cacheVariables": {
         "CMAKE_CONFIGURATION_TYPES": "Release",
         "BUILD_TESTING": "OFF",
-        "TOKMON_DISTRIBUTION_MODE": "MONOLITHIC",
+        "TOKMON_BUILD_DESKTOP": "OFF",
+        "TOKMON_BUILD_EXTERNAL_LENSES": "ON",
         "TOKMON_BUILD_TESTS": "OFF",
         "TOKMON_BUILD_SCRIPT_SDK_TESTS": "OFF",
         "TOKMON_OPTIMIZE_RELEASE_SIZE": "ON"
@@ -68,12 +71,13 @@
     },
     {
       "name": "portable-debug",
-      "displayName": "Portable Debug without UI",
+      "displayName": "Portable Debug - Unified CLI",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/portable-debug",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "TOKMON_BUILD_UI": "OFF"
+        "TOKMON_BUILD_DESKTOP": "OFF",
+        "TOKMON_BUILD_EXTERNAL_LENSES": "OFF"
       }
     }
   ],
@@ -85,13 +89,13 @@
       "configuration": "Release"
     },
     {
-      "name": "windows-msvc-release-dynamic",
-      "configurePreset": "windows-msvc-release-dynamic",
+      "name": "windows-msvc-release-desktop",
+      "configurePreset": "windows-msvc-release-desktop",
       "configuration": "Release"
     },
     {
-      "name": "windows-msvc-release-monolithic",
-      "configurePreset": "windows-msvc-release-monolithic",
+      "name": "windows-msvc-release-external-lenses",
+      "configurePreset": "windows-msvc-release-external-lenses",
       "configuration": "Release"
     },
     { "name": "portable-debug", "configurePreset": "portable-debug" }

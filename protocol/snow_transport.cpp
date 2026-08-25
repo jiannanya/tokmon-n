@@ -231,7 +231,7 @@ Result<SnowMessage> SnowClient::request_stream(const SnowMessage& message,
   }
   if (channel == invalid_channel)
     return tl::unexpected(make_error(ErrorCode::io_error,
-                                     "tokmond Snow endpoint is unavailable"));
+                                     "Tokmon daemon Snow endpoint is unavailable"));
 #else
   const auto channel = ::socket(AF_UNIX, SOCK_STREAM, 0);
   if (channel == invalid_channel)
@@ -247,7 +247,7 @@ Result<SnowMessage> SnowClient::request_stream(const SnowMessage& message,
   if (::connect(channel, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
     close_channel(channel);
     return tl::unexpected(make_error(ErrorCode::io_error,
-                                     "tokmond Snow endpoint is unavailable"));
+                                     "Tokmon daemon Snow endpoint is unavailable"));
   }
 #endif
   if (auto written = write_message(channel, message); !written) {

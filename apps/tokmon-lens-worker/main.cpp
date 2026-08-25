@@ -205,8 +205,6 @@ int tokmon::app::lens_worker_main(int argc, char** argv) {
   if ((runtime == "node" || runtime == "cpython") && !executable.empty() &&
       !adapter.empty() && !entry.empty())
     return launch_language(runtime, executable, adapter, entry);
-  std::cerr << "usage: tokmon-lens-worker --runtime native --lens <id> | "
-               "--runtime native_worker --entry <C-ABI-library> | "
-               "--runtime node|cpython --runtime-executable <path> --adapter <path> --entry <path>\n";
+  std::cerr << "invalid internal worker arguments\n";
   return 2;
 }

@@ -43,7 +43,7 @@ Result<SnowMessage> lifecycle_request(const std::filesystem::path& endpoint,
     const auto* message = cbor::find(response->payload, "message");
     return tl::unexpected(make_error(ErrorCode::protocol_error,
         message ? std::string(message->as_string())
-                : "tokmond rejected the lifecycle request"));
+                : "Tokmon daemon rejected the lifecycle request"));
   }
   return response;
 }
@@ -76,13 +76,11 @@ Result<std::uint64_t> spawn_daemon(const DaemonLaunchOptions& options) {
   std::error_code error;
   if (!std::filesystem::is_regular_file(options.executable, error))
     return tl::unexpected(make_error(ErrorCode::not_found,
-        "tokmond executable was not found beside the client: " +
+        "Tokmon runtime executable was not found beside the client: " +
         options.executable.string()));
 #if defined(_WIN32)
   auto command = quote_windows_argument(options.executable.wstring()) +
-#if defined(TOKMON_MONOLITHIC_EXECUTABLE)
       L" --tokmon-internal-daemon" +
-#endif
       L" --workspace " + quote_windows_argument(options.workspace.wstring()) +
       L" --endpoint " + quote_windows_argument(options.endpoint.wstring());
   STARTUPINFOW startup{sizeof(startup)};
@@ -92,7 +90,8 @@ Result<std::uint64_t> spawn_daemon(const DaemonLaunchOptions& options) {
           CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP, nullptr,
           working_directory.c_str(), &startup, &process))
     return tl::unexpected(make_error(ErrorCode::io_error,
-        "cannot start tokmond (Win32 error " + std::to_string(GetLastError()) + ")"));
+        "cannot start Tokmon daemon (Win32 error " +
+        std::to_string(GetLastError()) + ")"));
   const auto id = static_cast<std::uint64_t>(process.dwProcessId);
   CloseHandle(process.hThread);
   CloseHandle(process.hProcess);
@@ -100,7 +99,7 @@ Result<std::uint64_t> spawn_daemon(const DaemonLaunchOptions& options) {
 #else
   const auto process = ::fork();
   if (process < 0)
-    return tl::unexpected(make_error(ErrorCode::io_error, "cannot fork tokmond"));
+    return tl::unexpected(make_error(ErrorCode::io_error, "cannot fork Tokmon daemon"));
   if (process == 0) {
     (void)::setsid();
     const auto null = ::open("/dev/null", O_RDWR);
@@ -113,15 +112,9 @@ Result<std::uint64_t> spawn_daemon(const DaemonLaunchOptions& options) {
     const auto executable = options.executable.string();
     const auto workspace = options.workspace.string();
     const auto endpoint = options.endpoint.string();
-#if defined(TOKMON_MONOLITHIC_EXECUTABLE)
     (void)::execl(executable.c_str(), executable.c_str(), "--tokmon-internal-daemon",
                   "--workspace", workspace.c_str(), "--endpoint", endpoint.c_str(),
                   static_cast<char*>(nullptr));
-#else
-    (void)::execl(executable.c_str(), executable.c_str(), "--workspace",
-                  workspace.c_str(), "--endpoint", endpoint.c_str(),
-                  static_cast<char*>(nullptr));
-#endif
     _exit(127);
   }
   return static_cast<std::uint64_t>(process);
@@ -267,7 +260,7 @@ Result<DaemonConnection> ensure_daemon(const DaemonLaunchOptions& options) {
       return DaemonConnection{.started = true, .process_id = *process};
   }
   return tl::unexpected(make_error(ErrorCode::timeout,
-                                   "tokmond did not become ready before the startup deadline"));
+                                   "Tokmon daemon did not become ready before the startup deadline"));
 }
 
 Result<void> shutdown_daemon(const std::filesystem::path& endpoint,
@@ -281,7 +274,7 @@ Result<void> shutdown_daemon(const std::filesystem::path& endpoint,
   if (response->kind == SnowMessageKind::error) {
     const auto* message = cbor::find(response->payload, "message");
     return tl::unexpected(make_error(ErrorCode::protocol_error,
-        message ? std::string(message->as_string()) : "tokmond rejected shutdown"));
+        message ? std::string(message->as_string()) : "Tokmon daemon rejected shutdown"));
   }
   const auto deadline = std::chrono::steady_clock::now() + timeout;
   while (std::chrono::steady_clock::now() < deadline) {
@@ -290,7 +283,8 @@ Result<void> shutdown_daemon(const std::filesystem::path& endpoint,
     if (!available) return tl::unexpected(available.error());
     if (!*available) return {};
   }
-  return tl::unexpected(make_error(ErrorCode::timeout, "tokmond did not stop in time"));
+  return tl::unexpected(make_error(ErrorCode::timeout,
+                                   "Tokmon daemon did not stop in time"));
 }
 
 Result<void> pin_daemon(const std::filesystem::path& endpoint,
