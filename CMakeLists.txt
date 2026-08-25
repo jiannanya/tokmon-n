@@ -11,6 +11,19 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(TOKMON_BUILD_UI "Build the Slint desktop application" ON)
 option(TOKMON_BUILD_TESTS "Build Tokmon tests" ON)
 option(TOKMON_BUILD_SCRIPT_SDK_TESTS "Enable Node.js and CPython SDK tests" ON)
+option(TOKMON_BUILD_LENS_MODULES
+  "Build standalone C-ABI modules for the official built-in Lenses" ON)
+option(TOKMON_BUILD_LAUNCHER
+  "Build the optional Windows desktop compatibility launcher" ${TOKMON_BUILD_UI})
+
+include(CTest)
+if(BUILD_TESTING AND TOKMON_BUILD_TESTS AND NOT TOKMON_BUILD_LENS_MODULES)
+  message(FATAL_ERROR
+    "TOKMON_BUILD_TESTS requires TOKMON_BUILD_LENS_MODULES for C-ABI contract tests")
+endif()
+if(TOKMON_BUILD_LAUNCHER AND NOT TOKMON_BUILD_UI)
+  message(FATAL_ERROR "TOKMON_BUILD_LAUNCHER requires TOKMON_BUILD_UI")
+endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(Dependencies)
@@ -29,6 +42,7 @@ add_library(tokmon_core STATIC
   nyxia/base/ids.cpp
   nyxia/base/json.cpp
   nyxia/base/logging.cpp
+  nyxia/base/redaction.cpp
   nyxia/base/yaml.cpp
   nyxia/base/value_types.cpp
   nyxia/config/config.cpp
@@ -108,13 +122,17 @@ target_link_libraries(tokmond PRIVATE tokmon_core)
 add_executable(tokmon apps/tokmon-cli/main.cpp)
 target_link_libraries(tokmon PRIVATE tokmon_core)
 
-add_executable(tokmon-launcher apps/tokmon-launcher/main.cpp)
-target_link_libraries(tokmon-launcher PRIVATE tokmon_core)
-
 add_executable(tokmon-lens-worker apps/tokmon-lens-worker/main.cpp)
 target_link_libraries(tokmon-lens-worker PRIVATE tokmon_core)
 
-set_target_properties(tokmond tokmon tokmon-launcher tokmon-lens-worker
+set(TOKMON_RUNTIME_TARGETS tokmond tokmon tokmon-lens-worker)
+if(TOKMON_BUILD_LAUNCHER)
+  add_executable(tokmon-launcher apps/tokmon-launcher/main.cpp)
+  target_link_libraries(tokmon-launcher PRIVATE tokmon_core)
+  list(APPEND TOKMON_RUNTIME_TARGETS tokmon-launcher)
+endif()
+
+set_target_properties(${TOKMON_RUNTIME_TARGETS}
   PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 set(TOKMON_LENS_NAMES
@@ -123,25 +141,27 @@ set(TOKMON_LENS_NAMES
 
 set(TOKMON_LENS_TARGETS)
 
-foreach(lens IN LISTS TOKMON_LENS_NAMES)
-  string(SUBSTRING "${lens}" 0 1 lens_class_initial)
-  string(TOUPPER "${lens_class_initial}" lens_class_initial)
-  string(SUBSTRING "${lens}" 1 -1 lens_class_suffix)
-  set(lens_class "${lens_class_initial}${lens_class_suffix}Lens")
-  add_library(tokmon-lens-${lens} SHARED lenses/common/named_lens_entry.cpp)
-  target_include_directories(tokmon-lens-${lens} PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}")
-  target_link_libraries(tokmon-lens-${lens} PRIVATE tokmon_core)
-  target_compile_definitions(tokmon-lens-${lens} PRIVATE
-    TOKMON_LENS_SHORT_ID="${lens}"
-    TOKMON_LENS_HEADER="lenses/${lens}/${lens}_lens.hpp"
-    TOKMON_LENS_TYPE=tokmon::builtin::${lens_class})
-  set_target_properties(tokmon-lens-${lens} PROPERTIES
-    PREFIX ""
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/lenses"
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/lenses")
-  list(APPEND TOKMON_LENS_TARGETS tokmon-lens-${lens})
-endforeach()
+if(TOKMON_BUILD_LENS_MODULES)
+  foreach(lens IN LISTS TOKMON_LENS_NAMES)
+    string(SUBSTRING "${lens}" 0 1 lens_class_initial)
+    string(TOUPPER "${lens_class_initial}" lens_class_initial)
+    string(SUBSTRING "${lens}" 1 -1 lens_class_suffix)
+    set(lens_class "${lens_class_initial}${lens_class_suffix}Lens")
+    add_library(tokmon-lens-${lens} SHARED lenses/common/named_lens_entry.cpp)
+    target_include_directories(tokmon-lens-${lens} PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(tokmon-lens-${lens} PRIVATE tokmon_core)
+    target_compile_definitions(tokmon-lens-${lens} PRIVATE
+      TOKMON_LENS_SHORT_ID="${lens}"
+      TOKMON_LENS_HEADER="lenses/${lens}/${lens}_lens.hpp"
+      TOKMON_LENS_TYPE=tokmon::builtin::${lens_class})
+    set_target_properties(tokmon-lens-${lens} PROPERTIES
+      PREFIX ""
+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/lenses"
+      LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/lenses")
+    list(APPEND TOKMON_LENS_TARGETS tokmon-lens-${lens})
+  endforeach()
+endif()
 
 if(TOKMON_BUILD_UI)
   find_package(Slint 1.17.1 EXACT CONFIG QUIET)
@@ -184,8 +204,7 @@ if(TOKMON_BUILD_UI)
 endif()
 
 set(TOKMON_RELEASE_TARGETS
-  tokmon_sqlite3 tokmon_core tokmond tokmon tokmon-launcher tokmon-lens-worker
-  ${TOKMON_LENS_TARGETS})
+  tokmon_sqlite3 tokmon_core ${TOKMON_RUNTIME_TARGETS} ${TOKMON_LENS_TARGETS})
 if(TARGET tokmon-desktop)
   list(APPEND TOKMON_RELEASE_TARGETS tokmon-desktop)
 endif()
@@ -193,13 +212,11 @@ foreach(target IN LISTS TOKMON_RELEASE_TARGETS)
   tokmon_optimize_release_target("${target}")
 endforeach()
 
-include(CTest)
 if(BUILD_TESTING AND TOKMON_BUILD_TESTS)
   add_subdirectory(tests)
 endif()
 
-install(TARGETS tokmond tokmon tokmon-launcher tokmon-lens-worker
-  RUNTIME DESTINATION bin)
+install(TARGETS ${TOKMON_RUNTIME_TARGETS} RUNTIME DESTINATION bin)
 if(TARGET tokmon-desktop)
   install(TARGETS tokmon-desktop RUNTIME DESTINATION bin)
   install(DIRECTORY apps/tokmon-desktop/assets/ DESTINATION bin/assets)
@@ -207,8 +224,10 @@ if(TARGET tokmon-desktop)
     install(FILES $<TARGET_RUNTIME_DLLS:tokmon-desktop> DESTINATION bin)
   endif()
 endif()
-install(TARGETS ${TOKMON_LENS_TARGETS}
-  OPTIONAL RUNTIME DESTINATION bin/lenses LIBRARY DESTINATION bin/lenses)
+if(TOKMON_LENS_TARGETS)
+  install(TARGETS ${TOKMON_LENS_TARGETS}
+    OPTIONAL RUNTIME DESTINATION bin/lenses LIBRARY DESTINATION bin/lenses)
+endif()
 install(DIRECTORY config/ DESTINATION share/tokmon/config)
 install(DIRECTORY sdk/typescript/ DESTINATION share/tokmon/sdk/typescript
   PATTERN "examples" EXCLUDE)
