@@ -19,8 +19,10 @@ component StarterCard inherits Rectangle {
     drop-shadow-blur: touch.has-hover ? 12px : 2px;
 
     Rectangle {
-        x: 16px;
-        y: 16px;
+        // The icon and both labels are centered against the card itself so the
+        // four actions stay visually balanced when their text lengths differ.
+        x: (parent.width - self.width) / 2;
+        y: 18px;
         width: 32px;
         height: 32px;
         border-radius: 11px;
@@ -38,26 +40,28 @@ component StarterCard inherits Rectangle {
     }
     Text {
         x: 16px;
-        y: 75px;
+        y: 64px;
         width: parent.width - 32px;
-        height: 34px;
+        height: 36px;
         text: root.title;
         font-size: 12.5px;
         font-weight: 650;
         color: touch.has-hover ? root.accent : Palette.ink;
-        vertical-alignment: bottom;
+        horizontal-alignment: center;
+        vertical-alignment: center;
         wrap: word-wrap;
         overflow: elide;
     }
     Text {
         x: 16px;
-        y: 109px;
+        y: 100px;
         width: parent.width - 32px;
         height: 16px;
         text: root.detail;
         font-size: 10.5px;
         color: Palette.faint;
         overflow: elide;
+        horizontal-alignment: center;
         vertical-alignment: center;
     }
     touch := TouchArea {
@@ -77,34 +81,12 @@ export component SessionEmptyState inherits Rectangle {
         x: (parent.width - self.width) / 2;
         y: Math.max(24px, (parent.height - 158px - self.height) / 2);
         width: Math.min(840px, parent.width - 48px);
-        height: 296px;
+        height: 186px;
         background: transparent;
-
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: 0px;
-            width: 64px;
-            height: 64px;
-            border-radius: 24px;
-            background: @linear-gradient(180deg, #FEF8F4 0%, #FBF1E7 100%);
-            border-width: 0.67px;
-            border-color: #F5D9C3;
-            drop-shadow-color: rgba(200, 106, 40, 0.10);
-            drop-shadow-offset-y: 2px;
-            drop-shadow-blur: 8px;
-            Image {
-                x: 14px;
-                y: 14px;
-                width: 36px;
-                height: 36px;
-                source: Icons.logo;
-                image-fit: contain;
-            }
-        }
 
         heading-row := HorizontalLayout {
             x: 0px;
-            y: 84px;
+            y: 0px;
             width: parent.width;
             height: 36px;
             alignment: center;
@@ -137,45 +119,9 @@ export component SessionEmptyState inherits Rectangle {
             }
         }
 
-        subtitle-row := HorizontalLayout {
-            x: 0px;
-            y: 126px;
-            width: parent.width;
-            height: 24px;
-            alignment: center;
-            spacing: 6px;
-            Text {
-                text: "智能体已就绪，当前关联工作空间";
-                font-size: 12.5px;
-                color: Palette.dim;
-                vertical-alignment: center;
-            }
-            path-chip := Rectangle {
-                width: Math.min(300px, path-label.preferred-width + 14px);
-                height: 22px;
-                horizontal-stretch: 0;
-                border-radius: 6px;
-                background: #FEF8F4;
-                border-width: 0.67px;
-                border-color: #F5D9C3;
-                path-label := Text {
-                    x: 7px;
-                    width: parent.width - 14px;
-                    height: parent.height;
-                    text: root.workspace-path;
-                    font-family: "Consolas";
-                    font-size: 11px;
-                    font-weight: 600;
-                    color: Palette.accent;
-                    vertical-alignment: center;
-                    overflow: elide;
-                }
-            }
-        }
-
         HorizontalLayout {
             x: 0px;
-            y: 170px;
+            y: 60px;
             width: parent.width;
             height: 126px;
             spacing: 14px;

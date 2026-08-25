@@ -1,4 +1,4 @@
-import { LineEdit, ScrollView } from "std-widgets.slint";
+import { ScrollView } from "std-widgets.slint";
 import { ModelChoice, TimelineItem, SlashCommandItem, ProjectFile, GanttSegment, TraceEvent } from "tokmon-models.slint";
 import { Palette, Icons } from "tokmon-theme.slint";
 import { ToolIcon, MenuOption, WorkflowStepRow } from "tokmon-components.slint";
@@ -67,6 +67,9 @@ export component WorkspacePanel inherits Rectangle {
     in-out property <bool> trajectory-selected;
     in-out property <bool> conversation-workflow-expanded;
     in-out property <bool> title-editing;
+    property <string> title-edit-draft;
+    property <bool> title-editor-focus-pending;
+    property <bool> title-edit-commit-pending;
     in-out property <bool> access-menu-open;
     in-out property <bool> model-menu-open;
     in-out property <bool> effort-menu-open;
@@ -127,6 +130,47 @@ export component WorkspacePanel inherits Rectangle {
         root.context-close-pending = false;
     }
 
+    function begin-title-edit() {
+        root.title-edit-draft = root.session-title;
+        root.title-edit-commit-pending = false;
+        // Explicitly focus the freshly-created editor. Without this, the first
+        // click only focused it and a second click was needed to place the caret.
+        root.title-editor-focus-pending = true;
+        // Set the focus intent before instantiating the conditional editor so
+        // its initial unfocused state is not mistaken for a user blur.
+        root.title-editing = true;
+    }
+
+    function commit-title-edit() {
+        if !root.title-editing {
+            return;
+        }
+        // An empty draft keeps the previous valid title. Enter and focus loss
+        // share this path so clicking anywhere else behaves exactly like Enter.
+        if root.title-edit-draft != "" {
+            root.session-title = root.title-edit-draft;
+            root.rename-session(root.title-edit-draft);
+        }
+        root.title-editing = false;
+        root.title-editor-focus-pending = false;
+        root.title-edit-commit-pending = false;
+        root.return-focus();
+    }
+
+    // Focus leaves the TextInput before a neighboring TouchArea receives its
+    // click. Deferring the commit lets the clear button cancel it; a genuine
+    // outside click still commits immediately on the next event-loop tick.
+    Timer {
+        // Mouse release/click delivery can span more than one native event-loop
+        // tick, so leave enough time for the clear button to cancel the blur.
+        interval: 120ms;
+        running: root.title-edit-commit-pending;
+        triggered => {
+            root.title-edit-commit-pending = false;
+            root.commit-title-edit();
+        }
+    }
+
     pure function resolved-environment-button-x() -> length {
         Math.max(8px, Math.min(
             root.environment-button-x < 0px ? root.width - 64px : root.environment-button-x,
@@ -146,6 +190,11 @@ export component WorkspacePanel inherits Rectangle {
                         height: 46px;
                         background: rgba(250, 250, 249, 0.94);
                         TouchArea {
+                            // Reserve the left side for the title/editor and the
+                            // right side for panel/window controls. A full-width
+                            // drag layer competes with their pointer hit targets.
+                            x: 320px;
+                            width: Math.max(0px, parent.width - self.x - 160px);
                             moved => { root.drag-window() }
                             clicked => { root.return-focus(); }
                         }
@@ -165,16 +214,82 @@ export component WorkspacePanel inherits Rectangle {
                                 overflow: elide;
                                 vertical-alignment: center;
                             }
-                            if root.title-editing : LineEdit {
+                            if root.title-editing : Rectangle {
                                 width: 240px;
-                                text <=> root.session-title;
-                                font-size: 14px;
-                                accepted => {                                    root.rename-session(root.session-title);                                     root.title-editing = false;                                     root.return-focus();                                }
+                                height: 32px;
+                                border-radius: 9px;
+                                background: Palette.white;
+                                border-width: 1px;
+                                border-color: title-edit-input.has-focus ? Palette.accent : Palette.border;
+                                drop-shadow-color: title-edit-input.has-focus ? rgba(200, 106, 40, 0.12) : Palette.shadow;
+                                drop-shadow-offset-y: 2px;
+                                drop-shadow-blur: title-edit-input.has-focus ? 7px : 3px;
+                                // Slint hit-tests earlier siblings first. Keep the
+                                // clear target before TextInput so the editor does
+                                // not capture its pointer press.
+                                clear-title-touch := TouchArea {
+                                    x: parent.width - 33px;
+                                    y: 3px;
+                                    width: 27px;
+                                    height: 26px;
+                                    clicked => {
+                                        root.title-edit-commit-pending = false;
+                                        root.title-edit-draft = "";
+                                        root.title-editor-focus-pending = true;
+                                    }
+                                    mouse-cursor: pointer;
+                                }
+                                Timer {
+                                    interval: 1ms;
+                                    running: root.title-editor-focus-pending;
+                                    triggered => {
+                                        title-edit-input.focus();
+                                        root.title-editor-focus-pending = false;
+                                    }
+                                }
+                                title-edit-input := TextInput {
+                                    x: 12px;
+                                    width: parent.width - 48px;
+                                    height: parent.height;
+                                    text <=> root.title-edit-draft;
+                                    single-line: true;
+                                    horizontal-alignment: left;
+                                    vertical-alignment: center;
+                                    font-size: 14px;
+                                    color: Palette.ink;
+                                    accepted => {
+                                        root.title-edit-commit-pending = false;
+                                        root.commit-title-edit();
+                                    }
+                                    changed has-focus => {
+                                        if self.has-focus {
+                                            root.title-edit-commit-pending = false;
+                                        } else if root.title-editing && !root.title-editor-focus-pending {
+                                            root.title-edit-commit-pending = true;
+                                        }
+                                    }
+                                }
+                                clear-title := Rectangle {
+                                    x: parent.width - 33px;
+                                    y: 3px;
+                                    width: 27px;
+                                    height: 26px;
+                                    border-radius: 7px;
+                                    background: clear-title-touch.has-hover ? Palette.sep : transparent;
+                                    z: 5;
+                                    Image {
+                                        source: Icons.close;
+                                        width: 12px;
+                                        height: 12px;
+                                        x: (parent.width - self.width) / 2;
+                                        y: (parent.height - self.height) / 2;
+                                    }
+                                }
                             }
-                            ToolIcon {
+                            if !root.title-editing : ToolIcon {
                                 source: Icons.pencil;
                                 icon-size: 14px;
-                                clicked => { root.title-editing = !root.title-editing }
+                                clicked => { root.begin-title-edit(); }
                             }
                         }
                         HorizontalLayout {
@@ -463,9 +578,11 @@ export component WorkspacePanel inherits Rectangle {
                                 }
                             }
                             composer := Rectangle {
-                                y: parent.height - 164px;
+                                // Keep an 8px bottom breathing space (half of the
+                                // previous 16px gap) without changing input height.
+                                y: parent.height - 156px;
                                 width: parent.width;
-                                height: 164px;
+                                height: 156px;
                                 background: @linear-gradient(0deg, rgba(250, 250, 249, 1) 0%, rgba(250, 250, 249, 0.92) 55%, rgba(250, 250, 249, 0) 100%);
                                 HorizontalLayout {
                                     alignment: center;
@@ -486,6 +603,10 @@ export component WorkspacePanel inherits Rectangle {
                                                 change-workspace => { root.open-change-workspace(); }
                                             }
                                             Rectangle {
+                                                // Keep the composer surface above the workspace badge.
+                                                // A menu's z value cannot escape its parent's stacking
+                                                // context, which previously let the badge cover it.
+                                                z: 3;
                                                 border-radius: 16px;
                                                 background: Palette.white;
                                                 border-width: 0.67px;
@@ -514,10 +635,13 @@ export component WorkspacePanel inherits Rectangle {
                                                             }
                                                         }
                                                         if root.composer-text == "" : Text {
+                                                            x: 0px;
                                                             y: 8px;
+                                                            width: parent.width;
                                                             text: root.chat-empty ? "随心输入需求，或点击上方卡片快速开始..." : "提出后续修改要求";
                                                             font-size: 13.5px;
                                                             color: Palette.faint;
+                                                            horizontal-alignment: left;
                                                             vertical-alignment: center;
                                                         }
                                                     }
@@ -684,6 +808,8 @@ export component WorkspacePanel inherits Rectangle {
                                             }
                                         }
                                         if root.access-menu-open : Rectangle {
+                                            // Menus must render above the context/workspace badge.
+                                            z: 20;
                                             x: Math.max(0px, Math.min(parent.width - self.width,
                                                 access-button.absolute-position.x - parent.absolute-position.x));
                                             y: access-button.absolute-position.y - parent.absolute-position.y - self.height - 8px;

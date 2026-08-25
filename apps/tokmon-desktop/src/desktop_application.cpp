@@ -28,6 +28,12 @@
 
 namespace tokmon::desktop {
 
+namespace {
+// Product-level visual baseline shared by reset actions. The Slint defaults
+// use the same value so a project without saved UI settings starts at 125%.
+constexpr int kDefaultUiScalePercent = 125;
+} // namespace
+
 int run_application(int argc, char **argv) {
   std::optional<std::filesystem::path> workspace;
   bool open_settings = false;
@@ -652,8 +658,9 @@ int run_application(int argc, char **argv) {
     window->set_settings_status("正在通过后台服务原子保存…");
   });
   window->on_reset_settings([window] {
-    window->set_setting_ui_scale(100);
-    window->set_applied_ui_scale_percent(100);
+    window->set_setting_font_scale(kDefaultUiScalePercent);
+    window->set_setting_ui_scale(kDefaultUiScalePercent);
+    window->set_applied_ui_scale_percent(kDefaultUiScalePercent);
     window->set_settings_status("已恢复默认值；点击“保存更改”后写入");
   });
   window->on_drag_window([] { drag_current_process_window(); });

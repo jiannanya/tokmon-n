@@ -21,8 +21,10 @@ export component SettingsOverlay inherits Rectangle {
     in-out property <string> setting-email;
     in-out property <string> setting-file-access;
     in-out property <int> setting-font-scale;
-    in-out property <int> setting-ui-scale: 100;
-    in-out property <int> applied-ui-scale-percent: 100;
+    // Keep the settings overlay's standalone defaults aligned with MainWindow.
+    // Existing saved project values still replace these defaults when loaded.
+    in-out property <int> setting-ui-scale: 125;
+    in-out property <int> applied-ui-scale-percent: 125;
     in-out property <bool> setting-git;
     in-out property <bool> setting-high-risk;
     in-out property <string> setting-index-mode;
@@ -598,8 +600,9 @@ export component SettingsOverlay inherits Rectangle {
                                                 }
                                                 TouchArea {
                                                     clicked => {
-                                                        root.setting-ui-scale = 100;
-                                                        root.applied-ui-scale-percent = 100;
+                                                        // "重置" returns to the product baseline.
+                                                        root.setting-ui-scale = 125;
+                                                        root.applied-ui-scale-percent = 125;
                                                         root.return-focus();
                                                     }
                                                     mouse-cursor: pointer;

@@ -301,7 +301,10 @@ export component SidebarPanel inherits HorizontalLayout {
                     mouse-cursor: ew-resize;
                 }
                 Rectangle {
-                    x: -8px;
+                    // Keep the collapse control fully inside the expanded rail.
+                    // Straddling the separator made it collide with the session
+                    // title and clipped the icon at non-100% UI scales.
+                    x: -30px;
                     y: 10px;
                     width: 24px;
                     height: 24px;
