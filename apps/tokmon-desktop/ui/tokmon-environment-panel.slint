@@ -1,0 +1,543 @@
+import { LineEdit, ScrollView } from "std-widgets.slint";
+import { ProjectFile } from "tokmon-models.slint";
+import { Palette, Icons } from "tokmon-theme.slint";
+
+component EnvironmentRow inherits Rectangle {
+    in property <image> icon;
+    in property <string> title;
+    in property <string> detail;
+    in property <bool> expanded: false;
+    in property <bool> enabled: true;
+    in property <bool> show-chevron: true;
+    callback clicked();
+
+    height: 32px;
+    border-radius: 8px;
+    background: touch.has-hover && root.enabled ? #F7F6F3 : transparent;
+
+    Image {
+        x: 8px;
+        y: 8px;
+        width: 16px;
+        height: 16px;
+        source: root.icon;
+        image-fit: contain;
+        opacity: root.enabled ? 1 : 0.42;
+    }
+    Text {
+        x: 32px;
+        y: 0px;
+        width: 74px;
+        height: parent.height;
+        text: root.title;
+        font-size: 11.5px;
+        font-weight: 500;
+        color: root.enabled ? Palette.strong : Palette.faint;
+        vertical-alignment: center;
+    }
+    Text {
+        x: 104px;
+        y: 0px;
+        width: parent.width - 126px;
+        height: parent.height;
+        text: root.detail;
+        font-family: "Consolas";
+        font-size: 10.5px;
+        font-weight: 600;
+        color: root.enabled ? Palette.ink : Palette.faint;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    if root.show-chevron : Image {
+        x: parent.width - 16px;
+        y: 11px;
+        width: 10px;
+        height: 10px;
+        source: root.expanded ? Icons.chev-down : Icons.chev-right-faint;
+        image-fit: contain;
+        opacity: root.enabled ? 0.78 : 0.32;
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+component EnvironmentMenuItem inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <string> hint;
+    in property <bool> active: false;
+    callback clicked();
+
+    height: 34px;
+    border-radius: 8px;
+    background: touch.has-hover || root.active ? #F7F3ED : transparent;
+    Image {
+        x: 9px;
+        y: 9px;
+        width: 16px;
+        height: 16px;
+        source: root.icon;
+        image-fit: contain;
+    }
+    Text {
+        x: 33px;
+        width: parent.width - 65px;
+        height: parent.height;
+        text: root.label;
+        font-size: 11px;
+        font-weight: root.active ? 600 : 500;
+        color: root.active ? Palette.accent-text : Palette.strong;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    Text {
+        x: parent.width - 32px;
+        width: 23px;
+        height: parent.height;
+        text: root.hint;
+        font-size: 9.5px;
+        color: Palette.faint;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+    }
+    touch := TouchArea { clicked => { root.clicked(); } }
+}
+
+export component EnvironmentPanel inherits Rectangle {
+    in property <[ProjectFile]> project-files;
+    in property <[ProjectFile]> workspace-presets;
+    in property <string> workspace-project;
+    in property <string> workspace-path;
+    in property <string> workspace-full-path;
+    in property <string> workspace-branch;
+    in property <int> indexed-files;
+    in property <bool> has-git;
+    in property <bool> locked;
+
+    in-out property <bool> open: true;
+    in-out property <int> dropdown: 0;
+    in-out property <string> toast-text;
+    in-out property <string> branch-input;
+    in-out property <bool> branch-input-visible: false;
+
+    callback open-project-file(int);
+    callback open-change-workspace();
+    callback switch-workspace(string);
+    callback copy-text(string);
+    callback refresh-workspace();
+    callback open-workspace-settings();
+
+    property <length> changes-height: root.dropdown == 1
+        ? (root.project-files.length == 0 ? 38px : Math.min(root.project-files.length, 4) * 30px + 8px)
+        : 0px;
+    property <length> projects-height: root.dropdown == 2
+        ? Math.min(root.workspace-presets.length, 4) * 39px + 38px
+        : 0px;
+    property <length> branches-height: root.dropdown == 3 ? (root.branch-input-visible ? 106px : 70px) : 0px;
+
+    width: root.open ? 275px : 48px;
+    height: root.open ? 270px + root.changes-height + root.projects-height + root.branches-height : 48px;
+    background: transparent;
+    animate width { duration: 120ms; }
+    animate height { duration: 120ms; }
+
+    function notify(message: string) {
+        root.toast-text = message;
+    }
+
+    Timer {
+        interval: 2400ms;
+        running: root.toast-text != "";
+        triggered => { root.toast-text = ""; }
+    }
+
+    if !root.open : Rectangle {
+        width: 48px;
+        height: 48px;
+        border-radius: 18px;
+        background: @linear-gradient(145deg, rgba(255, 255, 255, 0.98) 0%, rgba(247, 246, 243, 0.94) 100%);
+        border-width: 0.67px;
+        border-color: #DDD9D4;
+        drop-shadow-color: rgba(0, 0, 0, 0.16);
+        drop-shadow-offset-y: 7px;
+        drop-shadow-blur: 14px;
+
+        Rectangle { x: 10px; y: 10px; width: 28px; height: 28px; border-radius: 14px; border-width: 2px; border-color: #78716C; background: transparent; }
+        Rectangle { x: 15px; y: 15px; width: 18px; height: 18px; border-radius: 9px; border-width: 2px; border-color: #A8A29E; background: transparent; }
+        Rectangle { x: 20px; y: 20px; width: 8px; height: 8px; border-radius: 4px; background: Palette.accent; }
+        Rectangle {
+            x: 35px;
+            y: 2px;
+            width: 10px;
+            height: 10px;
+            border-radius: 5px;
+            background: Palette.white;
+            Rectangle { x: 2px; y: 2px; width: 6px; height: 6px; border-radius: 3px; background: Palette.green; }
+        }
+        collapsed-touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.open = true; root.dropdown = 0; }
+        }
+        if collapsed-touch.has-hover : Rectangle {
+            x: parent.width - 209px;
+            y: 56px;
+            width: 209px;
+            height: 31px;
+            border-radius: 8px;
+            background: rgba(28, 25, 23, 0.94);
+            drop-shadow-color: rgba(0, 0, 0, 0.18);
+            drop-shadow-offset-y: 4px;
+            drop-shadow-blur: 8px;
+            Text {
+                x: 10px;
+                width: parent.width - 20px;
+                height: parent.height;
+                text: "环境信息 · " + (root.workspace-project == "" ? "当前项目" : root.workspace-project) + (root.has-git ? " (" + root.workspace-branch + ")" : "");
+                font-size: 10.5px;
+                color: Palette.white;
+                vertical-alignment: center;
+                horizontal-alignment: center;
+                overflow: elide;
+            }
+        }
+    }
+
+    if root.open : Rectangle {
+        width: parent.width;
+        height: parent.height;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.96);
+        border-width: 0.67px;
+        border-color: Palette.border;
+        drop-shadow-color: rgba(0, 0, 0, 0.14);
+        drop-shadow-offset-y: 10px;
+        drop-shadow-blur: 20px;
+
+        VerticalLayout {
+            padding: 12px;
+            spacing: 2px;
+
+            Rectangle {
+                height: 28px;
+                HorizontalLayout {
+                    alignment: space-between;
+                    HorizontalLayout {
+                        spacing: 7px;
+                        alignment: start;
+                        Text { text: "环境信息"; font-size: 13px; font-weight: 650; color: Palette.ink; vertical-alignment: center; }
+                        Rectangle { width: 7px; height: 7px; border-radius: 4px; background: Palette.green; vertical-stretch: 0; y: 10px; }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        alignment: end;
+                        quick-button := Rectangle {
+                            width: 28px;
+                            height: 28px;
+                            border-radius: 9px;
+                            background: quick-touch.has-hover || root.dropdown == 4 ? #F4F1EC : transparent;
+                            Image { x: 7px; y: 7px; width: 14px; height: 14px; source: Icons.plus-dim; image-fit: contain; }
+                            quick-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.dropdown = root.dropdown == 4 ? 0 : 4; }
+                            }
+                        }
+                        collapse-button := Rectangle {
+                            width: 28px;
+                            height: 28px;
+                            border-radius: 9px;
+                            background: collapse-touch.has-hover ? #F4F1EC : transparent;
+                            Rectangle { x: 6px; y: 6px; width: 16px; height: 16px; border-radius: 8px; border-width: 1.5px; border-color: Palette.dim; background: transparent; }
+                            Rectangle { x: 10px; y: 10px; width: 8px; height: 8px; border-radius: 4px; border-width: 1px; border-color: Palette.faint; background: transparent; }
+                            Rectangle { x: 12px; y: 12px; width: 4px; height: 4px; border-radius: 2px; background: Palette.accent; }
+                            collapse-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.dropdown = 0; root.open = false; }
+                            }
+                        }
+                    }
+                }
+            }
+
+            EnvironmentRow {
+                icon: Icons.file-code;
+                title: "变更";
+                detail: root.project-files.length + " 个文件";
+                expanded: root.dropdown == 1;
+                clicked => { root.dropdown = root.dropdown == 1 ? 0 : 1; }
+            }
+            if root.dropdown == 1 : Rectangle {
+                height: root.changes-height;
+                border-radius: 9px;
+                background: #FAF9F7;
+                ScrollView {
+                    width: parent.width;
+                    height: parent.height;
+                    VerticalLayout {
+                        padding: 4px;
+                        if root.project-files.length == 0 : Text {
+                            height: 30px;
+                            text: "当前会话还没有文件变更";
+                            font-size: 10.5px;
+                            color: Palette.faint;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        for file[index] in root.project-files : Rectangle {
+                            height: 30px;
+                            border-radius: 7px;
+                            background: file-touch.has-hover ? #F1EEE9 : transparent;
+                            Text { x: 8px; width: 16px; height: parent.height; text: "M"; font-family: "Consolas"; font-size: 9.5px; font-weight: 700; color: Palette.amber; vertical-alignment: center; }
+                            Text { x: 28px; width: parent.width - 36px; height: parent.height; text: file.name; font-family: "Consolas"; font-size: 10px; color: Palette.strong; overflow: elide; vertical-alignment: center; }
+                            file-touch := TouchArea {
+                                clicked => { root.dropdown = 0; root.open-project-file(index); }
+                            }
+                        }
+                    }
+                }
+            }
+
+            EnvironmentRow {
+                icon: Icons.folder-open;
+                title: "本地";
+                detail: root.workspace-project == "" ? "当前项目" : root.workspace-project;
+                expanded: root.dropdown == 2;
+                clicked => { root.dropdown = root.dropdown == 2 ? 0 : 2; }
+            }
+            if root.dropdown == 2 : Rectangle {
+                height: root.projects-height;
+                border-radius: 9px;
+                background: #FAF9F7;
+                VerticalLayout {
+                    padding: 4px;
+                    ScrollView {
+                        height: Math.min(root.workspace-presets.length, 4) * 39px;
+                        VerticalLayout {
+                            for preset in root.workspace-presets : EnvironmentMenuItem {
+                                height: 39px;
+                                icon: Icons.folder;
+                                label: preset.name;
+                                hint: preset.path == root.workspace-full-path ? "当前" : "";
+                                active: preset.path == root.workspace-full-path;
+                                clicked => {
+                                    if root.locked {
+                                        root.notify("当前会话已锁定，无法切换工作空间");
+                                    } else {
+                                        root.dropdown = 0;
+                                        root.switch-workspace(preset.path);
+                                        root.notify("正在切换到 " + preset.name);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    EnvironmentMenuItem {
+                        icon: Icons.folder-open;
+                        label: "更换物理目录…";
+                        hint: "";
+                        clicked => {
+                            root.dropdown = 0;
+                            if root.locked {
+                                root.notify("当前会话已锁定，无法切换工作空间");
+                            } else {
+                                root.open-change-workspace();
+                            }
+                        }
+                    }
+                }
+            }
+
+            EnvironmentRow {
+                icon: Icons.git-branch;
+                title: "分支";
+                detail: root.has-git ? root.workspace-branch : "未检测到 Git";
+                expanded: root.dropdown == 3;
+                enabled: root.has-git;
+                clicked => { root.dropdown = root.dropdown == 3 ? 0 : 3; }
+            }
+            if root.dropdown == 3 : Rectangle {
+                height: root.branches-height;
+                border-radius: 9px;
+                background: #FAF9F7;
+                VerticalLayout {
+                    padding: 4px;
+                    EnvironmentMenuItem {
+                        icon: Icons.check-green;
+                        label: root.workspace-branch;
+                        hint: "当前";
+                        active: true;
+                        clicked => { root.dropdown = 0; }
+                    }
+                    if root.branch-input-visible : Rectangle {
+                        height: 34px;
+                        LineEdit {
+                            x: 4px;
+                            y: 3px;
+                            width: parent.width - 48px;
+                            height: 28px;
+                            text <=> root.branch-input;
+                            placeholder-text: "新分支名称";
+                        }
+                        Rectangle {
+                            x: parent.width - 39px;
+                            y: 4px;
+                            width: 34px;
+                            height: 26px;
+                            border-radius: 7px;
+                            background: Palette.accent-bg;
+                            Text { text: "创建"; font-size: 9.5px; font-weight: 600; color: Palette.accent-text; horizontal-alignment: center; vertical-alignment: center; }
+                            TouchArea { clicked => { root.branch-input-visible = false; root.notify("请在 Git 工具中创建分支 " + root.branch-input); root.branch-input = ""; } }
+                        }
+                    }
+                    if !root.branch-input-visible : EnvironmentMenuItem {
+                        icon: Icons.plus-dim;
+                        label: "新建 Git 分支";
+                        hint: "";
+                        clicked => { root.branch-input-visible = true; }
+                    }
+                }
+            }
+
+            EnvironmentRow {
+                icon: Icons.rocket;
+                title: "提交或推送";
+                detail: "推送 (0↑)";
+                show-chevron: false;
+                enabled: root.has-git;
+                clicked => { root.notify("请在 Git 工具中提交或推送变更"); }
+            }
+            EnvironmentRow {
+                icon: Icons.check-circle;
+                title: "拉取请求";
+                detail: root.has-git ? "无法获取状态" : "未连接 Git";
+                show-chevron: false;
+                clicked => { root.notify("未检测到关联的拉取请求"); }
+            }
+
+            Rectangle { height: 1px; background: Palette.hairline; }
+            Rectangle {
+                height: 42px;
+                Text {
+                    x: 3px;
+                    y: 2px;
+                    width: parent.width - 6px;
+                    height: 18px;
+                    text: root.workspace-path;
+                    font-family: "Consolas";
+                    font-size: 9.5px;
+                    color: Palette.dim;
+                    overflow: elide;
+                    vertical-alignment: center;
+                }
+                path-touch := TouchArea {
+                    x: 0px;
+                    y: 0px;
+                    width: parent.width;
+                    height: 21px;
+                    mouse-cursor: pointer;
+                    clicked => { root.copy-text(root.workspace-path); root.notify("工作空间路径已复制"); }
+                }
+                Rectangle { x: 3px; y: 28px; width: 6px; height: 6px; border-radius: 3px; background: Palette.green; }
+                Text { x: 15px; y: 20px; width: 110px; height: 20px; text: root.indexed-files + " 文件就绪"; font-size: 9.5px; color: Palette.green-sub; vertical-alignment: center; }
+                Image { x: parent.width - 116px; y: 24px; width: 12px; height: 12px; source: root.locked ? Icons.lock : Icons.folder-open; image-fit: contain; opacity: 0.7; }
+                Text {
+                    x: parent.width - 100px;
+                    y: 20px;
+                    width: 98px;
+                    height: 20px;
+                    text: root.locked ? "当前会话已锁定" : "更换工作空间目录";
+                    font-size: 9px;
+                    color: root.locked ? Palette.faint : Palette.accent-text;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                }
+                TouchArea {
+                    x: parent.width - 120px;
+                    y: 20px;
+                    width: 120px;
+                    height: 22px;
+                    enabled: !root.locked;
+                    mouse-cursor: pointer;
+                    clicked => { root.open-change-workspace(); }
+                }
+            }
+        }
+
+        if root.dropdown == 4 : Rectangle {
+            x: 62px;
+            y: 43px;
+            width: 188px;
+            height: 154px;
+            border-radius: 12px;
+            background: Palette.white;
+            border-width: 0.67px;
+            border-color: Palette.border;
+            drop-shadow-color: rgba(0, 0, 0, 0.16);
+            drop-shadow-offset-y: 8px;
+            drop-shadow-blur: 14px;
+            z: 80;
+            VerticalLayout {
+                padding: 6px;
+                spacing: 1px;
+                EnvironmentMenuItem {
+                    icon: Icons.git-branch;
+                    label: "新建 Git 分支";
+                    hint: "";
+                    clicked => { root.dropdown = 3; root.branch-input-visible = true; }
+                }
+                EnvironmentMenuItem {
+                    icon: Icons.folder-open;
+                    label: "浏览本地目录";
+                    hint: "";
+                    clicked => {
+                        root.dropdown = 0;
+                        if root.locked {
+                            root.notify("当前会话已锁定，无法切换工作空间");
+                        } else {
+                            root.open-change-workspace();
+                        }
+                    }
+                }
+                EnvironmentMenuItem {
+                    icon: Icons.spinner;
+                    label: "重新扫描工作空间";
+                    hint: "";
+                    clicked => { root.dropdown = 0; root.refresh-workspace(); root.notify("正在刷新工作空间信息"); }
+                }
+                Rectangle { height: 1px; background: Palette.hairline; }
+                EnvironmentMenuItem {
+                    icon: Icons.gear;
+                    label: "工作空间偏好设置";
+                    hint: "";
+                    clicked => { root.dropdown = 0; root.open-workspace-settings(); }
+                }
+            }
+        }
+    }
+
+    if root.toast-text != "" : Rectangle {
+        x: root.width - 238px;
+        y: root.height + 8px;
+        width: 238px;
+        height: 34px;
+        border-radius: 9px;
+        background: rgba(28, 25, 23, 0.94);
+        drop-shadow-color: rgba(0, 0, 0, 0.18);
+        drop-shadow-offset-y: 5px;
+        drop-shadow-blur: 10px;
+        z: 100;
+        Text {
+            x: 10px;
+            width: parent.width - 20px;
+            height: parent.height;
+            text: root.toast-text;
+            font-size: 10.5px;
+            color: Palette.white;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+}

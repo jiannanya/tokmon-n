@@ -1,0 +1,329 @@
+import { NavigationItem } from "tokmon-models.slint";
+import { Palette, Icons } from "tokmon-theme.slint";
+import { SidebarRow, StatusDot } from "tokmon-components.slint";
+
+export component SidebarPanel inherits HorizontalLayout {
+    in property <[NavigationItem]> navigation;
+    in property <string> daemon-state;
+    in property <int> search-session-count;
+    in-out property <string> search-text;
+    in-out property <bool> settings-open;
+    in-out property <bool> sidebar-visible;
+    in-out property <length> sidebar-width;
+
+    callback new-session();
+    callback select-navigation(int);
+    callback search-changed(string);
+    callback quick-create(int);
+    callback clear-search();
+    callback settings-searched(string);
+
+    width: root.sidebar-visible ? root.sidebar-width + 1px : 0px;
+    horizontal-stretch: 0;
+    spacing: 0px;
+            Rectangle {
+                visible: root.sidebar-visible;
+                width: root.sidebar-visible ? root.sidebar-width : 0px;
+                clip: true;
+                background: #F9F9F8;
+                VerticalLayout {
+                    // 46px pinned header followed by the 12px padded scroll content.
+                    // The header/content boundary is drawn by the absolute hairline below.
+                    padding-top: 9px;
+                    padding-bottom: 0px;
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    Rectangle {
+                        vertical-stretch: 1;
+                        VerticalLayout {
+                            HorizontalLayout {
+                                padding-top: 2px;
+                                padding-bottom: 23px;
+                                padding-left: 4px;
+                                padding-right: 2px;
+                                alignment: space-between;
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    alignment: start;
+                                    Image {
+                                        source: Icons.logo;
+                                        width: 24px;
+                                        height: 24px;
+                                        y: (parent.height - 24px) / 2;
+                                    }
+                                    Text {
+                                        text: "Tokmon";
+                                        font-size: 17px;
+                                        font-weight: 700;
+                                        letter-spacing: -0.3px;
+                                        color: Palette.ink;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+                            Rectangle {
+                                height: 42px;
+                                border-radius: 12px;
+                                background: Palette.accent-bg;
+                                border-width: 0.67px;
+                                border-color: Palette.accent-border;
+                                drop-shadow-color: Palette.shadow;
+                                drop-shadow-offset-y: 1px;
+                                drop-shadow-blur: 0px;
+                                HorizontalLayout {
+                                    padding-left: 16px;
+                                    padding-right: 16px;
+                                    spacing: 8px;
+                                    alignment: center;
+                                    Image {
+                                        source: Icons.plus-amber;
+                                        width: 16px;
+                                        height: 16px;
+                                        y: (parent.height - 16px) / 2;
+                                    }
+                                    Text {
+                                        text: "新建会话";
+                                        font-size: 13.5px;
+                                        font-weight: 500;
+                                        color: Palette.accent-text;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                TouchArea {
+                                    clicked => { root.new-session() }
+                                    mouse-cursor: pointer;
+                                }
+                            }
+                            Rectangle { height: 14px; }
+                            Rectangle {
+                                height: 32px;
+                                border-radius: 12px;
+                                background: Palette.input-deep;
+                                Image {
+                                    source: Icons.search;
+                                    x: 12px;
+                                    y: (parent.height - 16px) / 2;
+                                    width: 16px;
+                                    height: 16px;
+                                }
+                                TextInput {
+                                    x: 36px;
+                                    width: parent.width - 44px;
+                                    height: parent.height;
+                                    text <=> root.search-text;
+                                    font-size: 12.5px;
+                                    color: Palette.body;
+                                    edited => { root.search-changed(self.text) }
+                                }
+                                if root.search-text == "" : Text {
+                                    x: 36px;
+                                    height: parent.height;
+                                    vertical-alignment: center;
+                                    text: "搜索会话、项目或分组...";
+                                    font-size: 12.5px;
+                                    color: Palette.faint;
+                                }
+                            }
+                            Rectangle { height: 14px; }
+                            HorizontalLayout {
+                                padding-left: 8px; padding-right: 8px; padding-top: 4px; padding-bottom: 4px;
+                                alignment: space-between;
+                                Text {
+                                    text: "分组 / 项目 / 会话";
+                                    font-size: 11.5px;
+                                    font-weight: 500;
+                                    letter-spacing: 0.5px;
+                                    color: Palette.dim;
+                                    vertical-alignment: center;
+                                }
+                                if root.search-text != "" : HorizontalLayout {
+                                    spacing: 6px;
+                                    Rectangle {
+                                        height: 17px;
+                                        border-radius: 4px;
+                                        background: #FEF8F4;
+                                        border-width: 0.67px;
+                                        border-color: #F5D9C3;
+                                        HorizontalLayout {
+                                            padding-left: 5px;
+                                            padding-right: 5px;
+                                            Text {
+                                                text: "找到 " + root.search-session-count + " 个会话";
+                                                font-size: 9.5px;
+                                                font-weight: 500;
+                                                color: Palette.accent;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Rectangle {
+                                vertical-stretch: 1;
+                                clip: false;
+                                property <length> nav-viewport-height: root.navigation.length * 30px;
+                                property <length> nav-thumb-height: Math.max(36px,
+                                    self.height * self.height / Math.max(self.height, self.nav-viewport-height));
+                                if root.search-text != "" && root.navigation.length == 0 : VerticalLayout {
+                                    padding-top: 28px;
+                                    padding-bottom: 16px;
+                                    spacing: 10px;
+                                    HorizontalLayout {
+                                        alignment: center;
+                                        Rectangle {
+                                            width: 36px;
+                                            height: 36px;
+                                            border-radius: 999px;
+                                            background: Palette.sep;
+                                            Image {
+                                                source: Icons.search;
+                                                width: 15px;
+                                                height: 15px;
+                                                x: (parent.width - 15px) / 2;
+                                                y: (parent.height - 15px) / 2;
+                                            }
+                                        }
+                                    }
+                                    Text {
+                                        text: "未找到匹配的会话、项目或分组";
+                                        font-size: 12px;
+                                        font-weight: 500;
+                                        color: Palette.dim;
+                                        horizontal-alignment: center;
+                                    }
+                                    HorizontalLayout {
+                                        alignment: center;
+                                        Rectangle {
+                                            width: 96px;
+                                            height: 24px;
+                                            Text {
+                                                text: "清除搜索条件";
+                                                font-size: 11px;
+                                                font-weight: 500;
+                                                color: Palette.accent;
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
+                                            }
+                                            TouchArea {
+                                                clicked => { root.clear-search() }
+                                                mouse-cursor: pointer;
+                                            }
+                                        }
+                                    }
+                                }
+                                sidebar-nav := Flickable {
+                                    width: parent.width - 10px;
+                                    height: parent.height;
+                                    viewport-width: self.width;
+                                    viewport-height: parent.nav-viewport-height;
+                                    VerticalLayout {
+                                        width: sidebar-nav.width;
+                                        for item[index] in root.navigation : SidebarRow {
+                                            item: item;
+                                            row-index: index;
+                                            selected => { root.select-navigation(index) }
+                                            quick-create => { root.quick-create(index) }
+                                        }
+                                    }
+                                }
+                                if self.nav-viewport-height > self.height : Rectangle {
+                                    x: parent.width + 3px;
+                                    y: Math.max(0px, Math.min(parent.height - self.height,
+                                        -sidebar-nav.viewport-y * (parent.height - self.height)
+                                            / (parent.nav-viewport-height - parent.height)));
+                                    width: 4px;
+                                    height: parent.nav-thumb-height;
+                                    border-radius: 999px;
+                                    background: #E7E4DC;
+                                }
+                            }
+                        }
+                    }
+                    Rectangle {
+                        height: 42px;
+                        Rectangle {
+                            y: 8px;
+                            height: 0.67px;
+                            width: parent.width;
+                            background: Palette.hairline;
+                        }
+                        HorizontalLayout {
+                            padding-top: 14px; padding-bottom: 6px; padding-left: 10px; padding-right: 10px;
+                            spacing: 10px;
+                            alignment: start;
+                            Image {
+                                source: Icons.gear;
+                                width: 16px;
+                                height: 16px;
+                                y: (parent.height - 16px) / 2;
+                            }
+                            Text {
+                                text: "设置";
+                                font-size: 13.5px;
+                                font-weight: 500;
+                                color: Palette.strong;
+                                vertical-alignment: center;
+                            }
+                            Rectangle { horizontal-stretch: 1; }
+                            StatusDot {
+                                tone: root.daemon-state == "后台服务已连接" || root.daemon-state == "后台服务已自动启动" ? "success" : "warning";
+                                y: (parent.height - 7px) / 2 + 4px;
+                            }
+                        }
+                        TouchArea {
+                            clicked => {
+                                root.settings-searched("");
+                                root.settings-open = true;
+                            }
+                            mouse-cursor: pointer;
+                        }
+                    }
+                }
+                Rectangle {
+                    y: 46px;
+                    height: 0.67px;
+                    width: parent.width;
+                    background: Palette.border;
+                }
+            }
+            Rectangle {
+                visible: root.sidebar-visible;
+                width: root.sidebar-visible ? 1px : 0px;
+                background: sbt.has-hover || sbt.pressed ? Palette.accent : Palette.border;
+                z: 10;
+                sbt := TouchArea {
+                    x: -3px;
+                    width: 7px;
+                    moved => {
+                        root.sidebar-width = Math.max(196px, Math.min(420px,
+                            root.sidebar-width + (self.mouse-x - self.pressed-x)));
+                    }
+                    mouse-cursor: ew-resize;
+                }
+                Rectangle {
+                    x: -8px;
+                    y: 10px;
+                    width: 24px;
+                    height: 24px;
+                    border-radius: 6px;
+                    background: white;
+                    border-width: 0.67px;
+                    border-color: #E5E2DA;
+                    drop-shadow-color: Palette.shadow;
+                    drop-shadow-offset-y: 1px;
+                    z: 10;
+                    Image {
+                        source: Icons.panel-left;
+                        width: 14px;
+                        height: 14px;
+                        x: 5px;
+                        y: 5px;
+                    }
+                    TouchArea {
+                        clicked => { root.sidebar-visible = false }
+                        mouse-cursor: pointer;
+                    }
+                }
+            }
+}
+

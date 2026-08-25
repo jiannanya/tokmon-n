@@ -1,0 +1,356 @@
+import { Palette, Icons } from "tokmon-theme.slint";
+
+component StarterCard inherits Rectangle {
+    in property <image> icon;
+    in property <color> icon-background;
+    in property <color> icon-border;
+    in property <color> accent;
+    in property <string> title;
+    in property <string> detail;
+    callback chosen();
+
+    height: 126px;
+    border-radius: 16px;
+    background: touch.has-hover ? #FEFCFB : Palette.white;
+    border-width: 0.67px;
+    border-color: touch.has-hover ? root.accent : #E8E6DF;
+    drop-shadow-color: touch.has-hover ? rgba(0, 0, 0, 0.10) : rgba(0, 0, 0, 0.025);
+    drop-shadow-offset-y: touch.has-hover ? 6px : 1px;
+    drop-shadow-blur: touch.has-hover ? 12px : 2px;
+
+    Rectangle {
+        x: 16px;
+        y: 16px;
+        width: 32px;
+        height: 32px;
+        border-radius: 11px;
+        background: root.icon-background;
+        border-width: 0.67px;
+        border-color: root.icon-border;
+        Image {
+            x: 6px;
+            y: 6px;
+            width: 20px;
+            height: 20px;
+            source: root.icon;
+            image-fit: contain;
+        }
+    }
+    Text {
+        x: 16px;
+        y: 75px;
+        width: parent.width - 32px;
+        height: 34px;
+        text: root.title;
+        font-size: 12.5px;
+        font-weight: 650;
+        color: touch.has-hover ? root.accent : Palette.ink;
+        vertical-alignment: bottom;
+        wrap: word-wrap;
+        overflow: elide;
+    }
+    Text {
+        x: 16px;
+        y: 109px;
+        width: parent.width - 32px;
+        height: 16px;
+        text: root.detail;
+        font-size: 10.5px;
+        color: Palette.faint;
+        overflow: elide;
+        vertical-alignment: center;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.chosen(); }
+    }
+}
+
+export component SessionEmptyState inherits Rectangle {
+    in property <string> workspace-project;
+    in property <string> workspace-path;
+    callback change-workspace();
+    callback starter-chosen(string);
+
+    background: transparent;
+    property <bool> wide-cards: root.width >= 880px;
+
+    content := Rectangle {
+        x: (parent.width - self.width) / 2;
+        // At the desktop's compact center-pane width the environment card
+        // occupies the upper-right corner, so the two-row starter grid starts
+        // slightly lower to keep the question fully readable.
+        y: Math.max(24px, (parent.height - 158px - self.height) / 2) + (root.wide-cards ? 0px : 72px);
+        width: Math.min(840px, parent.width - 48px);
+        height: root.wide-cards ? 296px : 436px;
+        background: transparent;
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: 0px;
+            width: 64px;
+            height: 64px;
+            border-radius: 24px;
+            background: @linear-gradient(180deg, #FEF8F4 0%, #FBF1E7 100%);
+            border-width: 0.67px;
+            border-color: #F5D9C3;
+            drop-shadow-color: rgba(200, 106, 40, 0.10);
+            drop-shadow-offset-y: 2px;
+            drop-shadow-blur: 8px;
+            Image {
+                x: 14px;
+                y: 14px;
+                width: 36px;
+                height: 36px;
+                source: Icons.logo;
+                image-fit: contain;
+            }
+        }
+
+        heading-row := HorizontalLayout {
+            x: 0px;
+            y: 84px;
+            width: parent.width;
+            height: 36px;
+            alignment: center;
+            spacing: 6px;
+            Text {
+                text: "你想让我们在";
+                font-size: 23px;
+                font-weight: 650;
+                letter-spacing: -0.35px;
+                color: Palette.ink;
+                vertical-alignment: center;
+            }
+            workspace-button := Rectangle {
+                width: Math.min(240px, workspace-heading.preferred-width + 8px);
+                height: 34px;
+                horizontal-stretch: 0;
+                background: transparent;
+                workspace-heading := Text {
+                    x: 4px;
+                    y: 0px;
+                    width: parent.width - 8px;
+                    height: 31px;
+                    text: root.workspace-project == "" ? "当前工作空间" : root.workspace-project;
+                    font-size: 23px;
+                    font-weight: 650;
+                    letter-spacing: -0.35px;
+                    color: workspace-touch.has-hover ? Palette.accent : Palette.ink;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                HorizontalLayout {
+                    x: 3px;
+                    y: 32px;
+                    width: parent.width - 6px;
+                    height: 2px;
+                    spacing: 3px;
+                    for dash in [0, 1, 2, 3, 4, 5, 6, 7] : Rectangle {
+                        height: 2px;
+                        border-radius: 1px;
+                        background: workspace-touch.has-hover ? Palette.accent : Palette.faint;
+                    }
+                }
+                workspace-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.change-workspace(); }
+                }
+            }
+            Text {
+                text: "中构建什么？";
+                font-size: 23px;
+                font-weight: 650;
+                letter-spacing: -0.35px;
+                color: Palette.ink;
+                vertical-alignment: center;
+            }
+        }
+
+        subtitle-row := HorizontalLayout {
+            x: 0px;
+            y: 126px;
+            width: parent.width;
+            height: 24px;
+            alignment: center;
+            spacing: 6px;
+            Text {
+                text: "智能体已就绪，当前关联工作空间";
+                font-size: 12.5px;
+                color: Palette.dim;
+                vertical-alignment: center;
+            }
+            path-chip := Rectangle {
+                width: Math.min(300px, path-label.preferred-width + 14px);
+                height: 22px;
+                horizontal-stretch: 0;
+                border-radius: 6px;
+                background: #FEF8F4;
+                border-width: 0.67px;
+                border-color: #F5D9C3;
+                path-label := Text {
+                    x: 7px;
+                    width: parent.width - 14px;
+                    height: parent.height;
+                    text: root.workspace-path;
+                    font-family: "Consolas";
+                    font-size: 11px;
+                    font-weight: 600;
+                    color: Palette.accent;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+        }
+
+        if root.wide-cards : HorizontalLayout {
+            x: 0px;
+            y: 170px;
+            width: parent.width;
+            height: 126px;
+            spacing: 14px;
+            StarterCard {
+                icon: @image-url("../assets/figma/starter-explore.svg");
+                icon-background: #F0F9FF;
+                icon-border: #E0F2FE;
+                accent: #0EA5E9;
+                title: "探索并理解代码";
+                detail: "梳理架构、依赖与核心逻辑";
+                chosen => { root.starter-chosen("请全面分析并梳理当前工作空间（" + (root.workspace-project == "" ? "当前工作空间" : root.workspace-project) + "）的代码架构、模块依赖与核心实现逻辑。"); }
+            }
+            StarterCard {
+                icon: @image-url("../assets/figma/starter-build.svg");
+                icon-background: #FAF5FF;
+                icon-border: #F3E8FF;
+                accent: #A855F7;
+                title: "构建新功能、应用或工具";
+                detail: "设计方案并编写实现代码";
+                chosen => { root.starter-chosen("我想为当前工作空间（" + (root.workspace-project == "" ? "当前工作空间" : root.workspace-project) + "）构建一个新功能，请帮我规划设计方案并编写实现代码。"); }
+            }
+            StarterCard {
+                icon: @image-url("../assets/figma/starter-review.svg");
+                icon-background: #ECFDF5;
+                icon-border: #D1FAE5;
+                accent: #10B981;
+                title: "审查代码并提出修改建议";
+                detail: "排查隐患与提升代码规范";
+                chosen => { root.starter-chosen("请对当前项目代码进行全面审查，指出潜在质量风险、规范问题并提出优化重构建议。"); }
+            }
+            StarterCard {
+                icon: @image-url("../assets/figma/starter-fix.svg");
+                icon-background: #FFF7ED;
+                icon-border: #FFEDD5;
+                accent: #C86A28;
+                title: "修复问题和失败";
+                detail: "诊断报错堆栈并修复异常";
+                chosen => { root.starter-chosen("请帮我诊断当前工作空间中的报错和运行异常，定位原因并提供修复补丁。"); }
+            }
+        }
+
+        if !root.wide-cards : VerticalLayout {
+            x: 0px;
+            y: 170px;
+            width: parent.width;
+            height: 266px;
+            spacing: 14px;
+            HorizontalLayout {
+                height: 126px;
+                spacing: 14px;
+                StarterCard {
+                    icon: @image-url("../assets/figma/starter-explore.svg");
+                    icon-background: #F0F9FF;
+                    icon-border: #E0F2FE;
+                    accent: #0EA5E9;
+                    title: "探索并理解代码";
+                    detail: "梳理架构、依赖与核心逻辑";
+                    chosen => { root.starter-chosen("请全面分析并梳理当前工作空间（" + (root.workspace-project == "" ? "当前工作空间" : root.workspace-project) + "）的代码架构、模块依赖与核心实现逻辑。"); }
+                }
+                StarterCard {
+                    icon: @image-url("../assets/figma/starter-build.svg");
+                    icon-background: #FAF5FF;
+                    icon-border: #F3E8FF;
+                    accent: #A855F7;
+                    title: "构建新功能、应用或工具";
+                    detail: "设计方案并编写实现代码";
+                    chosen => { root.starter-chosen("我想为当前工作空间（" + (root.workspace-project == "" ? "当前工作空间" : root.workspace-project) + "）构建一个新功能，请帮我规划设计方案并编写实现代码。"); }
+                }
+            }
+            HorizontalLayout {
+                height: 126px;
+                spacing: 14px;
+                StarterCard {
+                    icon: @image-url("../assets/figma/starter-review.svg");
+                    icon-background: #ECFDF5;
+                    icon-border: #D1FAE5;
+                    accent: #10B981;
+                    title: "审查代码并提出修改建议";
+                    detail: "排查隐患与提升代码规范";
+                    chosen => { root.starter-chosen("请对当前项目代码进行全面审查，指出潜在质量风险、规范问题并提出优化重构建议。"); }
+                }
+                StarterCard {
+                    icon: @image-url("../assets/figma/starter-fix.svg");
+                    icon-background: #FFF7ED;
+                    icon-border: #FFEDD5;
+                    accent: #C86A28;
+                    title: "修复问题和失败";
+                    detail: "诊断报错堆栈并修复异常";
+                    chosen => { root.starter-chosen("请帮我诊断当前工作空间中的报错和运行异常，定位原因并提供修复补丁。"); }
+                }
+            }
+        }
+    }
+}
+
+export component ComposerContextTab inherits Rectangle {
+    in property <string> workspace-project;
+    in property <string> workspace-path;
+    in property <string> workspace-branch;
+    in property <bool> has-git;
+    in property <bool> can-change-workspace;
+    callback change-workspace();
+
+    width: Math.min(430px, Math.max(238px, project-label.preferred-width + branch-label.preferred-width + 116px));
+    height: 30px;
+    horizontal-stretch: 0;
+    border-radius: 11px;
+    background: tab-touch.has-hover && root.can-change-workspace ? #EDEBE4 : #F4F3EF;
+    border-width: 0.67px;
+    border-color: Palette.border;
+    drop-shadow-color: rgba(0, 0, 0, 0.025);
+    drop-shadow-offset-y: 1px;
+    drop-shadow-blur: 2px;
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 8px;
+        Image { source: Icons.folder-open; width: 14px; height: 14px; y: 8px; }
+        project-label := Text {
+            text: root.workspace-project == "" ? "当前项目" : root.workspace-project;
+            font-size: 11.5px;
+            font-weight: 650;
+            color: Palette.ink;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text { text: "·"; font-size: 11.5px; color: Palette.faint; vertical-alignment: center; }
+        Image { source: Icons.terminal; width: 14px; height: 14px; y: 8px; }
+        Text { text: "本地"; font-size: 11.5px; color: Palette.mid; vertical-alignment: center; }
+        Text { text: "·"; font-size: 11.5px; color: Palette.faint; vertical-alignment: center; }
+        Image { source: Icons.git-branch; width: 14px; height: 14px; y: 8px; }
+        branch-label := Text {
+            text: root.has-git ? root.workspace-branch : "无 Git";
+            font-family: "Consolas";
+            font-size: 11px;
+            font-weight: 600;
+            color: root.has-git ? Palette.accent : Palette.faint;
+            vertical-alignment: center;
+        }
+    }
+    tab-touch := TouchArea {
+        enabled: root.can-change-workspace;
+        mouse-cursor: pointer;
+        clicked => { root.change-workspace(); }
+    }
+}

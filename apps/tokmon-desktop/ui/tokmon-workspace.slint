@@ -1,0 +1,1063 @@
+import { LineEdit, ScrollView } from "std-widgets.slint";
+import { ModelChoice, TimelineItem, SlashCommandItem, ProjectFile, GanttSegment, TraceEvent } from "tokmon-models.slint";
+import { Palette, Icons } from "tokmon-theme.slint";
+import { ToolIcon, MenuOption, WorkflowStepRow } from "tokmon-components.slint";
+import { TrajectoryPanel } from "tokmon-trajectory.slint";
+import { EnvironmentPanel } from "tokmon-environment-panel.slint";
+import { SessionEmptyState, ComposerContextTab } from "tokmon-session-initial.slint";
+
+export component WorkspacePanel inherits Rectangle {
+    in property <[TimelineItem]> conversation-workflow;
+    in property <[SlashCommandItem]> slash-commands;
+    in property <[ModelChoice]> model-choices;
+    in property <[TraceEvent]> trace-events;
+    in property <[GanttSegment]> gantt;
+    in property <[string]> trace-ticks;
+    in property <[ProjectFile]> project-files;
+    in property <[ProjectFile]> workspace-presets;
+
+    in-out property <string> session-title;
+    in-out property <string> model-name;
+    in-out property <string> access-mode;
+    in-out property <string> effort;
+    in-out property <string> composer-text;
+    in property <string> last-message;
+    in property <string> assistant-text;
+    in property <string> chat-time;
+    in property <string> trace-duration;
+    in property <string> workflow-duration;
+    in property <string> trace-provider;
+    in property <string> trace-model;
+    in property <string> trace-result;
+    in property <string> trace-total-label;
+    in property <string> trace-prompt-label;
+    in property <string> trace-completion-label;
+    in-out property <string> trace-search;
+    in-out property <string> selected-attachment;
+    in property <string> setting-command-approval;
+    in-out property <string> setting-main-model;
+    in property <string> setting-workspace;
+    in property <string> workspace-group;
+    in property <string> workspace-project;
+    in-out property <string> workspace-short-path;
+    in property <string> workspace-branch;
+
+    in property <int> workspace-indexed-files;
+    in property <bool> workspace-has-git;
+    in property <bool> workspace-locked;
+    in property <bool> chat-empty;
+    in-out property <int> trace-selected-num;
+    in-out property <int> trace-page;
+    in-out property <int> trace-page-size;
+    in property <int> trace-total;
+    in property <int> trace-pages;
+    in property <int> trace-turns;
+    in property <int> trace-calls;
+    in property <int> trace-input-tokens;
+    in property <int> trace-output-tokens;
+    in-out property <int> request-tab;
+    in-out property <int> trace-filter-index;
+    in property <int> workflow-explored;
+    in property <int> workflow-ran;
+    in property <int> workflow-done;
+
+    in-out property <bool> sidebar-visible;
+    in property <bool> code-visible;
+    in-out property <bool> trajectory-selected;
+    in-out property <bool> conversation-workflow-expanded;
+    in-out property <bool> title-editing;
+    in-out property <bool> access-menu-open;
+    in-out property <bool> model-menu-open;
+    in-out property <bool> effort-menu-open;
+    in-out property <bool> slash-menu-visible;
+    in-out property <bool> context-popover-open;
+    in-out property <bool> context-button-hover;
+    in-out property <bool> context-card-hover;
+    in-out property <bool> context-close-pending;
+    in-out property <bool> trace-filter-open;
+
+    callback send-message(string);
+    callback slash-query-changed(string);
+    callback rename-session(string);
+    callback choose-attachment(bool) -> string;
+    callback refresh-trace();
+    callback export-trace();
+    callback drag-window();
+    callback minimize-window();
+    callback toggle-maximize-window();
+    callback close-window();
+    callback set-code-panel-visible(bool);
+    callback open-change-workspace();
+    callback switch-workspace(string);
+    callback select-project-file(int);
+    callback copy-text(string);
+    callback refresh-workspace();
+    callback open-workspace-settings();
+    callback return-focus();
+
+    pure function page-range-label() -> string {
+        root.trace-total == 0 ? "显示 0 条，共 0 条"
+            : "显示 " + ((root.trace-page - 1) * root.trace-page-size + 1) + "-" + Math.min(root.trace-total, root.trace-page * root.trace-page-size) + " 条，共 " + root.trace-total + " 条"
+    }
+
+    pure function prompt-share() -> int {
+        root.trace-input-tokens + root.trace-output-tokens == 0 ? 0 :
+            root.trace-input-tokens * 100 / (root.trace-input-tokens + root.trace-output-tokens)
+    }
+
+    pure function completion-share() -> int {
+        root.trace-input-tokens + root.trace-output-tokens == 0 ? 0 : 100 - root.prompt-share()
+    }
+
+    function close-click-popups() {
+        root.access-menu-open = false;
+        root.model-menu-open = false;
+        root.effort-menu-open = false;
+        root.slash-menu-visible = false;
+    }
+
+    function close-composer-popups() {
+        root.close-click-popups();
+        root.context-popover-open = false;
+        root.context-button-hover = false;
+        root.context-card-hover = false;
+        root.context-close-pending = false;
+    }
+
+                min-width: 480px;
+                horizontal-stretch: 1;
+                background: Palette.surface;
+                VerticalLayout {
+                    Rectangle {
+                        height: 46px;
+                        background: rgba(250, 250, 249, 0.94);
+                        TouchArea {
+                            moved => { root.drag-window() }
+                            clicked => { root.return-focus(); }
+                        }
+                        HorizontalLayout {
+                            padding-left: root.sidebar-visible ? 16px : 40px;
+                            padding-right: 16px;
+                            alignment: space-between;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: start;
+                            if !root.title-editing : Text {
+                                text: root.session-title;
+                                font-size: 14.5px;
+                                font-weight: 600;
+                                letter-spacing: -0.25px;
+                                color: Palette.ink;
+                                overflow: elide;
+                                vertical-alignment: center;
+                            }
+                            if root.title-editing : LineEdit {
+                                width: 240px;
+                                text <=> root.session-title;
+                                font-size: 14px;
+                                accepted => {                                    root.rename-session(root.session-title);                                     root.title-editing = false;                                     root.return-focus();                                }
+                            }
+                            ToolIcon {
+                                source: Icons.pencil;
+                                icon-size: 14px;
+                                clicked => { root.title-editing = !root.title-editing }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: 4px;
+                            alignment: end;
+                            ToolIcon {
+                                source: Icons.panel-right;
+                                icon-size: 16px;
+                                clicked => {
+                                    root.close-composer-popups();
+                                    root.set-code-panel-visible(!root.code-visible);
+                                }
+                            }
+                            if !root.code-visible : HorizontalLayout {
+                                spacing: 0px;
+                                ToolIcon { source: Icons.minus; icon-size: 14px; clicked => { root.minimize-window() } }
+                                ToolIcon { source: Icons.stop; icon-size: 12px; clicked => { root.toggle-maximize-window() } }
+                                ToolIcon { source: Icons.close; icon-size: 14px; clicked => { root.close-window() } }
+                            }
+                        }
+                        }
+                        if !root.sidebar-visible : Rectangle {
+                            x: 6px;
+                            y: 10px;
+                            width: 24px;
+                            height: 24px;
+                            border-radius: 6px;
+                            background: #FEF8F4;
+                            border-width: 0.67px;
+                            border-color: Palette.accent-border;
+                            drop-shadow-color: Palette.shadow;
+                            drop-shadow-offset-y: 1px;
+                            Image {
+                                source: Icons.panel-left;
+                                width: 14px;
+                                height: 14px;
+                                x: 5px;
+                                y: 5px;
+                            }
+                            TouchArea {
+                                clicked => { root.sidebar-visible = true }
+                                mouse-cursor: pointer;
+                            }
+                        }
+                    }
+                    Rectangle {
+                        height: 38px;
+                        background: Palette.tabbar;
+                        HorizontalLayout {
+                            padding-left: 24px;
+                            spacing: 24px;
+                            alignment: start;
+                            Rectangle {
+                                width: t1.width + 2px;
+                                horizontal-stretch: 0;
+                                t1 := Text {
+                                    y: (parent.height - self.preferred-height) / 2;
+                                    text: "对话";
+                                    font-size: 13.5px;
+                                    font-weight: root.trajectory-selected ? 500 : 700;
+                                    color: root.trajectory-selected ? Palette.dim : Palette.accent-text;
+                                }
+                                Rectangle {
+                                    y: parent.height - 2px;
+                                    height: 2px;
+                                    width: parent.width;
+                                    background: root.trajectory-selected ? transparent : Palette.accent;
+                                }
+                                TouchArea {
+                                    clicked => { root.trajectory-selected = false; root.return-focus(); }
+                                    mouse-cursor: pointer;
+                                }
+                            }
+                            Rectangle {
+                                width: t2.width + 2px;
+                                horizontal-stretch: 0;
+                                t2 := Text {
+                                    y: (parent.height - self.preferred-height) / 2;
+                                    text: "轨迹";
+                                    font-size: 13.5px;
+                                    font-weight: root.trajectory-selected ? 700 : 500;
+                                    color: root.trajectory-selected ? Palette.accent-text : Palette.dim;
+                                }
+                                Rectangle {
+                                    y: parent.height - 2px;
+                                    height: 2px;
+                                    width: parent.width;
+                                    background: root.trajectory-selected ? Palette.accent : transparent;
+                                }
+                                TouchArea {
+                                    clicked => { root.trajectory-selected = true; root.return-focus(); }
+                                    mouse-cursor: pointer;
+                                }
+                            }
+                        }
+                        Rectangle {
+                            y: parent.height - 0.67px;
+                            height: 0.67px;
+                            width: parent.width;
+                            background: Palette.tab-line;
+                        }
+                    }
+                    Rectangle {
+                        vertical-stretch: 1;
+                        clip: true;
+                        if !root.trajectory-selected : Rectangle {
+                            width: parent.width;
+                            height: parent.height;
+                            if root.chat-empty : SessionEmptyState {
+                                width: parent.width;
+                                height: parent.height;
+                                workspace-project: root.workspace-project;
+                                workspace-path: root.workspace-short-path == "" ? root.setting-workspace : root.workspace-short-path;
+                                change-workspace => { root.open-change-workspace(); }
+                                starter-chosen(prompt) => {
+                                    root.composer-text = prompt;
+                                    composer-edit.focus();
+                                }
+                            }
+                            if !root.chat-empty : ScrollView {
+                                VerticalLayout {
+                                    spacing: 24px;
+                                    padding-top: 20px;
+                                    padding-bottom: 160px;
+                                    padding-left: 24px;
+                                    padding-right: 24px;
+                                    if root.chat-time != "" : Text {
+                                        text: root.chat-time;
+                                        font-size: 11.5px;
+                                        font-weight: 500;
+                                        color: Palette.faint;
+                                        horizontal-alignment: center;
+                                    }
+                                    if root.last-message != "" : HorizontalLayout {
+                                        alignment: end;
+                                        spacing: 10px;
+                                        Rectangle {
+                                            max-width: 560px;
+                                            border-radius: 16px;
+                                            background: Palette.bubble;
+                                            border-width: 0.67px;
+                                            border-color: Palette.accent-border;
+                                            drop-shadow-color: Palette.shadow;
+                                            drop-shadow-offset-y: 1px;
+                                            drop-shadow-blur: 0px;
+                                            VerticalLayout {
+                                                padding: 14px;
+                                                spacing: 6px;
+                                                Text {
+                                                    text: root.last-message;
+                                                    font-size: 13px;
+                                                    font-weight: 500;
+                                                    color: Palette.ink;
+                                                    wrap: word-wrap;
+                                                }
+                                            }
+                                        }
+                                        Rectangle {
+                                            width: 32px;
+                                            height: 32px;
+                                            border-radius: 999px;
+                                            background: Palette.accent-bg;
+                                            border-width: 0.67px;
+                                            border-color: Palette.accent-border;
+                                            Image {
+                                                source: Icons.person-amber;
+                                                width: 16px;
+                                                height: 16px;
+                                                x: (parent.width - 16px) / 2;
+                                                y: (parent.height - 16px) / 2;
+                                            }
+                                        }
+                                    }
+                                    if root.assistant-text != "" : HorizontalLayout {
+                                        alignment: start;
+                                        spacing: 12px;
+                                        Rectangle {
+                                            width: 32px;
+                                            height: 32px;
+                                            border-radius: 999px;
+                                            background: Palette.accent-bg;
+                                            border-width: 0.67px;
+                                            border-color: Palette.accent-border;
+                                            drop-shadow-color: Palette.shadow;
+                                            drop-shadow-offset-y: 1px;
+                                            drop-shadow-blur: 0px;
+                                            Image {
+                                                source: Icons.logo;
+                                                width: 16px;
+                                                height: 16px;
+                                                x: (parent.width - 16px) / 2;
+                                                y: (parent.height - 16px) / 2;
+                                            }
+                                        }
+                                        Text {
+                                            text: root.assistant-text;
+                                            font-size: 13.5px;
+                                            color: Palette.body;
+                                            wrap: word-wrap;
+                                            vertical-alignment: top;
+                                        }
+                                    }
+                                    if root.conversation-workflow.length > 0 : Rectangle {
+                                        border-radius: 12px;
+                                        background: Palette.white;
+                                        border-width: 0.67px;
+                                        border-color: Palette.border;
+                                        drop-shadow-color: Palette.shadow;
+                                        drop-shadow-offset-y: 1px;
+                                        drop-shadow-blur: 0px;
+                                        VerticalLayout {
+                                            padding: 16px;
+                                            HorizontalLayout {
+                                                padding-bottom: 12px;
+                                                alignment: space-between;
+                                                HorizontalLayout {
+                                                    spacing: 24px;
+                                                    alignment: start;
+                                                    HorizontalLayout {
+                                                        spacing: 6px;
+                                                        Text { text: "🕒"; font-size: 12px; vertical-alignment: center; }
+                                                        Text {
+                                                            text: "已工作 ";
+                                                            font-size: 12px;
+                                                            font-weight: 500;
+                                                            color: Palette.dim;
+                                                            vertical-alignment: center;
+                                                        }
+                                                        Text {
+                                                            text: root.workflow-duration;
+                                                            font-size: 12px;
+                                                            font-weight: 600;
+                                                            color: Palette.ink;
+                                                            vertical-alignment: center;
+                                                        }
+                                                    }
+                                                    HorizontalLayout {
+                                                        spacing: 6px;
+                                                        Image { source: Icons.search; width: 14px; height: 14px; y: 2px; }
+                                                        Text { text: "已探索 " + root.workflow-explored + " 项"; font-size: 12px; font-weight: 500; color: Palette.dim; vertical-alignment: center; }
+                                                    }
+                                                    HorizontalLayout {
+                                                        spacing: 6px;
+                                                        Image { source: Icons.terminal; width: 14px; height: 14px; y: 2px; }
+                                                        Text { text: "已运行 " + root.workflow-ran + " 条命令"; font-size: 12px; font-weight: 500; color: Palette.dim; vertical-alignment: center; }
+                                                    }
+                                                    HorizontalLayout {
+                                                        spacing: 6px;
+                                                        Image { source: Icons.check-circle-green; width: 14px; height: 14px; y: 2px; }
+                                                        Text { text: "完成任务 " + root.workflow-done + "/1"; font-size: 12px; font-weight: 500; color: Palette.dim; vertical-alignment: center; }
+                                                    }
+                                                }
+                                                HorizontalLayout {
+                                                    spacing: 4px;
+                                                    alignment: end;
+                                                    Text {
+                                                        text: root.conversation-workflow-expanded ? "收起步骤" : "展开步骤";
+                                                        font-size: 11.5px;
+                                                        font-weight: 500;
+                                                        color: Palette.dim;
+                                                        vertical-alignment: center;
+                                                    }
+                                                    ToolIcon {
+                                                        source: root.conversation-workflow-expanded ? Icons.chev-down : Icons.chev-right-faint;
+                                                        icon-size: 14px;
+                                                        clicked => { root.conversation-workflow-expanded = !root.conversation-workflow-expanded }
+                                                    }
+                                                }
+                                            }
+                                            if root.conversation-workflow-expanded : Rectangle {
+                                                VerticalLayout {
+                                                    for step[index] in root.conversation-workflow : WorkflowStepRow {
+                                                        item: step;
+                                                    }
+                                                }
+                                                Rectangle {
+                                                    x: 58.5px;
+                                                    y: 18px;
+                                                    width: 1px;
+                                                    height: parent.height - 26px;
+                                                    background: Palette.border;
+                                                    z: -1;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            composer := Rectangle {
+                                y: parent.height - 164px;
+                                width: parent.width;
+                                height: 164px;
+                                background: @linear-gradient(0deg, rgba(250, 250, 249, 1) 0%, rgba(250, 250, 249, 0.92) 55%, rgba(250, 250, 249, 0) 100%);
+                                HorizontalLayout {
+                                    alignment: center;
+                                    Rectangle {
+                                        width: Math.min(760px, parent.width - 48px);
+                                        height: 130px;
+                                        vertical-stretch: 0;
+                                        y: 18px;
+                                        VerticalLayout {
+                                            spacing: 0px;
+                                            ComposerContextTab {
+                                                z: 2;
+                                                workspace-project: root.workspace-project;
+                                                workspace-path: root.workspace-short-path == "" ? root.setting-workspace : root.workspace-short-path;
+                                                workspace-branch: root.workspace-branch;
+                                                has-git: root.workspace-has-git;
+                                                can-change-workspace: root.chat-empty && !root.workspace-locked;
+                                                change-workspace => { root.open-change-workspace(); }
+                                            }
+                                            Rectangle {
+                                                border-radius: 16px;
+                                                background: Palette.white;
+                                                border-width: 0.67px;
+                                                border-color: Palette.border;
+                                                drop-shadow-color: rgba(0, 0, 0, 0.1);
+                                                drop-shadow-offset-y: 8px;
+                                                drop-shadow-offset-x: 0px;
+                                                drop-shadow-blur: 14px;
+                                                VerticalLayout {
+                                                    padding: 12px;
+                                                    Rectangle {
+                                                        height: 34px;
+                                                        composer-edit := TextInput {
+                                                            width: parent.width;
+                                                            height: parent.height;
+                                                            vertical-alignment: center;
+                                                            text <=> root.composer-text;
+                                                            font-size: 13.5px;
+                                                            color: Palette.body;
+                                                            accepted => {
+                                                                if root.composer-text != "" {
+                                                                    root.send-message(root.composer-text);
+                                                                    root.composer-text = "";
+                                                                    root.return-focus();
+                                                                }
+                                                            }
+                                                        }
+                                                        if root.composer-text == "" : Text {
+                                                            y: 8px;
+                                                            text: root.chat-empty ? "随心输入需求，或点击上方卡片快速开始..." : "提出后续修改要求";
+                                                            font-size: 13.5px;
+                                                            color: Palette.faint;
+                                                            vertical-alignment: center;
+                                                        }
+                                                    }
+
+                                            HorizontalLayout {
+                                                padding-top: 4px;
+                                                alignment: space-between;
+                                                HorizontalLayout {
+                                                    spacing: 6px;
+                                                    alignment: start;
+                                                    ToolIcon {
+                                                        source: Icons.doc;
+                                                        icon-size: 16px;
+                                                        clicked => {
+                                                            root.close-composer-popups();
+                                                            root.selected-attachment = root.choose-attachment(false);
+                                                            if root.selected-attachment != "" {
+                                                                root.composer-text = root.composer-text + " " + root.selected-attachment;
+                                                            }
+                                                        }
+                                                    }
+                                                    access-button := Rectangle {
+                                                        width: 104px;
+                                                        height: 28px;
+                                                        border-radius: 8px;
+                                                        horizontal-stretch: 0;
+                                                        HorizontalLayout {
+                                                            padding-left: 8px;
+                                                            padding-right: 8px;
+                                                            spacing: 6px;
+                                                            Image { source: Icons.shield; width: 14px; height: 14px; y: (parent.height - 14px) / 2; }
+                                                            Text { text: root.access-mode; font-size: 12.5px; font-weight: 500; color: Palette.amber; vertical-alignment: center; }
+                                                            Image { source: Icons.chev-down-faint; width: 10px; height: 6px; y: (parent.height - 6px) / 2; }
+                                                        }
+                                                        TouchArea {
+                                                            clicked => {
+                                                                if root.access-menu-open {
+                                                                    root.access-menu-open = false;
+                                                                } else {
+                                                                    root.close-composer-popups();
+                                                                    root.access-menu-open = true;
+                                                                }
+                                                            }
+                                                            mouse-cursor: pointer;
+                                                        }
+                                                    }
+                                                }
+                                                HorizontalLayout {
+                                                    spacing: 6px;
+                                                    alignment: end;
+                                                    context-button := Rectangle {
+                                                        width: 28px;
+                                                        height: 28px;
+                                                        border-radius: 8px;
+                                                        background: cta.has-hover ? Palette.sep : transparent;
+                                                        Image {
+                                                            source: Icons.spinner;
+                                                            width: 15px;
+                                                            height: 15px;
+                                                            x: (parent.width - 15px) / 2;
+                                                            y: (parent.height - 15px) / 2;
+                                                        }
+                                                        cta := TouchArea {
+                                                            changed has-hover => {
+                                                                root.context-button-hover = self.has-hover;
+                                                                if self.has-hover {
+                                                                    root.close-click-popups();
+                                                                    root.context-close-pending = false;
+                                                                    root.context-popover-open = true;
+                                                                } else if !root.context-card-hover {
+                                                                    root.context-close-pending = true;
+                                                                }
+                                                            }
+                                                            clicked => {
+                                                                root.close-click-popups();
+                                                                root.context-close-pending = false;
+                                                                root.context-popover-open = true;
+                                                            }
+                                                            mouse-cursor: pointer;
+                                                        }
+                                                    }
+                                                    model-button := Rectangle {
+                                                        height: 28px;
+                                                        border-radius: 8px;
+                                                        horizontal-stretch: 0;
+                                                        HorizontalLayout {
+                                                            padding-left: 8px;
+                                                            padding-right: 8px;
+                                                            spacing: 6px;
+                                                            Text {
+                                                                text: root.model-name;
+                                                                font-family: "Consolas";
+                                                                font-size: 12px;
+                                                                font-weight: 500;
+                                                                color: Palette.strong;
+                                                                vertical-alignment: center;
+                                                            }
+                                                            Image { source: Icons.chev-down-faint; width: 10px; height: 6px; y: (parent.height - 6px) / 2; }
+                                                        }
+                                                        TouchArea {
+                                                            clicked => {
+                                                                if root.model-menu-open {
+                                                                    root.model-menu-open = false;
+                                                                } else {
+                                                                    root.close-composer-popups();
+                                                                    root.model-menu-open = true;
+                                                                }
+                                                            }
+                                                            mouse-cursor: pointer;
+                                                        }
+                                                    }
+                                                    effort-button := Rectangle {
+                                                        height: 28px;
+                                                        border-radius: 8px;
+                                                        horizontal-stretch: 0;
+                                                        HorizontalLayout {
+                                                            padding-left: 8px;
+                                                            padding-right: 8px;
+                                                            spacing: 6px;
+                                                            Image { source: Icons.rocket; width: 14px; height: 14px; y: (parent.height - 14px) / 2; }
+                                                            Text { text: root.effort; font-size: 12.5px; font-weight: 500; color: Palette.strong; vertical-alignment: center; }
+                                                            Image { source: Icons.chev-down-faint; width: 10px; height: 6px; y: (parent.height - 6px) / 2; }
+                                                        }
+                                                        TouchArea {
+                                                            clicked => {
+                                                                if root.effort-menu-open {
+                                                                    root.effort-menu-open = false;
+                                                                } else {
+                                                                    root.close-composer-popups();
+                                                                    root.effort-menu-open = true;
+                                                                }
+                                                            }
+                                                            mouse-cursor: pointer;
+                                                        }
+                                                    }
+                                                    Rectangle {
+                                                        width: 28px;
+                                                        height: 28px;
+                                                        border-radius: 12px;
+                                                        background: root.composer-text == "" ? Palette.bar-gray : Palette.accent;
+                                                        drop-shadow-color: Palette.shadow;
+                                                        drop-shadow-offset-y: 1px;
+                                                        drop-shadow-blur: 2px;
+                                                        Image {
+                                                            source: Icons.send;
+                                                            width: 16px;
+                                                            height: 16px;
+                                                            x: (parent.width - 16px) / 2;
+                                                            y: (parent.height - 16px) / 2;
+                                                        }
+                                                        TouchArea {
+                                                            clicked => {
+                                                                root.close-composer-popups();
+                                                                if root.composer-text != "" {
+                                                                    root.send-message(root.composer-text);
+                                                                    root.composer-text = "";
+                                                                    root.return-focus();
+                                                                }
+                                                            }
+                                                            mouse-cursor: pointer;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if root.access-menu-open : Rectangle {
+                                            x: Math.max(0px, Math.min(parent.width - self.width,
+                                                access-button.absolute-position.x - parent.absolute-position.x));
+                                            y: access-button.absolute-position.y - parent.absolute-position.y - self.height - 8px;
+                                            width: 144px;
+                                            height: 98px;
+                                            background: Palette.white;
+                                            border-radius: 12px;
+                                            border-width: 0.67px;
+                                            border-color: Palette.border;
+                                            drop-shadow-color: rgba(0, 0, 0, 0.14);
+                                            drop-shadow-offset-y: -4px;
+                                            drop-shadow-blur: 14px;
+                                            VerticalLayout {
+                                                padding: 4px;
+                                                MenuOption {
+                                                    label: "完全访问";
+                                                    active: root.access-mode == "完全访问";
+                                                    chosen => { root.access-mode = "完全访问"; root.access-menu-open = false; root.return-focus(); }
+                                                }
+                                                MenuOption {
+                                                    label: "受限访问";
+                                                    active: root.access-mode == "受限访问";
+                                                    chosen => { root.access-mode = "受限访问"; root.access-menu-open = false; root.return-focus(); }
+                                                }
+                                                MenuOption {
+                                                    label: "只读模式";
+                                                    active: root.access-mode == "只读模式";
+                                                    chosen => { root.access-mode = "只读模式"; root.access-menu-open = false; root.return-focus(); }
+                                                }
+                                            }
+                                        }
+                                        if root.effort-menu-open : Rectangle {
+                                            x: Math.max(0px, Math.min(parent.width - self.width,
+                                                effort-button.absolute-position.x - parent.absolute-position.x + effort-button.width - self.width));
+                                            y: effort-button.absolute-position.y - parent.absolute-position.y - self.height - 8px;
+                                            width: 128px;
+                                            height: 154px;
+                                            background: Palette.white;
+                                            border-radius: 12px;
+                                            border-width: 0.67px;
+                                            border-color: Palette.border;
+                                            drop-shadow-color: rgba(0, 0, 0, 0.14);
+                                            drop-shadow-offset-y: -4px;
+                                            drop-shadow-blur: 14px;
+                                            VerticalLayout {
+                                                padding: 4px;
+                                                Rectangle {
+                                                    height: 26px;
+                                                    Text {
+                                                        x: 8px;
+                                                        width: parent.width - 16px;
+                                                        height: parent.height;
+                                                        text: "推理强度";
+                                                        font-size: 11px;
+                                                        font-weight: 600;
+                                                        color: Palette.faint;
+                                                        vertical-alignment: center;
+                                                    }
+                                                    Rectangle {
+                                                        y: parent.height - 0.67px;
+                                                        width: parent.width;
+                                                        height: 0.67px;
+                                                        background: Palette.sep;
+                                                    }
+                                                }
+                                                for opt in ["低", "标准", "高", "最高"] : MenuOption {
+                                                    label: opt;
+                                                    active: root.effort == opt;
+                                                    chosen => { root.effort = opt; root.effort-menu-open = false; root.return-focus(); }
+                                                }
+                                            }
+                                        }
+                                        if root.model-menu-open : Rectangle {
+                                            x: Math.max(0px, Math.min(parent.width - self.width,
+                                                model-button.absolute-position.x - parent.absolute-position.x + model-button.width - self.width));
+                                            y: model-button.absolute-position.y - parent.absolute-position.y - self.height - 8px;
+                                            width: 224px;
+                                            height: Math.min(root.model-choices.length * 30px + 34px, 200px);
+                                            background: Palette.white;
+                                            border-radius: 12px;
+                                            border-width: 0.67px;
+                                            border-color: Palette.border;
+                                            drop-shadow-color: rgba(0, 0, 0, 0.14);
+                                            drop-shadow-offset-y: -4px;
+                                            drop-shadow-blur: 14px;
+                                            VerticalLayout {
+                                                padding: 4px;
+                                                Rectangle {
+                                                    height: 26px;
+                                                    Text {
+                                                        x: 8px;
+                                                        width: parent.width - 16px;
+                                                        height: parent.height;
+                                                        text: "选择模型";
+                                                        font-size: 11px;
+                                                        font-weight: 600;
+                                                        color: Palette.faint;
+                                                        vertical-alignment: center;
+                                                    }
+                                                    Rectangle {
+                                                        y: parent.height - 0.67px;
+                                                        width: parent.width;
+                                                        height: 0.67px;
+                                                        background: Palette.sep;
+                                                    }
+                                                }
+                                                for choice in root.model-choices : MenuOption {
+                                                    label: choice.label;
+                                                    active: choice.model == root.model-name;
+                                                    chosen => {
+                                                        root.model-name = choice.model;
+                                                        root.setting-main-model = choice.model;
+                                                        root.model-menu-open = false;
+                                                        root.return-focus();
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if root.slash-menu-visible && root.slash-commands.length > 0 : Rectangle {
+                                            x: 12px;
+                                            y: -Math.min(root.slash-commands.length * 44px + 8px, 240px) - 80px;
+                                            width: parent.width - 24px;
+                                            background: Palette.white;
+                                            border-radius: 12px;
+                                            border-width: 0.67px;
+                                            border-color: Palette.border;
+                                            drop-shadow-color: rgba(0, 0, 0, 0.14);
+                                            drop-shadow-offset-y: -4px;
+                                            drop-shadow-blur: 14px;
+                                            VerticalLayout {
+                                                padding: 4px;
+                                                for cmd in root.slash-commands : Rectangle {
+                                                    height: 44px;
+                                                    border-radius: 8px;
+                                                    background: sta.has-hover ? Palette.sep : transparent;
+                                                    Text {
+                                                        x: 10px;
+                                                        y: 5px;
+                                                        text: "/" + cmd.command + "  " + cmd.usage;
+                                                        font-family: "Consolas";
+                                                        font-weight: 600;
+                                                        font-size: 12.5px;
+                                                        color: Palette.accent-text;
+                                                    }
+                                                    Text {
+                                                        x: 10px;
+                                                        y: 23px;
+                                                        text: cmd.summary;
+                                                        font-size: 11px;
+                                                        color: Palette.dim;
+                                                    }
+                                                    sta := TouchArea {
+                                                        clicked => {
+                                                            root.composer-text = "/" + cmd.command + " ";
+                                                            root.slash-menu-visible = false;
+                                                        }
+                                                        mouse-cursor: pointer;
+                                                    }
+                                                }
+                                            }
+                                            TouchArea { clicked => { root.slash-menu-visible = false } }
+                                        }
+                                        if root.context-popover-open : Rectangle {
+                                            x: Math.max(0px, Math.min(parent.width - self.width,
+                                                context-button.absolute-position.x - parent.absolute-position.x + context-button.width - self.width));
+                                            y: context-button.absolute-position.y - parent.absolute-position.y - self.height - 8px;
+                                            width: 320px;
+                                            height: 353px;
+                                            background: Palette.white;
+                                            border-radius: 16px;
+                                            border-width: 0.67px;
+                                            border-color: Palette.border;
+                                            drop-shadow-color: rgba(0, 0, 0, 0.14);
+                                            drop-shadow-offset-y: -6px;
+                                            drop-shadow-blur: 20px;
+                                            VerticalLayout {
+                                                padding: 16px;
+                                                spacing: 12px;
+                                                HorizontalLayout {
+                                                    alignment: space-between;
+                                                    Text {
+                                                        text: "上下文容量";
+                                                        font-size: 13px;
+                                                        font-weight: 700;
+                                                        color: Palette.ink;
+                                                        vertical-alignment: center;
+                                                    }
+                                                    Text {
+                                                        text: root.trace-total-label + " tokens";
+                                                        font-family: "Consolas";
+                                                        font-size: 11.5px;
+                                                        color: Palette.dim;
+                                                        vertical-alignment: center;
+                                                    }
+                                                }
+                                                Rectangle {
+                                                    height: 8px;
+                                                    border-radius: 999px;
+                                                    background: #F3F4F6;
+                                                    Rectangle {
+                                                        x: 0px;
+                                                        y: 0px;
+                                                        width: Math.max(2px, parent.width * clamp(root.prompt-share(), 1, 100) / 100);
+                                                        height: 8px;
+                                                        border-radius: 999px;
+                                                        background: #F5A623;
+                                                    }
+                                                }
+                                                VerticalLayout {
+                                                    spacing: 6px;
+                                                    HorizontalLayout {
+                                                        alignment: space-between;
+                                                        HorizontalLayout {
+                                                            spacing: 8px;
+                                                            Rectangle { width: 8px; height: 8px; border-radius: 999px; background: #3B82F6; y: (parent.height - 8px) / 2; }
+                                                            Text { text: "消息 / Prompt"; font-size: 12px; color: Palette.body; vertical-alignment: center; }
+                                                        }
+                                                        Text { text: root.trace-input-tokens + " (" + root.prompt-share() + "%)"; font-family: "Consolas"; font-size: 12px; font-weight: 500; color: Palette.ink; vertical-alignment: center; }
+                                                    }
+                                                    HorizontalLayout {
+                                                        alignment: space-between;
+                                                        HorizontalLayout {
+                                                            spacing: 8px;
+                                                            Rectangle { width: 8px; height: 8px; border-radius: 999px; background: #60A5FA; y: (parent.height - 8px) / 2; }
+                                                            Text { text: "模型生成 / Completion"; font-size: 12px; color: Palette.body; vertical-alignment: center; }
+                                                        }
+                                                        Text { text: root.trace-output-tokens + " (" + root.completion-share() + "%)"; font-family: "Consolas"; font-size: 12px; font-weight: 500; color: Palette.ink; vertical-alignment: center; }
+                                                    }
+                                                    HorizontalLayout {
+                                                        alignment: space-between;
+                                                        HorizontalLayout {
+                                                            spacing: 8px;
+                                                            Rectangle { width: 8px; height: 8px; border-radius: 999px; background: #93C5FD; y: (parent.height - 8px) / 2; }
+                                                            Text { text: "对话轮次"; font-size: 12px; color: Palette.body; vertical-alignment: center; }
+                                                        }
+                                                        Text { text: root.trace-turns + " 轮"; font-family: "Consolas"; font-size: 12px; font-weight: 500; color: Palette.ink; vertical-alignment: center; }
+                                                    }
+                                                    HorizontalLayout {
+                                                        alignment: space-between;
+                                                        HorizontalLayout {
+                                                            spacing: 8px;
+                                                            Rectangle { width: 8px; height: 8px; border-radius: 999px; background: #BFDBFE; y: (parent.height - 8px) / 2; }
+                                                            Text { text: "模型调用"; font-size: 12px; color: Palette.body; vertical-alignment: center; }
+                                                        }
+                                                        Text { text: root.trace-calls + " 次"; font-family: "Consolas"; font-size: 12px; font-weight: 500; color: Palette.ink; vertical-alignment: center; }
+                                                    }
+                                                    HorizontalLayout {
+                                                        alignment: space-between;
+                                                        HorizontalLayout {
+                                                            spacing: 8px;
+                                                            Rectangle { width: 8px; height: 8px; border-radius: 999px; background: #DBEAFE; y: (parent.height - 8px) / 2; }
+                                                            Text { text: "透镜事件"; font-size: 12px; color: Palette.body; vertical-alignment: center; }
+                                                        }
+                                                        Text { text: root.trace-total + " 条"; font-family: "Consolas"; font-size: 12px; font-weight: 500; color: Palette.ink; vertical-alignment: center; }
+                                                    }
+                                                    HorizontalLayout {
+                                                        alignment: space-between;
+                                                        HorizontalLayout {
+                                                            spacing: 8px;
+                                                            Rectangle { width: 8px; height: 8px; border-radius: 999px; background: #E5E7EB; y: (parent.height - 8px) / 2; }
+                                                            Text { text: "缓存命中"; font-size: 12px; color: Palette.body; vertical-alignment: center; }
+                                                        }
+                                                        Text { text: "模型未提供"; font-family: "Consolas"; font-size: 11px; color: Palette.dim; vertical-alignment: center; }
+                                                    }
+                                                }
+                                                Rectangle { height: 0.67px; background: Palette.sep; }
+                                                HorizontalLayout {
+                                                    alignment: space-between;
+                                                    Text { text: "当前模型"; font-size: 12px; color: Palette.mid; vertical-alignment: center; }
+                                                    Text { text: root.model-name; font-family: "Consolas"; font-size: 11px; font-weight: 600; color: Palette.ink; overflow: elide; vertical-alignment: center; }
+                                                }
+                                                Rectangle { height: 0.67px; background: Palette.sep; }
+                                                VerticalLayout {
+                                                    spacing: 6px;
+                                                    HorizontalLayout {
+                                                        alignment: space-between;
+                                                        Text { text: "剩余额度"; font-size: 12px; font-weight: 700; color: Palette.ink; vertical-alignment: center; }
+                                                        Text { text: "实时数据"; font-size: 11px; color: Palette.dim; vertical-alignment: center; }
+                                                    }
+                                                    Text {
+                                                        text: "当前模型提供方未返回额度信息";
+                                                        font-size: 11px;
+                                                        color: Palette.dim;
+                                                    }
+                                                }
+                                            }
+                                            context-card-touch := TouchArea {
+                                                changed has-hover => {
+                                                    root.context-card-hover = self.has-hover;
+                                                    if self.has-hover {
+                                                        root.context-close-pending = false;
+                                                    } else if !root.context-button-hover {
+                                                        root.context-close-pending = true;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        }
+                                    }
+                                    }
+                                }
+                            }
+
+                                if root.trace-filter-open : Rectangle {
+                                x: parent.width - 150px;
+                                y: 44px;
+                                width: 140px;
+                                background: Palette.white;
+                                border-radius: 12px;
+                                border-width: 0.67px;
+                                border-color: Palette.border;
+                                drop-shadow-color: rgba(0, 0, 0, 0.14);
+                                drop-shadow-offset-y: 5px;
+                                drop-shadow-blur: 14px;
+                                VerticalLayout {
+                                    padding: 4px;
+                                    for opt in ["全部", "USER", "CONTEXT", "ASSISTANT", "TOOL"] : MenuOption {
+                                        label: opt == "全部" ? "全部" : opt;
+                                        active: root.trace-filter-index == (opt == "全部" ? 0 : opt == "USER" ? 1 : opt == "CONTEXT" ? 2 : opt == "ASSISTANT" ? 3 : 4);
+                                        chosen => {
+                                            root.trace-filter-index = opt == "USER" ? 1 : opt == "CONTEXT" ? 2 : opt == "ASSISTANT" ? 3 : opt == "TOOL" ? 4 : 0;
+                                            root.trace-page = 1;
+                                            root.trace-filter-open = false;
+                                            root.refresh-trace();
+                                        }
+                                    }
+                                }
+                                TouchArea { clicked => { root.trace-filter-open = false } }
+                            }
+}
+if root.trajectory-selected : TrajectoryPanel {
+    width: parent.width;
+    height: parent.height;
+    trace-events: root.trace-events;
+    gantt: root.gantt;
+    trace-ticks: root.trace-ticks;
+    model-name: root.model-name;
+    access-mode: root.access-mode;
+    effort: root.effort;
+    assistant-text: root.assistant-text;
+    setting-command-approval: root.setting-command-approval;
+    trace-duration: root.trace-duration;
+    trace-provider: root.trace-provider;
+    trace-model: root.trace-model;
+    trace-result: root.trace-result;
+    trace-total-label: root.trace-total-label;
+    trace-prompt-label: root.trace-prompt-label;
+    trace-completion-label: root.trace-completion-label;
+    trace-turns: root.trace-turns;
+    trace-calls: root.trace-calls;
+    trace-total: root.trace-total;
+    trace-pages: root.trace-pages;
+    trace-search <=> root.trace-search;
+    trace-selected-num <=> root.trace-selected-num;
+    request-tab <=> root.request-tab;
+    trace-filter-index <=> root.trace-filter-index;
+    trace-page <=> root.trace-page;
+    trace-page-size <=> root.trace-page-size;
+    trace-filter-open <=> root.trace-filter-open;
+    refresh-trace => { root.refresh-trace(); }
+    export-trace => { root.export-trace(); }
+    page-range-label => { root.page-range-label() }
+}
+}
+}
+
+environment-panel := EnvironmentPanel {
+    x: parent.width - self.width - 16px;
+    y: 48px;
+    z: 120;
+    project-files: root.project-files;
+    workspace-presets: root.workspace-presets;
+    workspace-project: root.workspace-project;
+    workspace-path: root.workspace-short-path == "" ? root.setting-workspace : root.workspace-short-path;
+    workspace-full-path: root.setting-workspace;
+    workspace-branch: root.workspace-branch;
+    indexed-files: root.workspace-indexed-files;
+    has-git: root.workspace-has-git;
+    locked: root.workspace-locked;
+    open-project-file(index) => {
+        root.select-project-file(index);
+        root.set-code-panel-visible(true);
+    }
+    open-change-workspace => { root.open-change-workspace(); }
+    switch-workspace(path) => { root.switch-workspace(path); }
+    copy-text(value) => { root.copy-text(value); }
+    refresh-workspace => { root.refresh-workspace(); }
+    open-workspace-settings => { root.open-workspace-settings(); }
+}
+}

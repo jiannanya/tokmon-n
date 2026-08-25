@@ -163,7 +163,12 @@ if(TOKMON_BUILD_DESKTOP)
   endif()
 
   add_executable(tokmon-desktop WIN32
-    apps/tokmon-desktop/main.cpp)
+    apps/tokmon-desktop/main.cpp
+    apps/tokmon-desktop/src/desktop_application.cpp
+    apps/tokmon-desktop/src/navigation_state.cpp
+    apps/tokmon-desktop/src/platform_utils.cpp
+    apps/tokmon-desktop/src/ui_controller.cpp
+    apps/tokmon-desktop/src/ui_projection.cpp)
   target_link_libraries(tokmon-desktop PRIVATE tokmon_core Slint::Slint)
   if(WIN32)
     target_link_libraries(tokmon-desktop PRIVATE comdlg32 shell32 ole32)
@@ -174,10 +179,15 @@ if(TOKMON_BUILD_DESKTOP)
   endif()
   slint_target_sources(tokmon-desktop
     apps/tokmon-desktop/ui/tokmon.slint)
-  # The desktop entry includes the generated Slint header directly. Keep the
-  # object dependency explicit on MSVC as localized /showIncludes output may
-  # otherwise leave main.cpp built against an older generated component ABI.
-  set_property(SOURCE apps/tokmon-desktop/main.cpp APPEND PROPERTY
+  # These desktop implementation units include the generated Slint header.
+  # Keep the object dependency explicit on MSVC as localized /showIncludes
+  # output may otherwise leave them built against an older component ABI.
+  set_property(SOURCE
+    apps/tokmon-desktop/src/desktop_application.cpp
+    apps/tokmon-desktop/src/navigation_state.cpp
+    apps/tokmon-desktop/src/ui_controller.cpp
+    apps/tokmon-desktop/src/ui_projection.cpp
+    APPEND PROPERTY
     OBJECT_DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/tokmon.h")
   set_target_properties(tokmon-desktop PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
