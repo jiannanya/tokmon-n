@@ -21,6 +21,8 @@ export component SettingsOverlay inherits Rectangle {
     in-out property <string> setting-email;
     in-out property <string> setting-file-access;
     in-out property <int> setting-font-scale;
+    in-out property <int> setting-ui-scale: 100;
+    in-out property <int> applied-ui-scale-percent: 100;
     in-out property <bool> setting-git;
     in-out property <bool> setting-high-risk;
     in-out property <string> setting-index-mode;
@@ -67,7 +69,7 @@ export component SettingsOverlay inherits Rectangle {
                 root.return-focus();
             }
         }
-        Rectangle {
+        dialog := Rectangle {
             width: Math.min(1120px, parent.width * 0.92);
             height: Math.min(720px, parent.height * 0.86);
             x: (parent.width - self.width) / 2;
@@ -95,7 +97,7 @@ export component SettingsOverlay inherits Rectangle {
                             spacing: 8px;
                             alignment: end;
                             Rectangle {
-                                width: 360px;
+                                width: Math.min(360px, Math.max(140px, dialog.width - 160px));
                                 horizontal-stretch: 0;
                                 height: 33px;
                                 border-radius: 12px;
@@ -151,45 +153,47 @@ export component SettingsOverlay inherits Rectangle {
                     height: parent.height - 112px;
                     vertical-stretch: 0;
                     Rectangle {
-                        width: 220px;
+                        width: dialog.width < 620px ? 56px : dialog.width < 900px ? 170px : 220px;
                         horizontal-stretch: 0;
                         background: Palette.rail;
-                        VerticalLayout {
-                            padding: 16px;
-                            spacing: 6px;
-                            for nav-item[ni] in ["通用", "智能体与模型", "权限与安全", "工作区", "通知", "外观", "快捷键", "账户"] : Rectangle {
-                                height: 40px;
-                                border-radius: 12px;
-                                background: root.settings-page == ni ? Palette.accent-bg : (nta.has-hover ? rgba(0, 0, 0, 0.03) : transparent);
-                                drop-shadow-color: root.settings-page == ni ? Palette.shadow : transparent;
-                                drop-shadow-offset-y: 1px;
-                                drop-shadow-blur: 0px;
-                                HorizontalLayout {
-                                    padding-left: 14px;
-                                    padding-right: 14px;
-                                    spacing: 12px;
-                                    alignment: start;
-                                    Image {
-                                        source: ni == 0 ? Icons.gear : ni == 1 ? Icons.bot : ni == 2 ? Icons.shield : ni == 3 ? Icons.folder : ni == 4 ? Icons.bell : ni == 5 ? Icons.contrast : ni == 6 ? Icons.keyboard : Icons.person-amber;
-                                        width: 16px;
-                                        height: 16px;
-                                        y: (parent.height - 16px) / 2;
+                        ScrollView {
+                            VerticalLayout {
+                                padding: dialog.width < 620px ? 8px : 16px;
+                                spacing: dialog.width < 620px ? 2px : 6px;
+                                for nav-item[ni] in ["通用", "智能体与模型", "权限与安全", "工作区", "通知", "外观", "快捷键", "账户"] : Rectangle {
+                                    height: dialog.width < 620px ? 34px : 40px;
+                                    border-radius: 12px;
+                                    background: root.settings-page == ni ? Palette.accent-bg : (nta.has-hover ? rgba(0, 0, 0, 0.03) : transparent);
+                                    drop-shadow-color: root.settings-page == ni ? Palette.shadow : transparent;
+                                    drop-shadow-offset-y: 1px;
+                                    drop-shadow-blur: 0px;
+                                    HorizontalLayout {
+                                        padding-left: dialog.width < 620px ? 10px : 14px;
+                                        padding-right: dialog.width < 620px ? 10px : 14px;
+                                        spacing: 12px;
+                                        alignment: start;
+                                        Image {
+                                            source: ni == 0 ? Icons.gear : ni == 1 ? Icons.bot : ni == 2 ? Icons.shield : ni == 3 ? Icons.folder : ni == 4 ? Icons.bell : ni == 5 ? Icons.contrast : ni == 6 ? Icons.keyboard : Icons.person-amber;
+                                            width: 16px;
+                                            height: 16px;
+                                            y: (parent.height - 16px) / 2;
+                                        }
+                                        if dialog.width >= 620px : Text {
+                                            text: nav-item;
+                                            font-size: 13.5px;
+                                            font-weight: root.settings-page == ni ? 600 : 500;
+                                            color: root.settings-page == ni ? Palette.accent-text : Palette.mid;
+                                            overflow: elide;
+                                            vertical-alignment: center;
+                                        }
                                     }
-                                    Text {
-                                        text: nav-item;
-                                        font-size: 13.5px;
-                                        font-weight: root.settings-page == ni ? 600 : 500;
-                                        color: root.settings-page == ni ? Palette.accent-text : Palette.mid;
-                                        overflow: elide;
-                                        vertical-alignment: center;
+                                    nta := TouchArea {
+                                        clicked => {
+                                            root.settings-page = ni;
+                                            root.return-focus();
+                                        }
+                                        mouse-cursor: pointer;
                                     }
-                                }
-                                nta := TouchArea {
-                                    clicked => {
-                                        root.settings-page = ni;
-                                        root.return-focus();
-                                    }
-                                    mouse-cursor: pointer;
                                 }
                             }
                         }
@@ -539,22 +543,41 @@ export component SettingsOverlay inherits Rectangle {
                                         }
                                     }
                                     RowShell {
-                                        label: "字体大小";
+                                        label: "界面缩放";
+                                        tall: true;
+                                        SegTrack {
+                                            warm: true;
+                                            compact: dialog.width < 620px;
+                                            options: ["80%", "90%", "100%", "125%", "150%", "175%"];
+                                            selected: root.setting-ui-scale == 80 ? 0 : root.setting-ui-scale == 90 ? 1 : root.setting-ui-scale == 100 ? 2 : root.setting-ui-scale == 125 ? 3 : root.setting-ui-scale == 150 ? 4 : root.setting-ui-scale == 175 ? 5 : -1;
+                                            picked(i, o) => {
+                                                root.setting-ui-scale = i == 0 ? 80 : i == 1 ? 90 : i == 2 ? 100 : i == 3 ? 125 : i == 4 ? 150 : 175;
+                                                root.applied-ui-scale-percent = root.setting-ui-scale;
+                                                root.return-focus();
+                                            }
+                                        }
+                                    }
+                                    RowShell {
+                                        label: "缩放微调";
                                         separated: false;
                                         HorizontalLayout {
                                             spacing: 10px;
                                             Slider {
-                                                width: 196px;
-                                                minimum: 80;
-                                                maximum: 140;
-                                                value: root.setting-font-scale;
+                                                width: dialog.width < 620px ? 110px : 170px;
+                                                minimum: 70;
+                                                maximum: 200;
+                                                value: root.setting-ui-scale;
+                                                changed(v) => {
+                                                    root.setting-ui-scale = Math.round(v / 5) * 5;
+                                                }
                                                 released(v) => {
-                                                    root.setting-font-scale = Math.round(v / 5) * 5;
+                                                    root.setting-ui-scale = Math.round(v / 5) * 5;
+                                                    root.applied-ui-scale-percent = root.setting-ui-scale;
                                                     root.return-focus();
                                                 }
                                             }
                                             Text {
-                                                text: root.setting-font-scale + "%";
+                                                text: root.setting-ui-scale + "%";
                                                 font-family: "Consolas";
                                                 font-size: 12px;
                                                 color: Palette.dim;
@@ -562,14 +585,34 @@ export component SettingsOverlay inherits Rectangle {
                                                 width: 44px;
                                                 horizontal-stretch: 0;
                                             }
+                                            Rectangle {
+                                                width: 44px;
+                                                height: 28px;
+                                                border-radius: 8px;
+                                                background: Palette.sep;
+                                                border-width: 0.67px;
+                                                border-color: Palette.border;
+                                                HorizontalLayout {
+                                                    alignment: center;
+                                                    Text { text: "重置"; font-size: 11.5px; color: Palette.mid; vertical-alignment: center; }
+                                                }
+                                                TouchArea {
+                                                    clicked => {
+                                                        root.setting-ui-scale = 100;
+                                                        root.applied-ui-scale-percent = 100;
+                                                        root.return-focus();
+                                                    }
+                                                    mouse-cursor: pointer;
+                                                }
+                                            }
                                         }
                                     }
                                 }
                                 if root.settings-page == 6 : VerticalLayout {
-                                    spacing: 14px;
-                                    property <[string]> actions: ["新建会话", "打开设置", "发送消息", "命令面板"];
+                                    spacing: 12px;
+                                    property <[string]> actions: ["新建会话", "打开设置", "发送消息", "命令面板", "放大界面", "缩小界面", "重置缩放"];
                                     for action[ai] in self.actions : Rectangle {
-                                        height: 54px;
+                                        height: 46px;
                                         border-radius: 12px;
                                         background: Palette.surface;
                                         border-width: 0.67px;
@@ -603,11 +646,29 @@ export component SettingsOverlay inherits Rectangle {
                                                     Text { text: "+"; font-family: "Consolas"; font-size: 12px; color: Palette.faint; vertical-alignment: center; }
                                                     KeyCap { label: "P"; }
                                                 }
+                                                if ai == 4 : HorizontalLayout {
+                                                    spacing: 4px;
+                                                    KeyCap { label: "Ctrl"; }
+                                                    Text { text: "+"; font-family: "Consolas"; font-size: 12px; color: Palette.faint; vertical-alignment: center; }
+                                                    KeyCap { label: "+"; }
+                                                }
+                                                if ai == 5 : HorizontalLayout {
+                                                    spacing: 4px;
+                                                    KeyCap { label: "Ctrl"; }
+                                                    Text { text: "+"; font-family: "Consolas"; font-size: 12px; color: Palette.faint; vertical-alignment: center; }
+                                                    KeyCap { label: "-"; }
+                                                }
+                                                if ai == 6 : HorizontalLayout {
+                                                    spacing: 4px;
+                                                    KeyCap { label: "Ctrl"; }
+                                                    Text { text: "+"; font-family: "Consolas"; font-size: 12px; color: Palette.faint; vertical-alignment: center; }
+                                                    KeyCap { label: "0"; }
+                                                }
                                             }
                                         }
                                     }
                                     Text {
-                                        text: "快捷键立即生效：命令面板会聚焦输入框并列出 /lens、/lenses 等透镜指令。";
+                                        text: "快捷键立即生效：支持使用 Ctrl + + / Ctrl + - / Ctrl + 0 快速调节与重置界面缩放比例。";
                                         font-size: 11.5px;
                                         color: Palette.dim;
                                         wrap: word-wrap;
@@ -733,7 +794,7 @@ export component SettingsOverlay inherits Rectangle {
                             }
                         }
                     }
-                    Rectangle {
+                    if dialog.width >= 900px : Rectangle {
                         width: 230px;
                         horizontal-stretch: 0;
                         background: Palette.rail-warm;
@@ -791,6 +852,7 @@ export component SettingsOverlay inherits Rectangle {
                                             OverviewLine { key: "主题:"; val: root.setting-dark-theme ? "深色" : "浅色"; }
                                             OverviewLine { key: "强调色:"; val: root.accent-name(root.setting-accent); }
                                             OverviewLine { key: "密度:"; val: root.setting-density; }
+                                            OverviewLine { key: "界面缩放:"; val: root.setting-ui-scale + "%"; }
                                         }
                                         if root.settings-page == 6 : VerticalLayout {
                                             spacing: 8px;

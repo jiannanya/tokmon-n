@@ -1071,6 +1071,11 @@ private:
         handle->set_setting_density(*value);
       if (auto value = int_value("font_scale"))
         handle->set_setting_font_scale(*value);
+      if (auto value = int_value("ui_scale")) {
+        const auto scale = std::clamp(*value, 70, 200);
+        handle->set_setting_ui_scale(scale);
+        handle->set_applied_ui_scale_percent(scale);
+      }
       if (auto value = string_value("nickname"))
         handle->set_setting_nickname(*value);
       if (auto value = string_value("email"))

@@ -10,6 +10,7 @@ import { ChangeWorkspaceOverlay } from "tokmon-workspace-overlay.slint";
 export component MainWindow inherits Window {
     title: "Tokmon — A Lens to Them All";
     no-frame: true;
+    resize-border-width: 7px;
     preferred-width: root.code-visible ? 1440px : 999px;
     preferred-height: 900px;
     min-width: root.code-visible ? 1040px : 840px;
@@ -105,6 +106,9 @@ export component MainWindow inherits Window {
     in-out property <int> settings-page: 0;
     in-out property <int> setting-accent: 0;
     in-out property <int> setting-font-scale: 100;
+    in-out property <int> setting-ui-scale: 100;
+    in-out property <int> applied-ui-scale-percent: 100;
+    property <float> applied-ui-scale: clamp(root.applied-ui-scale-percent, 70, 200) / 100.0;
     in-out property <int> shortcut-editing: -1;
     in-out property <int> workflow-explored: 0;
     in-out property <int> workflow-ran: 0;
@@ -259,12 +263,22 @@ export component MainWindow inherits Window {
         }
     }
 
-    // A click-open menu installs an input backdrop behind the actual controls.
-    // Foreground buttons keep receiving their own events; otherwise this catches
-    // the next blank-area click and dismisses the composer menus.
-    if root.access-menu-open || root.model-menu-open || root.effort-menu-open || root.attachment-menu-open || root.slash-menu-visible : TouchArea {
-        clicked => { root.close-click-popups(); }
-    }
+    ui-scale-layer := Rectangle {
+        x: 0px;
+        y: 0px;
+        width: root.width / root.applied-ui-scale;
+        height: root.height / root.applied-ui-scale;
+        background: Palette.app-bg;
+        clip: true;
+        transform-origin: { x: 0px, y: 0px };
+        transform-scale: root.applied-ui-scale;
+
+        // A click-open menu installs an input backdrop behind the actual controls.
+        // Foreground buttons keep receiving their own events; otherwise this catches
+        // the next blank-area click and dismisses the composer menus.
+        if root.access-menu-open || root.model-menu-open || root.effort-menu-open || root.attachment-menu-open || root.slash-menu-visible : TouchArea {
+            clicked => { root.close-click-popups(); }
+        }
 
     VerticalLayout {
         HorizontalLayout {
@@ -375,7 +389,7 @@ export component MainWindow inherits Window {
             }
             CodePanelSlot {
                 code-visible: root.code-visible;
-                host-width: root.width;
+                host-width: ui-scale-layer.width;
                 sidebar-visible: root.sidebar-visible;
                 sidebar-width: root.sidebar-width;
                 project-files: root.project-files;
@@ -419,6 +433,18 @@ export component MainWindow inherits Window {
             } else if event.modifiers.control && event.modifiers.shift && (event.text == "p" || event.text == "P") {
                 root.composer-text = "/";
                 root.slash-query-changed("/");
+                accept
+            } else if event.modifiers.control && (event.text == "=" || event.text == "+") {
+                root.setting-ui-scale = Math.min(200, Math.round((root.setting-ui-scale + 10) / 5) * 5);
+                root.applied-ui-scale-percent = root.setting-ui-scale;
+                accept
+            } else if event.modifiers.control && (event.text == "-" || event.text == "_") {
+                root.setting-ui-scale = Math.max(70, Math.round((root.setting-ui-scale - 10) / 5) * 5);
+                root.applied-ui-scale-percent = root.setting-ui-scale;
+                accept
+            } else if event.modifiers.control && event.text == "0" {
+                root.setting-ui-scale = 100;
+                root.applied-ui-scale-percent = 100;
                 accept
             } else if event.text == "\u{1b}" || event.text == "Escape" {
                 if root.create-navigation-open {
@@ -492,6 +518,8 @@ export component MainWindow inherits Window {
         setting-email <=> root.setting-email;
         setting-file-access <=> root.setting-file-access;
         setting-font-scale <=> root.setting-font-scale;
+        setting-ui-scale <=> root.setting-ui-scale;
+        applied-ui-scale-percent <=> root.applied-ui-scale-percent;
         setting-git <=> root.setting-git;
         setting-high-risk <=> root.setting-high-risk;
         setting-index-mode <=> root.setting-index-mode;
@@ -528,5 +556,6 @@ export component MainWindow inherits Window {
         test-provider(provider) => { root.test-provider(provider); }
         setting-provider-at(i) => { root.setting-provider-at(i) }
         setting-model-at(i) => { root.setting-model-at(i) }
+        }
     }
 }

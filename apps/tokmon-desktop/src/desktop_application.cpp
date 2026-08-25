@@ -611,6 +611,7 @@ int run_application(int argc, char **argv) {
     controller->test_provider(std::string(id));
   });
   window->on_save_settings([window, &controller] {
+    window->set_applied_ui_scale_percent(window->get_setting_ui_scale());
     controller->save_settings(tokmon::cbor::object(
         {{"language", std::string(window->get_setting_language())},
          {"startup", std::string(window->get_setting_startup())},
@@ -635,6 +636,8 @@ int run_application(int argc, char **argv) {
          {"density", std::string(window->get_setting_density())},
          {"font_scale",
           static_cast<std::int64_t>(window->get_setting_font_scale())},
+         {"ui_scale",
+          static_cast<std::int64_t>(window->get_setting_ui_scale())},
          {"nickname", std::string(window->get_setting_nickname())},
          {"email", std::string(window->get_setting_email())},
          {"cloud_sync", window->get_setting_cloud_sync()},
@@ -649,6 +652,8 @@ int run_application(int argc, char **argv) {
     window->set_settings_status("正在通过后台服务原子保存…");
   });
   window->on_reset_settings([window] {
+    window->set_setting_ui_scale(100);
+    window->set_applied_ui_scale_percent(100);
     window->set_settings_status("已恢复默认值；点击“保存更改”后写入");
   });
   window->on_drag_window([] { drag_current_process_window(); });
@@ -694,7 +699,7 @@ int run_application(int argc, char **argv) {
         {2, {"文件访问", "命令审批", "网络", "高风险", "权限", "安全"}},
         {3, {"工作区", "索引", "同步", "Git", "git"}},
         {4, {"通知", "桌面", "消息提醒", "免打扰"}},
-        {5, {"外观", "主题", "强调色", "密度", "字体"}},
+        {5, {"外观", "主题", "强调色", "密度", "字体", "缩放", "分辨率", "比例", "屏幕", "dpi", "DPI", "放大", "缩小"}},
         {6, {"快捷键", "新建会话", "发送消息", "命令面板"}},
         {7, {"账户", "昵称", "邮箱", "方案", "云同步"}},
     };
