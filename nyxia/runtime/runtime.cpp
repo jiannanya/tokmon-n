@@ -263,6 +263,9 @@ Result<std::filesystem::path> first_existing(
 Result<std::filesystem::path> worker_supervisor() {
   auto executable = current_executable();
   if (!executable) return tl::unexpected(executable.error());
+#if defined(TOKMON_MONOLITHIC_EXECUTABLE)
+  return *executable;
+#else
 #if defined(_WIN32)
   constexpr auto name = "tokmon-lens-worker.exe";
 #else
@@ -274,6 +277,7 @@ Result<std::filesystem::path> worker_supervisor() {
                          std::filesystem::path(TOKMON_BUILD_BIN_DIR) / name,
 #endif
                         }, "tokmon-lens-worker");
+#endif
 }
 
 Result<std::filesystem::path> language_runtime(const RuntimeConfig& config,

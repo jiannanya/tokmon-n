@@ -17,16 +17,49 @@
     },
     {
       "name": "windows-msvc-release",
-      "displayName": "Windows MSVC Release",
+      "displayName": "Windows MSVC Release - Split (3 EXEs)",
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
       "binaryDir": "${sourceDir}/build/windows-msvc-release-cli",
       "cacheVariables": {
         "CMAKE_CONFIGURATION_TYPES": "Release",
         "BUILD_TESTING": "OFF",
+        "TOKMON_DISTRIBUTION_MODE": "SPLIT",
         "TOKMON_BUILD_UI": "OFF",
         "TOKMON_BUILD_LAUNCHER": "OFF",
         "TOKMON_BUILD_LENS_MODULES": "OFF",
+        "TOKMON_BUILD_TESTS": "OFF",
+        "TOKMON_BUILD_SCRIPT_SDK_TESTS": "OFF",
+        "TOKMON_OPTIMIZE_RELEASE_SIZE": "ON"
+      },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "windows-msvc-release-dynamic",
+      "displayName": "Windows MSVC Release - Dynamic Lenses",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build/windows-msvc-release-dynamic",
+      "cacheVariables": {
+        "CMAKE_CONFIGURATION_TYPES": "Release",
+        "BUILD_TESTING": "OFF",
+        "TOKMON_DISTRIBUTION_MODE": "DYNAMIC",
+        "TOKMON_BUILD_TESTS": "OFF",
+        "TOKMON_BUILD_SCRIPT_SDK_TESTS": "OFF",
+        "TOKMON_OPTIMIZE_RELEASE_SIZE": "ON"
+      },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "windows-msvc-release-monolithic",
+      "displayName": "Windows MSVC Release - Monolithic (1 EXE)",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build/windows-msvc-release-monolithic",
+      "cacheVariables": {
+        "CMAKE_CONFIGURATION_TYPES": "Release",
+        "BUILD_TESTING": "OFF",
+        "TOKMON_DISTRIBUTION_MODE": "MONOLITHIC",
         "TOKMON_BUILD_TESTS": "OFF",
         "TOKMON_BUILD_SCRIPT_SDK_TESTS": "OFF",
         "TOKMON_OPTIMIZE_RELEASE_SIZE": "ON"
@@ -49,6 +82,16 @@
     {
       "name": "windows-msvc-release",
       "configurePreset": "windows-msvc-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-msvc-release-dynamic",
+      "configurePreset": "windows-msvc-release-dynamic",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-msvc-release-monolithic",
+      "configurePreset": "windows-msvc-release-monolithic",
       "configuration": "Release"
     },
     { "name": "portable-debug", "configurePreset": "portable-debug" }

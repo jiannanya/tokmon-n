@@ -16,6 +16,7 @@
 #endif
 
 #include "tokmon/tokmon.hpp"
+#include "apps/entrypoints.hpp"
 
 namespace {
 
@@ -184,7 +185,7 @@ int launch_language(const std::string& runtime, const std::filesystem::path& exe
 
 }  // namespace
 
-int main(int argc, char** argv) {
+int tokmon::app::lens_worker_main(int argc, char** argv) {
   std::string runtime = "native"; std::string lens = "rhea";
   std::filesystem::path executable; std::filesystem::path adapter; std::filesystem::path entry;
   for (int index = 1; index < argc; ++index) {

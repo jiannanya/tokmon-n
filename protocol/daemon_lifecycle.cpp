@@ -80,6 +80,9 @@ Result<std::uint64_t> spawn_daemon(const DaemonLaunchOptions& options) {
         options.executable.string()));
 #if defined(_WIN32)
   auto command = quote_windows_argument(options.executable.wstring()) +
+#if defined(TOKMON_MONOLITHIC_EXECUTABLE)
+      L" --tokmon-internal-daemon" +
+#endif
       L" --workspace " + quote_windows_argument(options.workspace.wstring()) +
       L" --endpoint " + quote_windows_argument(options.endpoint.wstring());
   STARTUPINFOW startup{sizeof(startup)};
@@ -110,9 +113,15 @@ Result<std::uint64_t> spawn_daemon(const DaemonLaunchOptions& options) {
     const auto executable = options.executable.string();
     const auto workspace = options.workspace.string();
     const auto endpoint = options.endpoint.string();
+#if defined(TOKMON_MONOLITHIC_EXECUTABLE)
+    (void)::execl(executable.c_str(), executable.c_str(), "--tokmon-internal-daemon",
+                  "--workspace", workspace.c_str(), "--endpoint", endpoint.c_str(),
+                  static_cast<char*>(nullptr));
+#else
     (void)::execl(executable.c_str(), executable.c_str(), "--workspace",
                   workspace.c_str(), "--endpoint", endpoint.c_str(),
                   static_cast<char*>(nullptr));
+#endif
     _exit(127);
   }
   return static_cast<std::uint64_t>(process);

@@ -29,6 +29,7 @@
 #include "tokmon/tokmon.hpp"
 #include "tokmon/secret_store.hpp"
 #include "tokmon/yaml.hpp"
+#include "apps/entrypoints.hpp"
 
 namespace {
 std::atomic_bool running{true};
@@ -900,7 +901,7 @@ tokmon::Result<tokmon::cbor::Value> execute_slash_command(
 }
 }
 
-int main(int argc, char** argv) {
+int tokmon::app::daemon_main(int argc, char** argv) {
   std::optional<std::filesystem::path> workspace;
   std::optional<std::filesystem::path> endpoint_override;
   bool once = false;

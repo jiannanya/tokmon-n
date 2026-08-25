@@ -31,11 +31,11 @@ target_include_directories(tokmon-tests PRIVATE "${PROJECT_SOURCE_DIR}")
 target_compile_definitions(tokmon-tests PRIVATE
   TOKMON_TEST_LENS_PATH="$<TARGET_FILE:tokmon-lens-calculator>"
   TOKMON_TEST_LENS_DIR="$<TARGET_FILE_DIR:tokmon-lens-calculator>"
-  TOKMON_WORKER_EXECUTABLE="$<TARGET_FILE:tokmon-lens-worker>"
+  TOKMON_WORKER_EXECUTABLE="$<TARGET_FILE:${TOKMON_WORKER_TARGET}>"
   TOKMON_CLI_EXECUTABLE="$<TARGET_FILE:tokmon>"
   TOKMON_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
   TOKMON_CMAKE_COMMAND="${CMAKE_COMMAND}")
-add_dependencies(tokmon-tests ${TOKMON_LENS_TARGETS} tokmon-lens-worker tokmon)
+add_dependencies(tokmon-tests ${TOKMON_LENS_TARGETS} ${TOKMON_WORKER_TARGET} tokmon)
 
 add_test(NAME tokmon-tests COMMAND tokmon-tests --quiet --no-color)
 

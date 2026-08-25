@@ -22,6 +22,7 @@
 #endif
 
 #include "tokmon/tokmon.hpp"
+#include "apps/entrypoints.hpp"
 
 namespace {
 
@@ -149,12 +150,18 @@ std::filesystem::path sibling_daemon(const char* argv0) {
                                       static_cast<DWORD>(module.size()));
   if (size > 0 && size < module.size()) {
     module.resize(size);
+#if defined(TOKMON_MONOLITHIC_EXECUTABLE)
+    return std::filesystem::path(module);
+#else
     return std::filesystem::path(module).parent_path() / "tokmond.exe";
+#endif
   }
 #endif
   auto executable = std::filesystem::absolute(argv0, error);
   if (error) executable = std::filesystem::current_path() / argv0;
-#if defined(_WIN32)
+#if defined(TOKMON_MONOLITHIC_EXECUTABLE)
+  return executable;
+#elif defined(_WIN32)
   return executable.parent_path() / "tokmond.exe";
 #else
   return executable.parent_path() / "tokmond";
@@ -286,7 +293,7 @@ void print_providers(const tokmon::SnowMessage& response, std::ostream& output) 
 
 }  // namespace
 
-int main(int argc, char** argv) {
+int tokmon::app::cli_main(int argc, char** argv) {
 #if defined(_WIN32)
   (void)argc;
   SetConsoleOutputCP(CP_UTF8);

@@ -261,8 +261,12 @@ Result<std::shared_ptr<WorkerLensProxy>> WorkerLensProxy::launch(WorkerLensOptio
   auto proxy = std::shared_ptr<WorkerLensProxy>(new WorkerLensProxy());
   proxy->impl_->manifest = std::move(options.manifest);
   const auto runtime = std::string(to_string(proxy->impl_->manifest.runtime));
-  std::vector<std::string> arguments{options.supervisor.string(), "--runtime", runtime,
-                                     "--entry", options.entry.string()};
+  std::vector<std::string> arguments{options.supervisor.string()};
+#if defined(TOKMON_MONOLITHIC_EXECUTABLE)
+  arguments.push_back("--tokmon-internal-worker");
+#endif
+  arguments.insert(arguments.end(), {"--runtime", runtime,
+                                     "--entry", options.entry.string()});
   if (options.manifest.runtime != RuntimeKind::native_worker) {
     arguments.insert(arguments.end(), {"--runtime-executable", options.runtime_executable.string(),
                                        "--adapter", options.adapter.string()});

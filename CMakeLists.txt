@@ -16,6 +16,30 @@ option(TOKMON_BUILD_LENS_MODULES
 option(TOKMON_BUILD_LAUNCHER
   "Build the optional Windows desktop compatibility launcher" ${TOKMON_BUILD_UI})
 
+set(TOKMON_DISTRIBUTION_MODE "CUSTOM" CACHE STRING
+  "Runtime layout: CUSTOM, DYNAMIC, SPLIT, or MONOLITHIC")
+set_property(CACHE TOKMON_DISTRIBUTION_MODE PROPERTY STRINGS
+  CUSTOM DYNAMIC SPLIT MONOLITHIC)
+string(TOUPPER "${TOKMON_DISTRIBUTION_MODE}" TOKMON_DISTRIBUTION_MODE_NORMALIZED)
+set(TOKMON_DISTRIBUTION_MODES CUSTOM DYNAMIC SPLIT MONOLITHIC)
+if(NOT TOKMON_DISTRIBUTION_MODE_NORMALIZED IN_LIST TOKMON_DISTRIBUTION_MODES)
+  message(FATAL_ERROR
+    "Unknown TOKMON_DISTRIBUTION_MODE='${TOKMON_DISTRIBUTION_MODE}'. "
+    "Expected CUSTOM, DYNAMIC, SPLIT, or MONOLITHIC.")
+endif()
+
+# Distribution modes are intentionally headless. CUSTOM preserves the existing
+# fine-grained switches for development and desktop builds.
+if(NOT TOKMON_DISTRIBUTION_MODE_NORMALIZED STREQUAL "CUSTOM")
+  set(TOKMON_BUILD_UI OFF)
+  set(TOKMON_BUILD_LAUNCHER OFF)
+  if(TOKMON_DISTRIBUTION_MODE_NORMALIZED STREQUAL "DYNAMIC")
+    set(TOKMON_BUILD_LENS_MODULES ON)
+  else()
+    set(TOKMON_BUILD_LENS_MODULES OFF)
+  endif()
+endif()
+
 include(CTest)
 if(BUILD_TESTING AND TOKMON_BUILD_TESTS AND NOT TOKMON_BUILD_LENS_MODULES)
   message(FATAL_ERROR
@@ -116,16 +140,35 @@ else()
   target_link_libraries(tokmon_core PRIVATE dl pthread)
 endif()
 
-add_executable(tokmond apps/tokmond/main.cpp)
-target_link_libraries(tokmond PRIVATE tokmon_core)
+if(TOKMON_DISTRIBUTION_MODE_NORMALIZED STREQUAL "MONOLITHIC")
+  add_executable(tokmon
+    apps/tokmon-monolithic/main.cpp
+    apps/tokmon-cli/main.cpp
+    apps/tokmond/main.cpp
+    apps/tokmon-lens-worker/main.cpp)
+  target_include_directories(tokmon PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_link_libraries(tokmon PRIVATE tokmon_core)
+  target_compile_definitions(tokmon PRIVATE TOKMON_MONOLITHIC_EXECUTABLE=1)
+  target_compile_definitions(tokmon_core PRIVATE TOKMON_MONOLITHIC_EXECUTABLE=1)
+  set(TOKMON_RUNTIME_TARGETS tokmon)
+  set(TOKMON_WORKER_TARGET tokmon)
+else()
+  add_executable(tokmond apps/tokmond/main.cpp apps/tokmond/entry.cpp)
+  target_include_directories(tokmond PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_link_libraries(tokmond PRIVATE tokmon_core)
 
-add_executable(tokmon apps/tokmon-cli/main.cpp)
-target_link_libraries(tokmon PRIVATE tokmon_core)
+  add_executable(tokmon apps/tokmon-cli/main.cpp apps/tokmon-cli/entry.cpp)
+  target_include_directories(tokmon PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_link_libraries(tokmon PRIVATE tokmon_core)
 
-add_executable(tokmon-lens-worker apps/tokmon-lens-worker/main.cpp)
-target_link_libraries(tokmon-lens-worker PRIVATE tokmon_core)
+  add_executable(tokmon-lens-worker
+    apps/tokmon-lens-worker/main.cpp apps/tokmon-lens-worker/entry.cpp)
+  target_include_directories(tokmon-lens-worker PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_link_libraries(tokmon-lens-worker PRIVATE tokmon_core)
 
-set(TOKMON_RUNTIME_TARGETS tokmond tokmon tokmon-lens-worker)
+  set(TOKMON_RUNTIME_TARGETS tokmond tokmon tokmon-lens-worker)
+  set(TOKMON_WORKER_TARGET tokmon-lens-worker)
+endif()
 if(TOKMON_BUILD_LAUNCHER)
   add_executable(tokmon-launcher apps/tokmon-launcher/main.cpp)
   target_link_libraries(tokmon-launcher PRIVATE tokmon_core)
@@ -211,6 +254,9 @@ endif()
 foreach(target IN LISTS TOKMON_RELEASE_TARGETS)
   tokmon_optimize_release_target("${target}")
 endforeach()
+
+message(STATUS "Tokmon distribution mode: ${TOKMON_DISTRIBUTION_MODE_NORMALIZED}")
+message(STATUS "Tokmon runtime targets: ${TOKMON_RUNTIME_TARGETS}")
 
 if(BUILD_TESTING AND TOKMON_BUILD_TESTS)
   add_subdirectory(tests)
