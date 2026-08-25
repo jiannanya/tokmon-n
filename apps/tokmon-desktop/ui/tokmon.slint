@@ -164,6 +164,10 @@ export component MainWindow inherits Window {
     in-out property <string> setting-quiet-hours: "22:00 - 08:00";
     in-out property <bool> setting-dark-theme: false;
     in-out property <bool> setting-cloud-sync: true;
+    // Native HWND activation and Slint keyboard focus are separate. This flag
+    // performs one focus hand-off after the event loop has started so the first
+    // pointer press is a real control click instead of an activation click.
+    property <bool> startup-input-focus-pending: true;
     in-out property <length> sidebar-width: 240px;
     in-out property <length> code-panel-width: 440px;
     in property <[string]> agent-options;
@@ -270,6 +274,16 @@ export component MainWindow inherits Window {
                 root.context-popover-open = false;
             }
             root.context-close-pending = false;
+        }
+    }
+
+    Timer {
+        // Run after the deferred Win32 foreground activation (1 ms in C++).
+        interval: 8ms;
+        running: root.startup-input-focus-pending;
+        triggered => {
+            root.startup-input-focus-pending = false;
+            hs.focus();
         }
     }
 

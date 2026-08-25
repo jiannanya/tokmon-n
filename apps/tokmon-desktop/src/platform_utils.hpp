@@ -27,5 +27,6 @@ void drag_current_process_window();
 void update_current_process_window_drag();
 void end_current_process_window_drag();
 void make_current_process_window_frameless();
+void activate_current_process_window();
 
 } // namespace tokmon::desktop

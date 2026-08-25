@@ -729,6 +729,12 @@ int run_application(int argc, char **argv) {
   window->show();
 #if defined(_WIN32)
   make_current_process_window_frameless();
+  // Defer activation until Slint's event loop is actually dispatching native
+  // focus messages. Activating before run_event_loop() makes Windows report the
+  // HWND as foreground, but winit can still treat the first click as activation.
+  slint::Timer::single_shot(std::chrono::milliseconds(1), [] {
+    activate_current_process_window();
+  });
 #endif
   slint::run_event_loop();
   window->hide();

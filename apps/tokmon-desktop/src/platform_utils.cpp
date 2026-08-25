@@ -283,6 +283,23 @@ void make_current_process_window_frameless() {
                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
                    SWP_NOACTIVATE);
 }
+
+void activate_current_process_window() {
+  const auto hwnd = current_process_window();
+  if (!hwnd)
+    return;
+  // Applying the custom frame above deliberately avoids activation so Windows
+  // does not interpret the style refresh as a second window presentation. Once
+  // the frame is stable, explicitly activate the real Slint HWND exactly once;
+  // otherwise the first click is consumed by Windows and hover/click handling
+  // inside the desktop UI only starts after that click.
+  ShowWindow(hwnd, SW_SHOW);
+  SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0,
+               SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+  SetForegroundWindow(hwnd);
+  SetActiveWindow(hwnd);
+  SetFocus(hwnd);
+}
 #endif
 
 #if defined(_WIN32)
