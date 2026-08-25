@@ -89,6 +89,8 @@ export component WorkspacePanel inherits Rectangle {
     callback refresh-trace();
     callback export-trace();
     callback drag-window();
+    callback update-window-drag();
+    callback end-window-drag();
     callback minimize-window();
     callback toggle-maximize-window();
     callback close-window();
@@ -157,6 +159,13 @@ export component WorkspacePanel inherits Rectangle {
         root.return-focus();
     }
 
+    function begin-titlebar-drag() {
+        // Moving focus first also commits an active title editor through its
+        // existing blur-as-Enter path before the native move loop begins.
+        root.return-focus();
+        root.drag-window();
+    }
+
     // Focus leaves the TextInput before a neighboring TouchArea receives its
     // click. Deferring the commit lets the clear button cancel it; a genuine
     // outside click still commits immediately on the next event-loop tick.
@@ -189,23 +198,27 @@ export component WorkspacePanel inherits Rectangle {
                     Rectangle {
                         height: 46px;
                         background: rgba(250, 250, 249, 0.94);
-                        TouchArea {
-                            // Reserve the left side for the title/editor and the
-                            // right side for panel/window controls. A full-width
-                            // drag layer competes with their pointer hit targets.
-                            x: 320px;
-                            width: Math.max(0px, parent.width - self.x - 160px);
-                            moved => { root.drag-window() }
-                            clicked => { root.return-focus(); }
-                        }
-                        HorizontalLayout {
+                        header-content := HorizontalLayout {
                             padding-left: root.sidebar-visible ? 16px : 40px;
                             padding-right: 16px;
-                            alignment: space-between;
-                        HorizontalLayout {
+                            spacing: 0px;
+                            alignment: start;
+                        title-actions := HorizontalLayout {
+                            // Give the hit-test geometry the same bounded width as
+                            // the rendered content. Without an explicit width this
+                            // nested layout can report only its minimum width and a
+                            // neighboring drag zone would cover the pencil/input.
+                            width: root.title-editing
+                                ? 240px
+                                // Include the pencil target plus a safety allowance
+                                // for mixed CJK/Latin glyph advance rounding. The
+                                // title remains bounded and elides on narrow windows.
+                                : Math.min(300px, session-title-label.preferred-width) + 66px;
+                            horizontal-stretch: 0;
                             spacing: 8px;
                             alignment: start;
-                            if !root.title-editing : Text {
+                            session-title-label := Text {
+                                visible: !root.title-editing;
                                 text: root.session-title;
                                 font-size: 14.5px;
                                 font-weight: 600;
@@ -292,7 +305,39 @@ export component WorkspacePanel inherits Rectangle {
                                 clicked => { root.begin-title-edit(); }
                             }
                         }
-                        HorizontalLayout {
+                        // This is a real layout spacer, not an overlay. Therefore
+                        // its TouchArea can only receive events from the visible
+                        // blank space between the title controls and window buttons.
+                        titlebar-blank-space := Rectangle {
+                            min-width: 0px;
+                            preferred-width: 100000px;
+                            max-width: 100000px;
+                            horizontal-stretch: 1;
+                            TouchArea {
+                                x: 0px;
+                                y: 7px;
+                                width: parent.width;
+                                height: parent.height - self.y;
+                                pointer-event(event) => {
+                                    if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                                        root.begin-titlebar-drag();
+                                    } else if event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel {
+                                        root.end-window-drag();
+                                    }
+                                }
+                                moved => {
+                                    if self.pressed {
+                                        root.update-window-drag();
+                                    }
+                                }
+                            }
+                        }
+                        window-actions := HorizontalLayout {
+                            // 28px panel button + optional 4px gap and 76px native
+                            // window controls. This keeps the right blank drag zone
+                            // completely outside every hover/click target.
+                            width: root.code-visible ? 28px : 108px;
+                            horizontal-stretch: 0;
                             spacing: 4px;
                             alignment: end;
                             ToolIcon {

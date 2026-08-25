@@ -664,6 +664,8 @@ int run_application(int argc, char **argv) {
     window->set_settings_status("已恢复默认值；点击“保存更改”后写入");
   });
   window->on_drag_window([] { drag_current_process_window(); });
+  window->on_update_window_drag([] { update_current_process_window_drag(); });
+  window->on_end_window_drag([] { end_current_process_window_drag(); });
   window->on_minimize_window(
       [window] { window->window().set_minimized(true); });
   window->on_toggle_maximize_window([window] {

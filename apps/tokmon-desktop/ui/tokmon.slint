@@ -7,6 +7,8 @@ import { WorkspacePanel } from "tokmon-workspace.slint";
 import { CreateNavigationOverlay } from "tokmon-navigation-overlays.slint";
 import { ChangeWorkspaceOverlay } from "tokmon-workspace-overlay.slint";
 
+// Child panels expose native window dragging only from flex-layout spacer items
+// in the top header; MainWindow intentionally has no full-surface drag overlay.
 export component MainWindow inherits Window {
     title: "Tokmon — A Lens to Them All";
     no-frame: true;
@@ -180,6 +182,8 @@ export component MainWindow inherits Window {
     callback store-provider-secret(string, string);
     callback test-provider(string);
     callback drag-window();
+    callback update-window-drag();
+    callback end-window-drag();
     callback minimize-window();
     callback toggle-maximize-window();
     callback close-window();
@@ -303,6 +307,9 @@ export component MainWindow inherits Window {
                 quick-create(index) => { root.quick-create(index); }
                 clear-search => { root.clear-search(); }
                 settings-searched(text) => { root.settings-searched(text); }
+                drag-window => { root.drag-window(); }
+                update-window-drag => { root.update-window-drag(); }
+                end-window-drag => { root.end-window-drag(); }
             }
             WorkspacePanel {
                 conversation-workflow: root.conversation-workflow;
@@ -377,6 +384,8 @@ export component MainWindow inherits Window {
                 refresh-trace => { root.refresh-trace(); }
                 export-trace => { root.export-trace(); }
                 drag-window => { root.drag-window(); }
+                update-window-drag => { root.update-window-drag(); }
+                end-window-drag => { root.end-window-drag(); }
                 minimize-window => { root.minimize-window(); }
                 toggle-maximize-window => { root.toggle-maximize-window(); }
                 close-window => { root.close-window(); }
@@ -416,6 +425,8 @@ export component MainWindow inherits Window {
                 issues-open <=> root.issues-open;
                 return-focus => { hs.focus(); }
                 drag-window => { root.drag-window(); }
+                update-window-drag => { root.update-window-drag(); }
+                end-window-drag => { root.end-window-drag(); }
                 minimize-window => { root.minimize-window(); }
                 toggle-maximize-window => { root.toggle-maximize-window(); }
                 close-window => { root.close-window(); }

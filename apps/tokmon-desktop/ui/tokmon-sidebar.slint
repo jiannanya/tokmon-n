@@ -17,6 +17,9 @@ export component SidebarPanel inherits HorizontalLayout {
     callback quick-create(int);
     callback clear-search();
     callback settings-searched(string);
+    callback drag-window();
+    callback update-window-drag();
+    callback end-window-drag();
 
     width: root.sidebar-visible ? root.sidebar-width + 1px : 0px;
     horizontal-stretch: 0;
@@ -36,13 +39,18 @@ export component SidebarPanel inherits HorizontalLayout {
                     Rectangle {
                         vertical-stretch: 1;
                         VerticalLayout {
-                            HorizontalLayout {
+                            sidebar-header-content := HorizontalLayout {
                                 padding-top: 2px;
                                 padding-bottom: 23px;
                                 padding-left: 4px;
                                 padding-right: 2px;
                                 alignment: space-between;
-                                HorizontalLayout {
+                                sidebar-brand := HorizontalLayout {
+                                    // Match hit-test geometry to the rendered logo,
+                                    // spacing and label so only the area after the
+                                    // brand is classified as draggable blank space.
+                                    width: 32px + sidebar-brand-label.preferred-width;
+                                    horizontal-stretch: 0;
                                     spacing: 8px;
                                     alignment: start;
                                     Image {
@@ -51,7 +59,7 @@ export component SidebarPanel inherits HorizontalLayout {
                                         height: 24px;
                                         y: (parent.height - 24px) / 2;
                                     }
-                                    Text {
+                                    sidebar-brand-label := Text {
                                         text: "Tokmon";
                                         font-size: 17px;
                                         font-weight: 700;
@@ -60,6 +68,37 @@ export component SidebarPanel inherits HorizontalLayout {
                                         vertical-alignment: center;
                                     }
                                 }
+                                // Like the workspace titlebar, this flexible spacer
+                                // is the only draggable item. It cannot cover the
+                                // brand or anything below the header layout.
+                                Rectangle {
+                                    min-width: 0px;
+                                    preferred-width: 100000px;
+                                    max-width: 100000px;
+                                    horizontal-stretch: 1;
+                                    TouchArea {
+                                        x: 0px;
+                                        y: 0px;
+                                        width: parent.width;
+                                        height: parent.height;
+                                        pointer-event(event) => {
+                                            if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                                                root.drag-window();
+                                            } else if event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel {
+                                                root.end-window-drag();
+                                            }
+                                        }
+                                        moved => {
+                                            if self.pressed {
+                                                root.update-window-drag();
+                                            }
+                                        }
+                                    }
+                                }
+                                // The collapse button lives on the separator as an
+                                // overlay; reserve its horizontal footprint here so
+                                // the draggable spacer never reaches that button.
+                                Rectangle { width: 18px; horizontal-stretch: 0; }
                             }
                             Rectangle {
                                 height: 42px;

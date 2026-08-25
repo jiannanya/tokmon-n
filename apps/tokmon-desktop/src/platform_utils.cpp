@@ -284,12 +284,63 @@ void make_current_process_window_frameless() {
                    SWP_NOACTIVATE);
 }
 #endif
+
+#if defined(_WIN32)
+namespace {
+struct ProcessWindowDragState {
+  HWND window = nullptr;
+  POINT cursor_origin{};
+  POINT window_origin{};
+  bool active = false;
+};
+
+ProcessWindowDragState &process_window_drag_state() {
+  static ProcessWindowDragState state;
+  return state;
+}
+} // namespace
+#endif
+
 void drag_current_process_window() {
 #if defined(_WIN32)
-  if (const auto hwnd = current_process_window()) {
-    ReleaseCapture();
-    SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+  auto &state = process_window_drag_state();
+  state.active = false;
+  const auto hwnd = current_process_window();
+  RECT bounds{};
+  POINT cursor{};
+  if (!hwnd || !GetWindowRect(hwnd, &bounds) || !GetCursorPos(&cursor))
+    return;
+  state.window = hwnd;
+  state.cursor_origin = cursor;
+  state.window_origin = POINT{bounds.left, bounds.top};
+  state.active = true;
+#endif
+}
+
+void update_current_process_window_drag() {
+#if defined(_WIN32)
+  auto &state = process_window_drag_state();
+  if (!state.active || !IsWindow(state.window))
+    return;
+  if ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) == 0) {
+    state.active = false;
+    return;
   }
+  POINT cursor{};
+  if (!GetCursorPos(&cursor))
+    return;
+  // Screen-coordinate deltas stay correct across DPI/UI-scale changes. This
+  // deliberately changes position only; Slint's 7px border owns resizing.
+  SetWindowPos(state.window, nullptr,
+               state.window_origin.x + cursor.x - state.cursor_origin.x,
+               state.window_origin.y + cursor.y - state.cursor_origin.y, 0, 0,
+               SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+#endif
+}
+
+void end_current_process_window_drag() {
+#if defined(_WIN32)
+  process_window_drag_state().active = false;
 #endif
 }
 

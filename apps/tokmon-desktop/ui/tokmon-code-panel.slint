@@ -27,6 +27,8 @@ export component CodePanelSlot inherits Rectangle {
 
     callback return-focus();
     callback drag-window();
+    callback update-window-drag();
+    callback end-window-drag();
     callback minimize-window();
     callback toggle-maximize-window();
     callback close-window();
@@ -68,15 +70,15 @@ export component CodePanelSlot inherits Rectangle {
                 VerticalLayout {
                     Rectangle {
                         height: 46px;
-                        header-drag := TouchArea {
-                            moved => { root.drag-window() }
-                            clicked => { root.return-focus(); }
-                        }
-                        HorizontalLayout {
+                        code-header-content := HorizontalLayout {
                             padding-left: 16px;
                             padding-right: 4px;
-                            alignment: space-between;
-                            HorizontalLayout {
+                            spacing: 0px;
+                            alignment: start;
+                            code-header-tabs := HorizontalLayout {
+                                // Reserve the complete tab hit targets before the
+                                // flexible draggable spacer begins.
+                                width: 200px;
                                 spacing: 24px;
                                 alignment: start;
                                 horizontal-stretch: 0;
@@ -123,7 +125,35 @@ export component CodePanelSlot inherits Rectangle {
                                     }
                                 }
                             }
-                            HorizontalLayout {
+                            // Only this auto-sized blank spacer starts native
+                            // window movement. Tabs and window buttons remain
+                            // independent hover/click targets at every width.
+                            Rectangle {
+                                min-width: 0px;
+                                preferred-width: 100000px;
+                                max-width: 100000px;
+                                horizontal-stretch: 1;
+                                TouchArea {
+                                    x: 0px;
+                                    y: 7px;
+                                    width: parent.width;
+                                    height: parent.height - self.y;
+                                    pointer-event(event) => {
+                                        if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                                            root.return-focus();
+                                            root.drag-window();
+                                        } else if event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel {
+                                            root.end-window-drag();
+                                        }
+                                    }
+                                    moved => {
+                                        if self.pressed {
+                                            root.update-window-drag();
+                                        }
+                                    }
+                                }
+                            }
+                            code-window-actions := HorizontalLayout {
                                 spacing: 0px;
                                 horizontal-stretch: 0;
                                 ToolIcon { source: Icons.minus; icon-size: 14px; clicked => { root.minimize-window() } }
@@ -493,4 +523,3 @@ export component CodePanelSlot inherits Rectangle {
                 }
             
 }
-

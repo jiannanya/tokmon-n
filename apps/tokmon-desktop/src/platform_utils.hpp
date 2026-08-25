@@ -24,6 +24,8 @@ bool same_workspace(const std::filesystem::path &left,
                     const std::filesystem::path &right);
 
 void drag_current_process_window();
+void update_current_process_window_drag();
+void end_current_process_window_drag();
 void make_current_process_window_frameless();
 
 } // namespace tokmon::desktop
