@@ -116,12 +116,15 @@ export component EnvironmentPanel inherits Rectangle {
     in property <int> indexed-files;
     in property <bool> has-git;
     in property <bool> locked;
+    in property <bool> collapsed-tooltip-right: false;
+    in property <bool> collapsed-tooltip-above: false;
 
     in-out property <bool> open: false;
     in-out property <int> dropdown: 0;
     in-out property <string> toast-text;
     in-out property <string> branch-input;
     in-out property <bool> branch-input-visible: false;
+    property <length> collapsed-drag-distance: 0px;
 
     callback open-project-file(int);
     callback open-change-workspace();
@@ -129,6 +132,7 @@ export component EnvironmentPanel inherits Rectangle {
     callback copy-text(string);
     callback refresh-workspace();
     callback open-workspace-settings();
+    callback move-collapsed(length, length);
 
     property <length> changes-height: root.dropdown == 1
         ? (root.project-files.length == 0 ? 38px : Math.min(root.project-files.length, 4) * 30px + 8px)
@@ -179,11 +183,33 @@ export component EnvironmentPanel inherits Rectangle {
         }
         collapsed-touch := TouchArea {
             mouse-cursor: pointer;
-            clicked => { root.open = true; root.dropdown = 0; }
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.down {
+                    root.collapsed-drag-distance = 0px;
+                }
+            }
+            moved => {
+                if self.pressed {
+                    root.collapsed-drag-distance = root.collapsed-drag-distance
+                        + Math.abs(self.mouse-x - self.pressed-x)
+                        + Math.abs(self.mouse-y - self.pressed-y);
+                    root.move-collapsed(
+                        self.mouse-x - self.pressed-x,
+                        self.mouse-y - self.pressed-y
+                    );
+                }
+            }
+            clicked => {
+                if root.collapsed-drag-distance < 4px {
+                    root.open = true;
+                    root.dropdown = 0;
+                }
+                root.collapsed-drag-distance = 0px;
+            }
         }
-        if collapsed-touch.has-hover : Rectangle {
-            x: parent.width - 209px;
-            y: 56px;
+        if collapsed-touch.has-hover && !collapsed-touch.pressed : Rectangle {
+            x: root.collapsed-tooltip-right ? 0px : parent.width - 209px;
+            y: root.collapsed-tooltip-above ? -39px : 56px;
             width: 209px;
             height: 31px;
             border-radius: 8px;

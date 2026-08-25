@@ -76,6 +76,8 @@ export component WorkspacePanel inherits Rectangle {
     in-out property <bool> context-card-hover;
     in-out property <bool> context-close-pending;
     in-out property <bool> trace-filter-open;
+    property <length> environment-button-x: -1px;
+    property <length> environment-button-y: 48px;
 
     callback send-message(string);
     callback slash-query-changed(string);
@@ -123,6 +125,17 @@ export component WorkspacePanel inherits Rectangle {
         root.context-button-hover = false;
         root.context-card-hover = false;
         root.context-close-pending = false;
+    }
+
+    pure function resolved-environment-button-x() -> length {
+        Math.max(8px, Math.min(
+            root.environment-button-x < 0px ? root.width - 64px : root.environment-button-x,
+            root.width - 56px
+        ))
+    }
+
+    pure function resolved-environment-button-y() -> length {
+        Math.max(48px, Math.min(root.environment-button-y, root.height - 56px))
     }
 
                 min-width: 480px;
@@ -1038,8 +1051,12 @@ if root.trajectory-selected : TrajectoryPanel {
 }
 
 environment-panel := EnvironmentPanel {
-    x: parent.width - self.width - 16px;
-    y: 48px;
+    x: root.environment-panel-open
+        ? Math.max(8px, Math.min(root.resolved-environment-button-x(), parent.width - self.width - 8px))
+        : root.resolved-environment-button-x();
+    y: root.environment-panel-open
+        ? Math.max(48px, Math.min(root.resolved-environment-button-y(), parent.height - self.height - 8px))
+        : root.resolved-environment-button-y();
     z: 120;
     project-files: root.project-files;
     workspace-presets: root.workspace-presets;
@@ -1050,7 +1067,19 @@ environment-panel := EnvironmentPanel {
     indexed-files: root.workspace-indexed-files;
     has-git: root.workspace-has-git;
     locked: root.workspace-locked;
+    collapsed-tooltip-right: root.resolved-environment-button-x() < 217px;
+    collapsed-tooltip-above: root.resolved-environment-button-y() > root.height - 104px;
     open <=> root.environment-panel-open;
+    move-collapsed(delta-x, delta-y) => {
+        root.environment-button-x = Math.max(8px, Math.min(
+            environment-panel.x + delta-x,
+            root.width - 56px
+        ));
+        root.environment-button-y = Math.max(48px, Math.min(
+            environment-panel.y + delta-y,
+            root.height - 56px
+        ));
+    }
     open-project-file(index) => {
         root.select-project-file(index);
         root.set-code-panel-visible(true);
