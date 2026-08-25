@@ -11,13 +11,14 @@
 
 `tokmon-n` 已经具备 RCLD 的主要工程骨架：append-only Photon、hash chain、不可变 LightPath snapshot、Lens `view/refract`、结构化 Act、Beam ticket、动态库换代、多语言 worker、Windows Job Object、审批与 Secret binding，以及覆盖真实文件、Git、PTY、HTTP、MCP/LSP 等边界的测试。
 
-下一阶段不应继续扩大术语或增加更多 Lens，而应优先把以下五个基础保证做成可由运行时强制、可由测试复现的性质：
+下一阶段不应继续扩大术语或增加更多 Lens，而应优先把以下六个基础保证做成可由运行时强制、可由测试复现的性质：
 
 1. **历史完整性**：任意规模的 Photon 流都能分页读取、完整验证、恢复和派生，不能在 4096 或 100000 条处静默截断；
 2. **代际单调性**：daemon 重启、并发 reconcile 和失败恢复后，epoch/generation 仍全局单调，不会复用身份；
 3. **未来零新增贡献**：新 epoch 中不会出现已卸载 generation 的直接 Surface contribution，也不会启动指向旧 generation 的新 Act；
 4. **资源归属可验证**：线程、timer、连接、进程、临时文件、watcher、Secret binding 等资源由 mount guard 托管，卸载后能枚举、停止和给出证据；
 5. **副作用准入不可伪造**：审批、权限、目标 generation、schema、idempotency 和 sandbox 结果由宿主签发并绑定，模型或 Lens 不能用输入字段冒充审批结论。
+6. **事实密度受控**：机械运行信号默认不进入 PhotonStore；只有影响恢复、审计、未来规范行为或外部世界的最小充分事实才被 Photon 化，模型只接收经过独立 Surface Gate 选择的有界认知面。
 
 当前最优先的工作不是性能优化，而是修复若干会破坏上述保证的具体问题：
 
@@ -41,6 +42,9 @@
 | RCLD-016 | natural darkness 只看“当前没有 proposal” | 未建模 pending Beam、approval、child ray 和外部等待 | P1 |
 | RCLD-017 | `mount.epoch-committed` 先写入、随后才 publish，且 publish 无 CAS/single-writer 证明 | 并发或故障下 durable journal 可能与 active path 不一致 | P0 |
 | RCLD-018 | Photon commit 后 observer 在无异常隔离的情况下执行 | observer 抛异常时调用方可能误以为 append 未提交 | P0 |
+| RCLD-019 | 缺少统一 Fact Gate 与 schema durability policy | 机械信号可能被误提交为永久 Photon，账本信噪比持续下降 | P0 |
+| RCLD-020 | telemetry、flight recorder、artifact 与 durable fact 没有统一分流接口 | 调试、指标和大输出容易污染事实账本或散落在 Lens 内 | P1 |
+| RCLD-021 | Photon 持久化与模型可见性没有被定义为两个独立决策 | 已持久化的审计/运行事实可能无差别进入 Surface，增加认知噪声 | P0 |
 
 ## 2. 目标：把 RCLD 从比喻变成运行时契约
 
@@ -48,7 +52,7 @@
 
 `tokmon-n` 应继续坚持：
 
-- Fact/Photon 是唯一已发生事实；
+- Fact/Photon 是唯一进入恢复、审计和未来规范行为的已提交事实；瞬时 Signal 只表示运行过程，不构成规范状态；
 - Photon 只追加，不原地更新或删除；
 - Surface 是当前 epoch 对已提交事实前缀的派生视图；
 - Lens 的直接 contribution 带有宿主生成的 provenance；
@@ -71,7 +75,7 @@
 - “发布 snapshot 的耗时等同于完整拆卸耗时”；
 - 未提供 benchmark 工具、原始数据和统计分布的纳秒、内存或百分比承诺。
 
-### 2.3 建议固定的十二条运行时不变式
+### 2.3 建议固定的十六条运行时不变式
 
 | ID | 不变式 | 可执行含义 |
 |---|---|---|
@@ -87,6 +91,105 @@
 | INV-10 | No Silent Side Channel | T2/T3 Lens 无法绕过 worker bridge；T0/T1 同进程 Lens 明确属于可信边界 |
 | INV-11 | History-preserving Detach | 卸载不删除旧 Photon；新 epoch 不再产生旧代直接 contribution/Act |
 | INV-12 | Bounded Failure | I/O、worker、Beam、approval、loop 和 afterglow 都有显式 deadline/budget/fail-closed 结果 |
+| INV-13 | Minimal Durable Fact | Photon 是通过 Fact Gate 的最小充分语义事实，不是任意内部事件、日志或数据帧 |
+| INV-14 | Durability Separation | transient signal、telemetry、flight record、artifact 与 durable Photon 使用不同存储和生命周期 |
+| INV-15 | Bounded Cognitive Surface | 无论 Photon 历史多长，每次模型 Surface 都受 channel/token/byte/relevance budget 约束 |
+| INV-16 | Dropped Signal Non-Normativity | 被丢弃或采样的 signal 不得偷偷决定未来规范行为；若会影响行为，必须提交其最小决定性结果 |
+
+### 2.4 两道门：Fact Gate 与 Surface Gate
+
+RCLD 不应被实现成“运行时发生的一切都是 Photon”。正确关系是：
+
+> **所有 Photon 都是事件，但绝大多数运行时事件不应成为 Photon。**
+
+系统必须把“是否持久化”和“是否给模型看”定义成两个独立、确定性的决策：
+
+```text
+运行时 Signal
+    │
+    ▼
+Fact Gate：是否值得持久化？
+    ├─ drop：立即丢弃
+    ├─ ring：只进入有界 flight recorder
+    ├─ metric：聚合为 counter/gauge/histogram
+    ├─ telemetry：短期、可采样的诊断存储
+    ├─ blob：大内容写 ArtifactStore，只提交引用
+    └─ photon：提交最小充分语义事实
+                    │
+                    ▼
+Surface Gate：当前模型是否需要看？
+    ├─ never：仅审计/恢复，永不进入模型
+    ├─ fold：确定性折叠成当前状态
+    ├─ retrieve：仅相关性命中时加入
+    ├─ summarize：有来源引用的有损摘要
+    └─ current：在严格预算内进入当前 Surface
+```
+
+这两道门分别解决不同问题：
+
+- Fact Gate 控制存储成本、恢复语义、审计密度和运行效率；
+- Surface Gate 控制 token 成本、模型注意力、过期信息、幻觉诱因和认知稳定性。
+
+不能通过“少存 Photon”代替 Surface 选择，也不能因为某 Photon 值得审计就默认让模型看到它。
+
+#### 2.4.1 五类运行时信息
+
+| 类别 | 默认处理 | 典型内容 | 是否允许影响规范状态 |
+|---|---|---|---:|
+| Transient Signal | drop 或 bounded stream | 函数调用、queue push/pop、scheduler tick、正常 heartbeat、token chunk | 否 |
+| Operational Metric | 聚合 | 延迟、吞吐、内存、queue depth、重试计数、Lens view 耗时 | 否 |
+| Diagnostic Trace | flight recorder/短期 telemetry | worker frame、最近 N 条内部状态、debug log、部分 stdout | 否 |
+| Recoverable Fact | Photon | user input、workflow step、mount activation、Act lifecycle、memory decision | 是 |
+| Security/External Fact | 强制 Photon | approval、authority change、Secret consume、文件写入、消息发送、不可逆 receipt | 是 |
+
+#### 2.4.2 Photon 化判定
+
+一个事件只有满足至少一个条件时才进入 PhotonStore：
+
+```text
+Persist(event) =
+    required_for_crash_recovery
+ OR required_for_security_or_audit
+ OR changes_future_normative_behavior
+ OR crosses_an_external_boundary
+ OR is_a_user_visible_semantic_result
+```
+
+如果以上条件全部为否，应进入 drop/metric/ring/telemetry，而不是以“以后可能调试有用”为理由永久保存。
+
+反向约束同样重要：如果一个 transient signal 会改变未来行为，就必须提交其最小决定性结果。例如无需保存模型的每个 token chunk，但必须保存最终 tool call；无需保存每次 policy 函数内部判断，但必须保存最终 policy/approval receipt。
+
+#### 2.4.3 持久化策略属于 schema
+
+建议每个 schema 声明：
+
+```yaml
+kind: process.stdout-chunk
+durability: transient       # transient | telemetry | recoverable | audit
+retention: none             # none | session | 7d | permanent | policy:<id>
+aggregation: stream         # none | counter | gauge | histogram | coalesce | stream
+payload_policy: blob_ref    # inline | hash_only | blob_ref
+model_visibility: never     # never | fold | retrieve | summarize | current
+sensitivity: normal
+rate_limit: 100/s
+max_payload_bytes: 65536
+```
+
+这些字段由 Nyxia 的 SchemaRegistry 和 Fact Gate 强制，Lens 不能自行把 `transient` schema 提升为永久事实，也不能把 `model_visibility: never` 的内容直接注入 Model Surface。
+
+#### 2.4.4 默认分类示例
+
+| 信息 | 默认去向 | 持久化结果 |
+|---|---|---|
+| streaming token/chunk | ephemeral stream | 最终 response 或中断摘要 Photon |
+| 正常 worker heartbeat | metric/drop | 只在 unhealthy/recovered 状态变化时提交 Photon |
+| tool stdout/stderr chunk | ring/blob stream | terminal Photon 保存 BlobRef、hash、size、truncated |
+| Lens view 开始/结束 | histogram | 不提交 Photon；失败时提交有界诊断事实 |
+| scheduler poll/tick | drop | 只提交 quiescent/budget-exhausted/cancelled 状态变化 |
+| filesystem watcher burst | debounce/coalesce | 一条规范化 `workspace.changes-observed` Photon |
+| retry sleep | metric | 最终结果中记录 attempts/backoff summary |
+| approval/authority expansion | audit Photon | 永久、不可采样、默认不直接进入模型 |
+| 大文件、长日志、模型原始响应 | ArtifactStore | Photon 只保存 BlobRef、hash、size、provenance |
 
 ## 3. 建议的目标对象模型
 
@@ -436,6 +539,10 @@ SurfaceBuilder builder(SurfaceBuildPolicy{
 ```cpp
 class OpticalHost {
  public:
+  virtual SignalSink& signals() noexcept = 0;
+  virtual MetricSink& metrics() noexcept = 0;
+  virtual FlightRecorder& debug() noexcept = 0;
+  virtual ArtifactStore& artifacts() noexcept = 0;
   virtual PhotonEmitter& photons() noexcept = 0;
   virtual HostedTasks& tasks() noexcept = 0;
   virtual HostedTimers& timers() noexcept = 0;
@@ -543,7 +650,7 @@ manifest 和 Photon 必须报告实际达成等级，不能把请求的 C2 退�
 - 系统 schema 由 Nyxia 内置并版本化；
 - Lens artifact schema bundle 在 stage 时注册到 candidate-local registry；
 - `SurfaceBuilder::propose` 和 admission 前校验 Act parameters；
-- `RefractionBeam::emit` 校验 Lens 是否声明可发该 Photon kind/schema，并校验 payload；
+- `RefractionBeam::commit_fact` 校验 Lens 是否声明可发该 durable Photon kind/schema，并校验 payload；`progress/metric/artifact` 分别走独立策略；
 - schema identity 使用稳定 URI/semantic version/hash；
 - 同 schema id 不同 hash 默认拒绝；
 - backward/forward compatibility 规则显式声明；
@@ -573,6 +680,165 @@ manifest 和 Photon 必须报告实际达成等级，不能把请求的 C2 退�
 - 在 prepared、publish、activated evidence 三个位置注入崩溃，恢复后 current/journal 唯一一致；
 - observer 主动抛异常时 Photon 仍只提交一次，调用方收到稳定的“提交成功、通知失败已隔离”语义；
 - 不允许因 observer 异常重复执行对应外部 Act。
+
+### 4.12 RCLD-019/020/021：实现 Fact Gate、运行分流和 Surface Gate
+
+#### 当前问题
+
+- `RefractionBeam::emit()` 的语义默认是向 PhotonStore 提交事实，缺少 progress/metric/artifact/fact 的类型区分；
+- 机械运行事件是否持久化主要由各 Lens 自行判断，没有统一 schema policy 和 rate/retention enforcement；
+- debug log、指标、大 stdout、stream chunk、状态变化容易使用不同临时方案，缺少统一 flight recorder/telemetry/artifact 分流；
+- “已持久化”与“模型可见”没有统一的正交策略，Surface Lens 可能重新投影大量审计或机械事实；
+- 大 payload 若直接进入 Photon，会放大 SQLite、hash、CBOR、备份、回放与模型筛选成本。
+
+#### 目标接口
+
+```cpp
+enum class DurabilityClass {
+  transient,
+  telemetry,
+  recoverable,
+  audit,
+};
+
+enum class ModelVisibility {
+  never,
+  fold,
+  retrieve,
+  summarize,
+  current,
+};
+
+struct FactPolicy {
+  DurabilityClass durability;
+  ModelVisibility model_visibility;
+  RetentionPolicy retention;
+  AggregationPolicy aggregation;
+  PayloadPolicy payload;
+  RateLimit rate_limit;
+  std::size_t max_payload_bytes;
+};
+
+class RefractionBeam {
+ public:
+  Result<void> progress(SignalFrame frame);       // ephemeral
+  Result<void> metric(MetricSample sample);       // aggregated
+  Result<ArtifactRef> artifact(ArtifactDraft);    // content addressed
+  Result<Photon> commit_fact(FactDraft draft);    // Fact Gate
+};
+```
+
+`commit_fact()` 的处理顺序：
+
+```text
+resolve schema policy
+→ verify Lens emit permission
+→ validate payload schema/size/sensitivity
+→ apply rate/coalesce rule
+→ convert large payload to BlobRef when required
+→ attach host provenance
+→ append recoverable/audit Photon
+→ notify durable consumers
+```
+
+`progress()`、`metric()` 和 `debug()` 不得被 Lens 当作隐式规范状态；如果它们的结果将影响下一步 Act、恢复或用户可见结果，Lens 必须显式提交相应最小 Fact。
+
+#### Flight recorder
+
+每个 process、ray、mount 可以拥有有界 flight recorder：
+
+```text
+按条数和字节双重上限保存最近窗口
+→ 正常运行时覆盖旧记录
+→ crash/security/error 触发冻结
+→ 脱敏并写入诊断 Artifact
+→ 只提交一条 diagnostic.captured Photon 引用
+```
+
+flight recorder 不是事实账本，不能参与正常业务 fold。它只用于故障诊断，并受 retention/sensitivity policy 控制。
+
+#### 典型流程改造
+
+模型调用：
+
+```text
+token chunks → Snow ephemeral stream
+usage/latency → metrics
+raw response → inline 或 ArtifactRef
+final semantic response → model.completed Photon
+```
+
+进程执行：
+
+```text
+stdout/stderr chunks → bounded UI stream + flight recorder
+完整大输出 → ArtifactStore
+exit_code/hash/BlobRef/duration/truncated → process.completed Photon
+```
+
+文件 watcher：
+
+```text
+OS notifications → transient queue
+→ debounce/deduplicate/rename normalization
+→ workspace.changes-observed Photon
+```
+
+Lens view：
+
+```text
+duration/count/bytes → metrics
+normal start/end → 不提交 Photon
+deterministic view failure/state transition → 有界 diagnostic/recoverable Photon
+```
+
+#### Surface Gate
+
+Surface Gate 应按 channel 应用独立预算和选择规则：
+
+| Channel | 默认策略 |
+|---|---|
+| system/instruction | 固定上限、显式来源、最高优先级 |
+| current user task | 优先完整保留 |
+| active tools | 只包含当前 generation，经 schema 去重 |
+| workflow/current state | 确定性 fold 后的紧凑结构 |
+| recent dialogue | token-aware 滑动窗口 |
+| relevant memory/RAG | top-k、threshold、source refs、去重 |
+| tool results | 摘要 + ArtifactRef，按需展开 |
+| diagnostics/telemetry/audit | 默认 `never`，仅显式诊断任务检索 |
+
+Surface materialization 必须记录：
+
+- 输入 tail sequence/hash；
+- LightPath epoch/path hash；
+- 各 channel 输入/保留/丢弃的 item 和字节/token 估算；
+- contribution provenance；
+- truncation/retrieval/summarization 原因；
+- 最终 `surface_hash` 和 tool schema hash。
+
+#### 验收标准
+
+- 百万机械 signal 可以被处理，但 Photon 数只随语义状态变化增长，不随 scheduler tick/heartbeat/token chunk 线性增长；
+- 安全审计 schema 不得被 sampling/drop；
+- `durability: transient` 的 schema 不能通过任何 runtime 进入 PhotonStore；
+- `model_visibility: never` 的 Photon 不会进入普通模型请求；
+- 删除 telemetry、flight recorder、artifact cache 和 projection 后，不改变规范 Photon 历史与可重建状态；
+- 大工具输出只产生有界 Photon 和可校验 ArtifactRef；
+- 若被 drop 的 signal 会影响后续 Act，属性测试必须失败，迫使实现提交最小决定性 Fact；
+- Surface 在百万 Photon 历史下仍满足固定 channel/token/byte budget。
+
+#### 代码落点
+
+- `sdk/cpp/include/tokmon/lens.hpp`
+- `sdk/cpp/include/tokmon/photon.hpp`
+- 新增 `sdk/cpp/include/tokmon/fact_policy.hpp`
+- 新增 `nyxia/facts/fact_gate.cpp`
+- 新增 `nyxia/telemetry/flight_recorder.cpp`
+- `nyxia/engine/ray_tracing_engine.cpp`
+- `nyxia/loader/manifest_io.cpp`
+- `lenses/nota/nota_lens.cpp`
+- `lenses/textus/textus_lens.cpp`
+- `lenses/chora/chora_lens.cpp`
 
 ## 5. P1：补齐完整换代、规模化与故障恢复
 
@@ -760,29 +1026,55 @@ RCLD 不应承诺现实可逆，但应让不可逆性成为结构化事实。
 
 Inspector 必须默认脱敏；Secret 只显示引用和 binding 元数据。
 
+### 5.10 物理分层、归档与保留策略
+
+逻辑 append-only 不应被解释成“所有字节永远留在同一个热 SQLite 文件”。建议区分：
+
+| 层 | 内容 | 生命周期 |
+|---|---|---|
+| Hot Photon | 活跃 ray、近期恢复窗口、安全关键 tail | 主数据库、低延迟查询 |
+| Warm Segment | 已结束 ray 的 sealed 只读段 | 本地压缩、按需挂载 |
+| Cold Archive | 长期审计/历史段 | 内容寻址归档、离线验证 |
+| Artifact/Blob | 大输出、文件、模型原始响应、诊断包 | 独立 retention/dedup/encryption |
+| Projection/Index | checkpoint、embedding、查询索引 | 可删除重建 |
+| Telemetry | metric/log/trace | 短期 TTL、采样、聚合 |
+
+物理迁移必须保留 segment 的 sequence range、Merkle/root hash、schema catalog hash 和 archive location Photon。读取和验证通过逻辑 cursor 跨段进行，Lens 不感知物理位置。
+
+保留策略按数据类别制定：
+
+- security/authority/external receipt：按审计政策长期保留；
+-普通 recoverable fact：按 workspace/session policy 归档；
+- telemetry/flight recorder：短 TTL；
+- artifact：引用计数、policy TTL、legal hold；
+- projection/index：随时可删；
+- Secret/隐私数据：Photon 只保存引用或密文，必要时采用 key destruction/crypto-shredding，并追加删除证据。
+
+严格 append-only 与法律删除要求存在真实张力，必须在产品政策中明确。不能既宣称明文永不删除，又承诺可彻底清除个人数据。推荐让 Photon 保存最小元数据、hash 和受控引用，把可删除敏感内容放在独立加密 Artifact/Secret store。
+
 ## 6. 十九个正式 Lens 与 Calculator 的逐项完善建议
 
 | 组件 | 重点完善 | RCLD 验收点 |
 |---|---|---|
-| Nyxia | epoch allocator、MountCoordinator、SchemaRegistry、MountGuard、ResourceLedger、完整分页/恢复 | 是唯一 publication/admission/append 权威；跨重启单调 |
+| Nyxia | epoch allocator、MountCoordinator、SchemaRegistry、Fact Gate、Surface Gate、MountGuard、ResourceLedger、完整分页/恢复 | 是唯一 publication/admission/append/durability 权威；跨重启单调 |
 | Ignis | desired/current diff、artifact evidence、authority expansion、dark-lane report | 候选失败不影响当前 path；权限不可绕过 |
-| Lemon | queue/cursor 资源归 guard；明确 durable cursor 与 epoch bridge | 换代不丢 frame、不重复消费；旧 producer 不再发新 frame |
+| Lemon | queue/cursor 资源归 guard；区分 transient frame 与 committed Fact；明确 durable cursor 与 epoch bridge | 换代不丢规范事实；机械 frame 不污染 Photon；旧 producer 不再发新 frame |
 | Iris | endpoint capability、连接托管、reconnect generation、Secret binding | 卸载关闭连接；旧代回调不能进入新 epoch |
-| Rhea | model request 绑定 surface/tool/path hash；stream cancel；provider retry/idempotency | 每个模型可见输入可重建；取消后无新旧代 token 串流 |
+| Rhea | model request 绑定 surface/tool/path hash；token chunk 走 transient stream；stream cancel；provider retry/idempotency | 每个模型可见输入可重建；只持久化最终语义结果/必要 Artifact；取消后无新旧代 token 串流 |
 | Janus | 明确 agent step 状态机、proposal provenance、repeat detection、natural darkness | 不读取旁路 tool registry；旧工具 proposal 必被 stale-target 拒绝 |
 | Clotho | DAG 仅作为 Lens 内部显式 workflow；确定性 ready set；compensation 是新事实 | 不把内部 DAG 与全局 LightPath 混为一谈；恢复后步骤不重复 |
 | Aya | child ray capability、预算、secret 不继承、worktree guard、merge proposal | child discard 不冒充现实回滚；merge 有 provenance/approval |
-| Textus | host-owned projection cache、token budget、source refs、epoch-safe compaction | 删除缓存可重建；压缩结果是新 Photon，不覆写历史 |
+| Textus | host-owned projection cache、Surface Gate、channel/token budget、source refs、epoch-safe compaction | 删除缓存可重建；诊断/遥测默认不入模型；压缩结果是新 Photon，不覆写历史 |
 | Enso | index/checkpoint 作为派生状态；skill/RAG trust；filesystem 只在 refract/host I/O | `view` 只读 Photon；artifact/skill 内容 hash 与来源完整 |
 | Techor | tool schema registry、tool contribution generation、唯一 target、argument validation | tool schema 消失与 runtime stale-target rejection 双重保障 |
 | Styx | 准确 sandbox level、process/resource guard、network/filesystem allowlist、WASM/container live test | 请求强度无法满足时 fail closed；无“host-unrestricted”伪装隔离 |
 | Fallen | AdmissionReceipt、双层 policy、one-shot/session approval、authority expansion | 输入 `approved=true` 无效；审批严格绑定 Act/epoch/generation |
 | Cista | Secret binding 移入 MountGuard、generation revoke、zeroization、出口 schema-aware redaction | 卸载撤销全部 binding；Photon/log 无明文 |
-| Chora | Blob/checkpoint/archive 与 Photon append 权威分层；backup/restore evidence | Chora 不成为第二个可绕过的 Photon writer；恢复不改旧历史 |
-| Tracket | 全量流式 hash 验证、R0-R3 replay 契约、fork-only live replay | 超过 100000 条仍完整验证；R3 永远写新 ray |
-| Nota | exporter/server/timer 全部托管；bounded telemetry；诊断包 provenance | 卸载 endpoint 消失；日志/导出默认脱敏 |
+| Chora | Blob/checkpoint/hot-warm-cold archive 与 Photon append 权威分层；dedup/retention；backup/restore evidence | 大内容只留 ArtifactRef；Chora 不成为第二个 Photon writer；恢复不改旧历史 |
+| Tracket | 全量流式 hash 验证、R0-R3 replay、flight recorder 冻结引用、fork-only live replay | 超过 100000 条仍完整验证；诊断轨迹不参与业务 fold；R3 永远写新 ray |
+| Nota | metric/log/trace 与 Photon 分流；exporter/server/timer 全部托管；bounded telemetry；诊断包 provenance | 正常 heartbeat/view latency 只聚合；卸载 endpoint 消失；日志/导出默认脱敏 |
 | Cove | watcher/process/file handle 托管；symlink/TOCTOU/precondition；worktree 生命周期 | 所有 workspace 改动先 Act、后事实；取消/失败留下明确结果 |
-| Snow | listener/lease 托管、协议 epoch、cursor/gap、client capability | 换代时旧 listener drain；客户端不会把旧 Surface 当当前状态 |
+| Snow | listener/lease 托管、协议 epoch、cursor/gap、ephemeral progress/token stream、client capability | 实时 chunk 不永久 Photon 化；换代时旧 listener drain；客户端不会把旧 Surface 当当前状态 |
 | Termon | R2 handoff、UI 全部由 snapshot/delta 重建、审批 receipt 显示 | UI 进程重启不丢规范状态；旧窗口不能提交旧 epoch Act |
 | Calculator | 移出默认/强制路径，只保留 demo 与 SDK 合约 | 配置关闭后 tool schema 和 target 同时不可用 |
 
@@ -804,6 +1096,10 @@ Inspector 必须默认脱敏；Secret 只显示引用和 binding 元数据。
 | PROP-10 | Cache disposability | 删除所有 projection cache 后 Surface 与未删除时一致 |
 | PROP-11 | History preservation | detach、compact、replay 不 UPDATE/DELETE 旧 Photon |
 | PROP-12 | Sandbox honesty | 实际达不到请求隔离等级时拒绝执行，报告值不能虚高 |
+| PROP-13 | Minimal fact admission | scheduler tick、heartbeat、token chunk、正常 view start/end 不会线性增加 Photon |
+| PROP-14 | Durability enforcement | transient/telemetry schema 不能进入 PhotonStore；audit schema 不能被采样或丢弃 |
+| PROP-15 | Surface boundedness | 历史规模增长时 Surface 仍满足 channel/token/byte budget，且保留来源/截断原因 |
+| PROP-16 | Dropped-signal non-normativity | 删除 ring/telemetry 后规范状态、Act 决策和可重建 Surface 不变 |
 
 ### 7.2 测试层次
 
@@ -816,6 +1112,10 @@ Inspector 必须默认脱敏；Secret 只显示引用和 binding 元数据。
 - MountGuard state machine；
 - ResourceLedger；
 - projection checkpoint。
+- FactPolicy/SchemaRegistry durability；
+- Surface Gate budget/relevance/collision；
+- coalesce/debounce/rate-limit；
+- ArtifactRef 与 flight recorder freeze。
 
 #### 并发测试
 
@@ -866,6 +1166,9 @@ Inspector 必须默认脱敏；Secret 只显示引用和 binding 元数据。
 - 长 streaming response；
 - WAL/checkpoint/archive；
 - ResourceLedger 长期不增长。
+- 百万 heartbeat/scheduler signal 不产生百万 Photon；
+- 长 streaming token/output 只形成有界 terminal Photon 与 ArtifactRef；
+- 删除 telemetry/ring/index 后恢复结果不变。
 
 ### 7.3 Benchmark 报告规范
 
@@ -892,6 +1195,10 @@ Inspector 必须默认脱敏；Secret 只显示引用和 binding 元数据。
 - Photon append/read/verify；
 - projection cold rebuild/warm incremental；
 - model tool surface detach。
+- Fact Gate admission/drop/aggregate throughput；
+- Surface Gate 在不同历史规模下的 token/byte 稳定性；
+- Blob inline threshold、dedup 和 archive restore；
+- flight recorder 正常覆盖与故障冻结成本。
 
 禁止把 atomic pointer store 的耗时称为“完整卸载耗时”。
 
@@ -904,6 +1211,9 @@ Inspector 必须默认脱敏；Secret 只显示引用和 binding 元数据。
 - 新增 epoch allocator、integrity checkpoint、idempotency ledger 表时只作为运行元数据，不伪装为事实；
 - 所有元数据表都能由 Photon/journal 重建，或明确属于不可重建的安全材料；
 - 启动迁移先 backup/checkpoint，再 append `storage.migrated` evidence。
+- 为现有 schema 生成显式 durability/model-visibility catalog；没有分类的旧 schema 在开发模式诊断、生产模式默认 `recoverable + never`，避免误入模型；
+- telemetry、flight recorder 和 ArtifactStore 使用独立目录/数据库/retention，不再复用 Photon 表；
+- archive/segment 迁移只改变物理位置，通过 root hash 和 archive Photon 保持逻辑连续。
 
 ### 8.2 C++ SDK/C ABI
 
@@ -912,6 +1222,9 @@ Inspector 必须默认脱敏；Secret 只显示引用和 binding 元数据。
 - v1 Surface contribution 由 host 补 provenance；
 - 旧 Lens 若越权 channel，在开发 profile 给清晰诊断，在 production fail closed；
 - `OpticalHost v2` 采用 capability table/size/version，便于 C ABI feature negotiation。
+- v1 `beam.emit()` 通过兼容 policy 映射到 `commit_fact()`，只允许 manifest 中已分类的 durable schema；
+- SDK v2 提供 `progress/metric/debug/artifact/commit_fact`，避免所有输出都走 Photon；
+- 旧 Lens 输出大 payload 时由 host 强制转为 ArtifactRef 或拒绝，不允许静默扩大 Photon。
 
 ### 8.3 Worker Protocol
 
@@ -919,6 +1232,8 @@ Inspector 必须默认脱敏；Secret 只显示引用和 binding 元数据。
 - v1 worker 只能在受限兼容 profile 使用；
 - compatibility adapter 不允许绕过 channel/schema/provenance；
 - runtime version、SDK version 和 adapter hash 进入 artifact identity。
+- worker frame 标记 `signal/metric/artifact/fact` 类型，host 始终重新执行 policy，不信任 worker 自报 durability；
+- ephemeral progress stream 与 durable response 分 channel，断线时只恢复 durable 语义，不重放所有机械 chunk。
 
 ## 9. 推荐实施顺序
 
@@ -926,12 +1241,12 @@ Inspector 必须默认脱敏；Secret 只显示引用和 binding 元数据。
 
 交付：
 
-- 将十二条不变式写入 `DESIGN.md`；
+- 将十六条不变式以及 Fact Gate/Surface Gate 正交语义写入 `DESIGN.md`；
 - 给现有文档加 normative/explanatory/vision/historical 状态；
 - 固定当前 85 cases / 2965 checks 的基线 manifest；
 - 删除或降级未经验证的零幻觉、零残留、0.18 ms、50 MB 等承诺。
 
-退出条件：团队对“零新增贡献而非历史消失”达成单一术语口径。
+退出条件：团队对“零新增贡献而非历史消失”以及“Signal 不等于 Photon、Photon 不等于 Model Surface”达成单一术语口径。
 
 ### Phase 1：修复历史、epoch 和旧代竞态
 
@@ -946,7 +1261,7 @@ Inspector 必须默认脱敏；Secret 只显示引用和 binding 元数据。
 
 退出条件：PROP-02、PROP-03、PROP-04 全部通过。
 
-### Phase 2：建立可信 Surface 与 Admission
+### Phase 2：建立可信 Fact、Surface 与 Admission
 
 按顺序：
 
@@ -954,11 +1269,13 @@ Inspector 必须默认脱敏；Secret 只显示引用和 binding 元数据。
 2. host-enforced builder；
 3. ActProposal/ResolvedAct；
 4. AdmissionReceipt；
-5. schema registry；
-6. model request surface hash；
-7. 移除 Calculator 强制挂载。
+5. SchemaRegistry durability/model-visibility catalog；
+6. Fact Gate 与 `progress/metric/artifact/commit_fact`；
+7. Surface Gate 与 channel/token/byte budget；
+8. model request surface hash；
+9. 移除 Calculator 强制挂载。
 
-退出条件：PROP-01、PROP-05、PROP-06、PROP-07 全部通过。
+退出条件：PROP-01、PROP-05、PROP-06、PROP-07、PROP-13、PROP-14、PROP-15、PROP-16 全部通过。
 
 ### Phase 3：MountGuard 与安全隔离
 
@@ -980,13 +1297,15 @@ Inspector 必须默认脱敏；Secret 只显示引用和 binding 元数据。
 
 - desired/current diff；
 - projection checkpoint；
+- telemetry/flight recorder/artifact 分流；
+- hot/warm/cold segment 与 retention；
 - scheduler/ray state；
 - idempotency ledger；
 - withholding/compensation/irreversible receipt；
 - 完整 dark lane；
 - crash recovery matrix。
 
-退出条件：百万 Photon、数百次 replacement 和多 ray soak 无静默丢失、重复不可逆 Act 或资源线性增长。
+退出条件：百万 Photon、百万机械 signal、数百次 replacement 和多 ray soak 无静默丢失、重复不可逆 Act、Surface 无界增长或资源线性增长。
 
 ### Phase 5：跨平台、证据与论文
 
@@ -999,7 +1318,7 @@ Inspector 必须默认脱敏；Secret 只显示引用和 binding 元数据。
 - 基于真实不变式重写 RCLD whitepaper；
 - 只发布已由模型/测试/实验支持的结论。
 
-## 10. 建议拆分的前十二个 PR
+## 10. 建议拆分的前十五个 PR
 
 | 顺序 | PR | 主要文件 | 完成定义 |
 |---:|---|---|---|
@@ -1011,10 +1330,13 @@ Inspector 必须默认脱敏；Secret 只显示引用和 binding 元数据。
 | 6 | Act normalize + AdmissionReceipt | `act.hpp`、`act_pipeline.cpp`、runtime | `approved=true` 不可伪造 |
 | 7 | Surface provenance v2 | `surface.hpp`、`value_types.cpp`、engine | contribution 可绑定 generation/input/path |
 | 8 | Host-enforced SurfaceBuilder | SDK/engine/C ABI/worker | 全 runtime channel/quota 一致 |
-| 9 | 移除 Calculator 强制挂载与 reconcile diff 基础 | `runtime.cpp`、config/tests | desired 等于 current 来源 |
-| 10 | MountGuard/ResourceLedger 骨架 | 新 mount/host 模块、SDK | 可登记/枚举/关闭测试资源 |
-| 11 | Secret binding 迁移到 guard | Cista/common secret/runtime | generation stop 全撤销 |
-| 12 | dark lane v2 | Ignis/runtime/tests | replay/determinism/quota/stop/resource report |
+| 9 | FactPolicy catalog 与 Fact Gate | SchemaRegistry、新 facts 模块、SDK | transient 不入账本，audit 不可采样 |
+| 10 | Surface Gate 与认知预算 | Textus/engine/surface | 百万历史下 Surface 仍有界且可解释 |
+| 11 | 移除 Calculator 强制挂载与 reconcile diff 基础 | `runtime.cpp`、config/tests | desired 等于 current 来源 |
+| 12 | MountGuard/ResourceLedger 骨架 | 新 mount/host 模块、SDK | 可登记/枚举/关闭测试资源 |
+| 13 | Secret binding 迁移到 guard | Cista/common secret/runtime | generation stop 全撤销 |
+| 14 | telemetry/flight recorder/ArtifactRef 分流 | Nota/Chora/Snow/Rhea/SDK | 机械流不污染 Photon，大内容只留引用 |
+| 15 | dark lane v2 | Ignis/runtime/tests | replay/determinism/quota/stop/resource report |
 
 这些 PR 应保持单一语义目标，避免同时大改十九个 Lens。先建立 adapter，再逐个迁移。
 
@@ -1024,18 +1346,24 @@ Inspector 必须默认脱敏；Secret 只显示引用和 binding 元数据。
 |---|---|
 | `sdk/cpp/include/tokmon/photon_store.hpp` | cursor/page/tail/visitor/integrity checkpoint API |
 | `nyxia/storage/photon_store.cpp` | 全量分页验证、索引、epoch/idempotency 元数据事务 |
+| `sdk/cpp/include/tokmon/fact_policy.hpp` | durability、retention、aggregation、payload 与 model visibility 类型 |
+| `nyxia/facts/fact_gate.cpp` | schema policy、权限、rate、payload、provenance 与持久化分流 |
+| `nyxia/telemetry/flight_recorder.cpp` | 有界 ring、脱敏、错误冻结和诊断 Artifact |
 | `sdk/cpp/include/tokmon/surface.hpp` | provenance、surface hash、quota policy、ActProposal |
 | `nyxia/base/value_types.cpp` | canonical CBOR/hash、v1/v2 compatibility |
 | `sdk/cpp/include/tokmon/act.hpp` | Proposal/ResolvedAct/AdmissionReceipt 分层 |
 | `nyxia/engine/act_pipeline.cpp` | normalize/resolve/schema/policy/receipt，不信任 approved 输入 |
 | `sdk/cpp/include/tokmon/light_path.hpp` | MountIdentity、guard state、Result acquire、coordinator |
 | `nyxia/mount/lens_mount.cpp` | closed admission、resource ledger、drain/force stop |
-| `sdk/cpp/include/tokmon/lens.hpp` | OpticalHost v2、capability-narrowed Beam |
-| `nyxia/engine/ray_tracing_engine.cpp` | snapshot/input tail、builder enforcement、surface hash、ray state/scheduler |
+| `sdk/cpp/include/tokmon/lens.hpp` | OpticalHost v2、Signal/Metric/Debug/Artifact/Fact 分流、capability-narrowed Beam |
+| `nyxia/engine/ray_tracing_engine.cpp` | snapshot/input tail、builder enforcement、Surface Gate/hash、ray state/scheduler |
 | `nyxia/runtime/runtime.cpp` | mount journal、epoch restore、single-writer reconcile、desired/current diff |
 | `nyxia/loader/manifest_io.cpp` | semver、schema bundle、trust/runtime/replacement 约束 |
 | `nyxia/worker/worker_lens_proxy.cpp` | protocol v2、实际 quota、environment/handle 清理、sandbox report |
 | `lenses/common/secret_store.cpp` | 去全局无主 binding，改为 HostedSecrets/MountGuard |
+| `lenses/nota/` | metric/log/trace 聚合与短期 telemetry，不把高频数据 Photon 化 |
+| `lenses/chora/` | ArtifactRef、dedup、segment/archive/retention |
+| `lenses/textus/` | channel/token budget、relevance 与 Surface selection evidence |
 | `tests/support/lens_contract.hpp` | 所有 runtime 共用 RCLD contract |
 | `tests/unit/core_tests.cpp` | 长历史、epoch、竞态、审批、crash、resource property tests |
 
@@ -1060,6 +1388,9 @@ evidence: <test manifest / benchmark artifact>
 - benchmark artifact；
 - 已知限制；
 - schema/ABI/protocol 版本；
+- schema durability/model-visibility catalog 版本；
+- Photon/Signal/Metric/Artifact 数量与比例；
+- Surface channel 预算、截断与 provenance 统计；
 - 正式 Lens 数量口径。
 
 固定术语：
@@ -1070,6 +1401,7 @@ evidence: <test manifest / benchmark artifact>
 - detach 是未来贡献与资源生命周期停止；
 - history preservation 不等于现实回滚；
 - model hallucination 不能被数学消除，runtime stale-target rejection 可以被强制。
+- Signal 是运行时瞬时信息，Photon 是最小充分持久事实，Surface 是当前有界认知面；三者不可混称。
 
 ## 13. Definition of Done
 
@@ -1077,7 +1409,7 @@ evidence: <test manifest / benchmark artifact>
 
 1. **规范**：有明确输入、输出、状态机、失败模式和非目标；
 2. **实现**：所有适用 runtime 走同一 host enforcement；
-3. **审计**：成功、拒绝、超时、取消、恢复都有 Photon evidence；
+3. **审计**：需要恢复、安全或外部证明的成功、拒绝、超时、取消、恢复有最小 Photon evidence；机械过程进入 metric/ring/telemetry，不以审计名义永久膨胀；
 4. **安全**：权限不足时 fail closed，不以较弱模式冒充成功；
 5. **生命周期**：资源能归属到 mount/generation 并在卸载后收敛；
 6. **测试**：正常、边界、并发、崩溃和恶意输入均覆盖；
@@ -1085,14 +1417,16 @@ evidence: <test manifest / benchmark artifact>
 8. **观测**：inspector/metric 能看见关键状态且不泄露 Secret；
 9. **证据**：测试与 benchmark 绑定 commit/build；
 10. **文档**：只陈述证据支持的强度。
+11. **事实密度**：schema 明确 durability/model visibility；大内容使用 ArtifactRef；被丢弃 signal 不影响规范状态；Surface 在历史增长时仍严格有界。
 
 ## 14. 最终建议
 
-`tokmon-n` 沿 RCLD 方向继续发展的最佳策略，是把“透镜”从统一比喻收敛成五个可强制边界：
+`tokmon-n` 沿 RCLD 方向继续发展的最佳策略，是把“透镜”从统一比喻收敛成六个可强制边界：
 
 ```text
-不可变事实边界
-→ 可溯源投影边界
+Signal/Fact 分类边界
+→ 最小不可变事实边界
+→ 有界认知投影边界
 → 宿主签发准入边界
 → generation 绑定执行边界
 → mount 资源托管边界
@@ -1105,12 +1439,13 @@ evidence: <test manifest / benchmark artifact>
 3. 关闭旧 generation admission 竞态；
 4. 取消可伪造的 `approved` 语义；
 5. 为 Surface/Act 增加完整 provenance；
-6. 强制 channel/schema/quota；
-7. 落地 MountGuard/ResourceLedger；
-8. 移除 Calculator 隐式常驻并实现真正 diff reconcile；
-9. 扩展 dark lane 与 crash tests；
-10. 最后再建立 benchmark 和重写论文。
+6. 建立 Fact Gate，分离 Signal/Metric/Telemetry/Artifact/Photon；
+7. 建立 Surface Gate，强制 channel/token/byte/relevance budget；
+8. 落地 MountGuard/ResourceLedger；
+9. 移除 Calculator 隐式常驻并实现真正 diff reconcile；
+10. 扩展 dark lane、retention/archive 与 crash tests；
+11. 最后再建立 benchmark 和重写论文。
 
 完成这些工作后，RCLD 的核心价值才能从“架构叙事”转化为一组可以由代码、审计和测试共同支持的工程性质。届时 `tokmon-n` 的差异化不需要依赖“绝对零残留”或“数学零幻觉”之类无法兑现的口号，而可以落在更强、更可信的承诺上：
 
-> **历史不被篡改；当前认知面可重建；旧能力不能重新启动；副作用不能绕过准入；资源能按 generation 收敛；任何无法满足的隔离要求都明确失败。**
+> **机械信号不会淹没事实账本；持久事实不会无差别淹没模型上下文；历史不被篡改；当前认知面有界且可重建；旧能力不能重新启动；副作用不能绕过准入；资源能按 generation 收敛；任何无法满足的隔离要求都明确失败。**
