@@ -13,11 +13,10 @@ export component MainWindow inherits Window {
     title: "Tokmon — A Lens to Them All";
     no-frame: true;
     resize-border-width: 7px;
-    // Match the initial client area to Tokmon's 125% visual baseline. These
-    // preferred dimensions affect startup only; the native resize border still
-    // lets users freely resize the window afterwards.
-    preferred-width: (root.code-visible ? 1440px : 999px) * 1.25;
-    preferred-height: 900px * 1.25;
+    // Match the initial client area to the scale selected for the primary
+    // display. These dimensions affect startup only; users can still resize.
+    preferred-width: (root.code-visible ? 1440px : 999px) * root.default-ui-scale-percent / 100;
+    preferred-height: 900px * root.default-ui-scale-percent / 100;
     min-width: root.code-visible ? 1040px : 840px;
     min-height: 680px;
     background: Palette.app-bg;
@@ -110,12 +109,12 @@ export component MainWindow inherits Window {
     in-out property <int> trace-output-tokens: 0;
     in-out property <int> settings-page: 0;
     in-out property <int> setting-accent: 0;
-    // 125% is Tokmon's visual baseline. The applied UI scale transforms the
-    // complete window scene, so fonts, controls, spacing, and panels all start
-    // at the same larger default instead of scaling text independently.
-    in-out property <int> setting-font-scale: 125;
-    in-out property <int> setting-ui-scale: 125;
-    in-out property <int> applied-ui-scale-percent: 125;
+    // C++ replaces this fallback with 100% on ordinary displays and 125% on
+    // 4K displays before the window is shown. Saved settings may override it.
+    in property <int> default-ui-scale-percent: 100;
+    in-out property <int> setting-font-scale: 100;
+    in-out property <int> setting-ui-scale: 100;
+    in-out property <int> applied-ui-scale-percent: 100;
     property <float> applied-ui-scale: clamp(root.applied-ui-scale-percent, 70, 200) / 100.0;
     in-out property <int> shortcut-editing: -1;
     in-out property <int> workflow-explored: 0;
@@ -474,9 +473,8 @@ export component MainWindow inherits Window {
                 root.applied-ui-scale-percent = root.setting-ui-scale;
                 accept
             } else if event.modifiers.control && event.text == "0" {
-                // Ctrl+0 restores Tokmon's 125% baseline, not raw 100% zoom.
-                root.setting-ui-scale = 125;
-                root.applied-ui-scale-percent = 125;
+                root.setting-ui-scale = root.default-ui-scale-percent;
+                root.applied-ui-scale-percent = root.default-ui-scale-percent;
                 accept
             } else if event.text == "\u{1b}" || event.text == "Escape" {
                 if root.create-navigation-open {
@@ -550,6 +548,7 @@ export component MainWindow inherits Window {
         setting-email <=> root.setting-email;
         setting-file-access <=> root.setting-file-access;
         setting-font-scale <=> root.setting-font-scale;
+        default-ui-scale-percent: root.default-ui-scale-percent;
         setting-ui-scale <=> root.setting-ui-scale;
         applied-ui-scale-percent <=> root.applied-ui-scale-percent;
         setting-git <=> root.setting-git;

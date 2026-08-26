@@ -231,6 +231,24 @@ bool same_workspace(const std::filesystem::path &left,
 #endif
 }
 
+int default_ui_scale_percent_for_resolution(const std::uint32_t width,
+                                            const std::uint32_t height) {
+  const auto long_edge = std::max(width, height);
+  const auto short_edge = std::min(width, height);
+  return long_edge >= 3840u && short_edge >= 2160u ? 125 : 100;
+}
+
+int default_ui_scale_percent_for_primary_display() {
+#if defined(_WIN32)
+  DEVMODEW mode{};
+  mode.dmSize = sizeof(mode);
+  if (EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &mode))
+    return default_ui_scale_percent_for_resolution(mode.dmPelsWidth,
+                                                   mode.dmPelsHeight);
+#endif
+  return 100;
+}
+
 #if defined(_WIN32)
 HWND current_process_window() {
   struct Search {

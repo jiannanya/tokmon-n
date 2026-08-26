@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -22,6 +23,10 @@ std::optional<std::filesystem::path> normalize_workspace_path(
     const std::optional<std::filesystem::path> &relative_to = std::nullopt);
 bool same_workspace(const std::filesystem::path &left,
                     const std::filesystem::path &right);
+
+int default_ui_scale_percent_for_resolution(std::uint32_t width,
+                                            std::uint32_t height);
+int default_ui_scale_percent_for_primary_display();
 
 void drag_current_process_window();
 void update_current_process_window_drag();
