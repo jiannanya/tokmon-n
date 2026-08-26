@@ -14,7 +14,6 @@ std::string display_utf8(std::string_view input);
 slint::SharedString display_string(std::string_view input);
 void copy_to_clipboard(std::string_view text);
 std::string choose_attachment(bool directory);
-void show_error_dialog(std::string_view title, std::string_view message);
 
 std::filesystem::path path_from_utf8(std::string_view value);
 std::string path_to_utf8(const std::filesystem::path &value);
@@ -34,5 +33,6 @@ void update_current_process_window_drag();
 void end_current_process_window_drag();
 void make_current_process_window_frameless();
 void activate_current_process_window();
+void set_current_process_window_topmost(bool enabled);
 
 } // namespace tokmon::desktop

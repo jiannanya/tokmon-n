@@ -7,6 +7,170 @@ import { WorkspacePanel } from "tokmon-workspace.slint";
 import { CreateNavigationOverlay } from "tokmon-navigation-overlays.slint";
 import { ChangeWorkspaceOverlay } from "tokmon-workspace-overlay.slint";
 
+component ErrorDialogPanel inherits Rectangle {
+    in property <string> dialog-title;
+    in property <string> dialog-message;
+    in property <bool> fatal;
+    callback dismiss();
+
+    width: 560px;
+    height: 316px;
+    border-radius: 18px;
+    background: Palette.white;
+    border-width: 0.67px;
+    border-color: Palette.border;
+    clip: true;
+    drop-shadow-color: rgba(0, 0, 0, 0.24);
+    drop-shadow-offset-y: 18px;
+    drop-shadow-blur: 46px;
+
+    VerticalLayout {
+        Rectangle {
+            height: 62px;
+            background: Palette.surface-2;
+            HorizontalLayout {
+                padding-left: 22px;
+                padding-right: 14px;
+                alignment: space-between;
+                HorizontalLayout {
+                    spacing: 11px;
+                    alignment: start;
+                    Rectangle {
+                        width: 30px;
+                        height: 30px;
+                        border-radius: 10px;
+                        background: #FEF2F2;
+                        border-width: 0.67px;
+                        border-color: #FECACA;
+                        Text {
+                            text: "!";
+                            color: #DC2626;
+                            font-size: 18px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 1px;
+                        Text {
+                            text: root.dialog-title;
+                            color: Palette.ink;
+                            font-size: 15px;
+                            font-weight: 700;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: "无效配置未生效，Tokmon 没有执行回退";
+                            color: Palette.faint;
+                            font-size: 10.5px;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+                Rectangle {
+                    width: 32px;
+                    height: 32px;
+                    border-radius: 10px;
+                    background: close-touch.has-hover ? Palette.sep : transparent;
+                    Image {
+                        source: @image-url("../assets/figma/icon-39.svg");
+                        width: 15px;
+                        height: 15px;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                    }
+                    close-touch := TouchArea {
+                        clicked => { root.dismiss(); }
+                        mouse-cursor: pointer;
+                    }
+                }
+            }
+            Rectangle {
+                y: parent.height - 0.67px;
+                height: 0.67px;
+                width: parent.width;
+                background: Palette.hairline;
+            }
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+            background: Palette.white;
+            VerticalLayout {
+                padding: 22px;
+                spacing: 12px;
+                Text {
+                    text: "配置校验失败";
+                    color: Palette.strong;
+                    font-size: 12px;
+                    font-weight: 600;
+                }
+                Rectangle {
+                    vertical-stretch: 1;
+                    border-radius: 12px;
+                    background: #FFFBFA;
+                    border-width: 0.67px;
+                    border-color: #FECACA;
+                    Text {
+                        x: 14px;
+                        y: 12px;
+                        width: parent.width - 28px;
+                        height: parent.height - 24px;
+                        text: root.dialog-message;
+                        color: Palette.body;
+                        font-family: "Consolas";
+                        font-size: 11.5px;
+                        wrap: word-wrap;
+                        overflow: elide;
+                        vertical-alignment: top;
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            height: 64px;
+            background: Palette.surface-2;
+            Rectangle {
+                height: 0.67px;
+                width: parent.width;
+                background: Palette.hairline;
+            }
+            HorizontalLayout {
+                padding-left: 22px;
+                padding-right: 22px;
+                alignment: space-between;
+                Text {
+                    text: root.fatal ? "请修正配置文件后重新启动 Tokmon" : "请修正配置文件后重试";
+                    color: Palette.dim;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    width: 92px;
+                    height: 36px;
+                    border-radius: 12px;
+                    background: accept-touch.has-hover ? #B85E20 : Palette.accent;
+                    Text {
+                        text: root.fatal ? "退出 Tokmon" : "知道了";
+                        color: Palette.white;
+                        font-size: 13px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    accept-touch := TouchArea {
+                        clicked => { root.dismiss(); }
+                        mouse-cursor: pointer;
+                    }
+                }
+            }
+        }
+    }
+}
+
 // Child panels expose native window dragging only from flex-layout spacer items
 // in the top header; MainWindow intentionally has no full-surface drag overlay.
 export component MainWindow inherits Window {
@@ -153,6 +317,8 @@ export component MainWindow inherits Window {
     in-out property <bool> window-maximized: false;
     in-out property <bool> slash-menu-visible: false;
     in-out property <bool> create-navigation-open: false;
+    in-out property <bool> error-dialog-open: false;
+    in-out property <bool> error-dialog-fatal: false;
     in-out property <bool> setting-network: true;
     in-out property <bool> setting-high-risk: true;
     in-out property <bool> setting-provider-thinking: false;
@@ -162,6 +328,8 @@ export component MainWindow inherits Window {
     in-out property <bool> setting-desktop-notifications: true;
     in-out property <bool> setting-message-alerts: true;
     in-out property <string> setting-quiet-hours: "22:00 - 08:00";
+    in-out property <string> error-dialog-title;
+    in-out property <string> error-dialog-message;
     in-out property <bool> setting-dark-theme: false;
     in-out property <bool> setting-cloud-sync: true;
     // Native HWND activation and Slint keyboard focus are separate. This flag
@@ -208,6 +376,7 @@ export component MainWindow inherits Window {
     callback confirm-change-workspace(string);
     callback refresh-workspace();
     callback select-model(string, string);
+    callback error-dialog-dismissed();
     pure callback identify-project(string) -> string;
     pure callback project-in-group(string, string) -> bool;
     callback filter-preview(string);
@@ -494,7 +663,11 @@ export component MainWindow inherits Window {
                 root.applied-ui-scale-percent = root.default-ui-scale-percent;
                 accept
             } else if event.text == "\u{1b}" || event.text == "Escape" {
-                if root.create-navigation-open {
+                if root.error-dialog-open {
+                    root.error-dialog-open = false;
+                    root.error-dialog-dismissed();
+                    accept
+                } else if root.create-navigation-open {
                     root.create-navigation-open = false;
                     accept
                 } else if root.change-workspace-open {
@@ -604,6 +777,22 @@ export component MainWindow inherits Window {
         test-provider(provider) => { root.test-provider(provider); }
         setting-provider-at(i) => { root.setting-provider-at(i) }
         setting-model-at(i) => { root.setting-model-at(i) }
+        }
+    }
+    if root.error-dialog-open : Rectangle {
+        background: rgba(28, 25, 23, 0.42);
+        TouchArea { }
+        ErrorDialogPanel {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            dialog-title: root.error-dialog-title;
+            dialog-message: root.error-dialog-message;
+            fatal: root.error-dialog-fatal;
+            dismiss => {
+                root.error-dialog-open = false;
+                root.error-dialog-dismissed();
+                hs.focus();
+            }
         }
     }
 }

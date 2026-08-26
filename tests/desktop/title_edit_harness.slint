@@ -11,11 +11,16 @@ export component TitleEditHarness inherits MainWindow {
     in-out property <string> test-setting-provider <=> root.setting-provider;
     in-out property <string> test-setting-main-model <=> root.setting-main-model;
     in-out property <string> test-model-name <=> root.model-name;
+    in-out property <bool> test-error-open <=> root.error-dialog-open;
+    in-out property <bool> test-error-fatal <=> root.error-dialog-fatal;
+    in-out property <string> test-error-title <=> root.error-dialog-title;
+    in-out property <string> test-error-message <=> root.error-dialog-message;
     out property <bool> test-title-confirm-hovered: root.title-confirm-hovered;
     out property <int> rename-count;
     out property <string> last-renamed-title;
     out property <int> new-session-count;
     out property <int> drag-count;
+    out property <int> error-dismiss-count;
 
     callback test-select-model(string, string);
     test-select-model(provider, model) => { root.select-model(provider, model); }
@@ -26,4 +31,5 @@ export component TitleEditHarness inherits MainWindow {
     }
     new-session => { root.new-session-count += 1; }
     drag-window => { root.drag-count += 1; }
+    error-dialog-dismissed => { root.error-dismiss-count += 1; }
 }

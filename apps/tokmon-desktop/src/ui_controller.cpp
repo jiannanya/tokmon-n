@@ -1281,11 +1281,18 @@ private:
     item.progress = -1;
     item.tone = "danger";
     auto model = timeline_;
+    auto window = window_;
     update_daemon_state("配置或后台服务错误");
     (void)slint::invoke_from_event_loop(
-        [model, item = std::move(item), message = std::move(message)]() mutable {
+        [model, window, item = std::move(item),
+         message = std::move(message)]() mutable {
           model->push_back(std::move(item));
-          show_error_dialog("Tokmon 配置或后台服务错误", message);
+          if (auto locked = window.lock()) {
+            (*locked)->set_error_dialog_title("配置或后台服务错误");
+            (*locked)->set_error_dialog_message(display_string(message));
+            (*locked)->set_error_dialog_fatal(false);
+            (*locked)->set_error_dialog_open(true);
+          }
         });
   }
 
@@ -1306,8 +1313,11 @@ private:
           if (auto locked = window.lock()) {
             (*locked)->set_daemon_state("原工作空间仍连接");
             (*locked)->set_settings_status(display_string(message));
+            (*locked)->set_error_dialog_title("工作空间错误");
+            (*locked)->set_error_dialog_message(display_string(message));
+            (*locked)->set_error_dialog_fatal(false);
+            (*locked)->set_error_dialog_open(true);
           }
-          show_error_dialog("Tokmon 工作空间错误", message);
         });
   }
 

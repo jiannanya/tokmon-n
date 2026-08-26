@@ -5,7 +5,6 @@
 #include <cwchar>
 #include <cwctype>
 #include <filesystem>
-#include <iostream>
 #include <optional>
 #include <string>
 
@@ -103,28 +102,6 @@ void copy_to_clipboard(const std::string_view text) {
 #if defined(_WIN32)
 HWND current_process_window();
 #endif
-
-void show_error_dialog(const std::string_view title,
-                       const std::string_view message) {
-#if defined(_WIN32)
-  const auto widen = [](const std::string_view value) {
-    const auto required = MultiByteToWideChar(
-        CP_UTF8, MB_ERR_INVALID_CHARS, value.data(), static_cast<int>(value.size()),
-        nullptr, 0);
-    if (required <= 0) return std::wstring(L"Invalid UTF-8 error message");
-    std::wstring output(static_cast<std::size_t>(required), L'\0');
-    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
-                        static_cast<int>(value.size()), output.data(), required);
-    return output;
-  };
-  const auto wide_title = widen(title);
-  const auto wide_message = widen(message);
-  MessageBoxW(current_process_window(), wide_message.c_str(), wide_title.c_str(),
-              MB_OK | MB_ICONERROR | MB_TASKMODAL);
-#else
-  std::cerr << title << ": " << message << '\n';
-#endif
-}
 
 std::string utf8_path(const std::wstring_view path) {
 #if defined(_WIN32)
@@ -341,6 +318,18 @@ void activate_current_process_window() {
   SetActiveWindow(hwnd);
   SetFocus(hwnd);
 }
+
+void set_current_process_window_topmost(const bool enabled) {
+  const auto hwnd = current_process_window();
+  if (!hwnd)
+    return;
+  SetWindowPos(hwnd, enabled ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
+               SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+}
+#endif
+
+#if !defined(_WIN32)
+void set_current_process_window_topmost(const bool) {}
 #endif
 
 #if defined(_WIN32)

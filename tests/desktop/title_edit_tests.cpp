@@ -95,6 +95,20 @@ int main()
                    as_string(ui->get_test_model_name()) == "deepseek-v4-flash",
            "model selection must keep settings and composer labels synchronized");
 
+    ui->set_test_error_title("配置文件无效");
+    ui->set_test_error_message("unknown YAML field 'efault'");
+    ui->set_test_error_fatal(true);
+    ui->set_test_error_open(true);
+    slint::platform::update_timers_and_animations();
+    click_element(ui, "edit-title-button");
+    expect(!ui->get_test_title_editing(),
+           "the Slint configuration dialog must block the underlying window");
+    click_element(ui, "accept-touch");
+    expect(!ui->get_test_error_open(),
+           "the themed configuration dialog button must close the overlay");
+    expect(ui->get_error_dismiss_count() == 1,
+           "closing the themed dialog must notify the application exactly once");
+
     send_key_combo(ui.operator->(), { "\x11", "n" });
     expect(ui->get_new_session_count() == 1,
            "the zero-size shortcut scope must retain Ctrl+N handling");

@@ -78,6 +78,30 @@ std::string automatic_session_title(const std::string_view message) {
   return title;
 }
 
+int run_fatal_desktop_error(slint::ComponentHandle<MainWindow> window,
+                            const std::string_view title,
+                            const std::string_view message) {
+  window->set_daemon_state("配置校验失败");
+  window->set_status_text("配置错误");
+  window->set_error_dialog_title(display_string(title));
+  window->set_error_dialog_message(display_string(message));
+  window->set_error_dialog_fatal(true);
+  window->set_error_dialog_open(true);
+  window->on_error_dialog_dismissed([] { slint::quit_event_loop(); });
+  window->on_close_window([] { slint::quit_event_loop(); });
+  window->show();
+#if defined(_WIN32)
+  make_current_process_window_frameless();
+  slint::Timer::single_shot(std::chrono::milliseconds(1), [] {
+    set_current_process_window_topmost(true);
+    activate_current_process_window();
+  });
+#endif
+  slint::run_event_loop();
+  window->hide();
+  return 2;
+}
+
 } // namespace
 
 int run_application(int argc, char **argv) {
@@ -98,16 +122,24 @@ int run_application(int argc, char **argv) {
       }
     }
   }
+  auto window = MainWindow::create();
+  const auto default_ui_scale_percent =
+      default_ui_scale_percent_for_primary_display();
+  window->set_default_ui_scale_percent(default_ui_scale_percent);
+  window->set_setting_font_scale(default_ui_scale_percent);
+  window->set_setting_ui_scale(default_ui_scale_percent);
+  window->set_applied_ui_scale_percent(default_ui_scale_percent);
+  window->set_settings_page(settings_page);
+  window->set_settings_open(open_settings);
+
   auto paths = tokmon::resolve_paths(workspace);
-  if (!paths) {
-    show_error_dialog("Tokmon 配置错误", paths.error().describe());
-    return 2;
-  }
+  if (!paths)
+    return run_fatal_desktop_error(window, "Tokmon 配置错误",
+                                   paths.error().describe());
   auto validated_config = tokmon::load_config(paths->project.parent_path());
-  if (!validated_config) {
-    show_error_dialog("Tokmon 配置文件无效", validated_config.error().describe());
-    return 2;
-  }
+  if (!validated_config)
+    return run_fatal_desktop_error(window, "Tokmon 配置文件无效",
+                                   validated_config.error().describe());
 
   std::error_code path_error;
   auto executable = argc > 0 ? std::filesystem::absolute(argv[0], path_error)
@@ -132,10 +164,9 @@ int run_application(int argc, char **argv) {
       tokmon::DaemonLaunchOptions{.endpoint = endpoint,
                                   .workspace = paths->project.parent_path(),
                                   .executable = daemon_executable});
-  if (!connected) {
-    show_error_dialog("Tokmon 无法启动", connected.error().describe());
-    return 2;
-  }
+  if (!connected)
+    return run_fatal_desktop_error(window, "Tokmon 无法启动",
+                                   connected.error().describe());
   auto client_lease =
       tokmon::DaemonClientLease::attach(tokmon::DaemonClientOptions{
           .endpoint = endpoint,
@@ -144,20 +175,9 @@ int run_application(int argc, char **argv) {
           .shutdown_when_idle = true,
           .idle_timeout = std::chrono::milliseconds(250),
           .lease_ttl = std::chrono::seconds(6)});
-  if (!client_lease) {
-    show_error_dialog("Tokmon 无法连接后台服务",
-                      client_lease.error().describe());
-    return 2;
-  }
-  auto window = MainWindow::create();
-  const auto default_ui_scale_percent =
-      default_ui_scale_percent_for_primary_display();
-  window->set_default_ui_scale_percent(default_ui_scale_percent);
-  window->set_setting_font_scale(default_ui_scale_percent);
-  window->set_setting_ui_scale(default_ui_scale_percent);
-  window->set_applied_ui_scale_percent(default_ui_scale_percent);
-  window->set_settings_page(settings_page);
-  window->set_settings_open(open_settings);
+  if (!client_lease)
+    return run_fatal_desktop_error(window, "Tokmon 无法连接后台服务",
+                                   client_lease.error().describe());
   auto assets = executable.parent_path() / "assets" / "figma";
   if (!std::filesystem::exists(assets))
     assets = std::filesystem::current_path() / "apps" / "tokmon-desktop" /
