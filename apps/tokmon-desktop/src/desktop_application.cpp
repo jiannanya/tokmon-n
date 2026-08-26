@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -27,6 +28,57 @@
 #include "ui_projection.hpp"
 
 namespace tokmon::desktop {
+
+namespace {
+
+constexpr std::size_t kAutomaticTitleCharacters = 32;
+
+std::string default_new_session_title(
+    const std::vector<NavigationItem> &navigation) {
+  return "新会话 " +
+         std::to_string(std::ranges::count_if(
+                            navigation, [](const NavigationItem &item) {
+                              return item.kind == "session";
+                            }) +
+                        1);
+}
+
+std::string automatic_session_title(const std::string_view message) {
+  const auto valid = display_utf8(message);
+  std::string title;
+  title.reserve(std::min(valid.size(), kAutomaticTitleCharacters * 4u));
+  std::size_t characters = 0;
+  bool pending_space = false;
+  bool truncated = false;
+  for (std::size_t index = 0; index < valid.size();) {
+    const auto lead = static_cast<unsigned char>(valid[index]);
+    if (lead <= 0x7fu && std::isspace(lead)) {
+      pending_space = !title.empty();
+      ++index;
+      continue;
+    }
+    if (characters == kAutomaticTitleCharacters) {
+      truncated = true;
+      break;
+    }
+    const auto width = lead <= 0x7fu   ? 1u
+                       : lead <= 0xdfu ? 2u
+                       : lead <= 0xefu ? 3u
+                                       : 4u;
+    if (pending_space) {
+      title.push_back(' ');
+      pending_space = false;
+    }
+    title.append(valid, index, width);
+    index += width;
+    ++characters;
+  }
+  if (truncated)
+    title += "…";
+  return title;
+}
+
+} // namespace
 
 int run_application(int argc, char **argv) {
   std::optional<std::filesystem::path> workspace;
@@ -121,11 +173,15 @@ int run_application(int argc, char **argv) {
     const auto add = [&items, &assets, &navigation_workspace_text](
                          const char *title, const char *kind, int indent,
                          bool selected) {
-      items.push_back(make_navigation_item(
+      auto item = make_navigation_item(
           assets, tokmon::make_id("navigation"), kind, title, indent, selected,
           true, {},
           std::string_view(kind) == "project" ? navigation_workspace_text
-                                              : std::string{}));
+                                              : std::string{});
+      // These bundled examples are existing named sessions, not blank sessions
+      // waiting for a first-message title.
+      item.title_manual = std::string_view(kind) == "session";
+      items.push_back(std::move(item));
     };
     add("内容生产", "group", 0, false);
     add("字幕制作空间", "project", 1, false);
@@ -189,8 +245,33 @@ int run_application(int argc, char **argv) {
     }
     window->set_slash_menu_visible(visible && slash_model->row_count() != 0);
   });
-  window->on_send_message([&controller, conversation_workflow_model,
+  window->on_send_message([&controller, conversation_workflow_model, nav_model,
+                           navigation_state,
                            window](const slint::SharedString &text) {
+    const auto message = std::string(text);
+    const auto slash_command = tokmon::is_slash_command(message);
+    std::optional<std::string> first_message_title;
+    if (window->get_chat_empty() && !slash_command) {
+      for (auto &item : *navigation_state) {
+        if (!item.selected || item.kind != "session")
+          continue;
+        if (item.title_manual) {
+          first_message_title = std::string(item.title);
+        } else {
+          auto title = automatic_session_title(message);
+          if (!title.empty()) {
+            item.title = display_string(title);
+            window->set_session_title(item.title);
+            refresh_navigation(nav_model, navigation_state,
+                               std::string(window->get_search_text()),
+                               slint::ComponentWeakHandle<MainWindow>(window));
+            controller->save_navigation();
+            first_message_title = std::move(title);
+          }
+        }
+        break;
+      }
+    }
     window->set_slash_menu_visible(false);
     conversation_workflow_model->clear();
     window->set_last_message(text);
@@ -198,18 +279,23 @@ int run_application(int argc, char **argv) {
     window->set_status_text("正在提交请求");
     window->set_chat_empty(false);
     window->set_workspace_locked(true);
-    if (tokmon::is_slash_command(std::string_view(text)))
-      controller->slash_command(std::string(text),
+    if (slash_command)
+      controller->slash_command(message,
                                 std::string(window->get_setting_provider()),
                                 std::string(window->get_model_name()),
                                 std::string(window->get_access_mode()),
                                 std::string(window->get_effort()));
     else
-      controller->chat(std::string(text),
+      controller->chat(message,
                        std::string(window->get_setting_provider()),
                        std::string(window->get_model_name()),
                        std::string(window->get_access_mode()),
                        std::string(window->get_effort()));
+    if (first_message_title)
+      // Queue this after chat: a brand-new session receives its Ray from the
+      // chat response, then the silent rename can persist either its automatic
+      // or already-manual title there.
+      controller->rename_session(std::move(*first_message_title));
   });
   window->on_new_session([navigation_state, window, navigation_workspace] {
     std::size_t project = navigation_state->size();
@@ -225,13 +311,7 @@ int run_application(int argc, char **argv) {
           project = index;
           break;
         }
-    const auto title =
-        "新会话 " +
-        std::to_string(std::ranges::count_if(*navigation_state,
-                                             [](const NavigationItem &item) {
-                                               return item.kind == "session";
-                                             }) +
-                       1);
+    const auto title = default_new_session_title(*navigation_state);
     const auto workspace = navigation_workspace_at(*navigation_state, project,
                                                    navigation_workspace);
     window->set_create_navigation_kind("会话");
@@ -265,13 +345,7 @@ int run_application(int argc, char **argv) {
         break;
       }
     }
-    const auto title =
-        "新会话 " +
-        std::to_string(std::ranges::count_if(*navigation_state,
-                                             [](const NavigationItem &item) {
-                                               return item.kind == "session";
-                                             }) +
-                       1);
+    const auto title = default_new_session_title(*navigation_state);
     window->set_create_navigation_kind("会话");
     window->set_create_navigation_name(display_string(title));
     window->set_create_navigation_workspace(
@@ -510,6 +584,9 @@ int run_application(int argc, char **argv) {
             ? 0
             : (*navigation_state)[parent].indent + 1,
         true, true, {}, stored_workspace);
+    if (kind == "session")
+      created.title_manual =
+          title != default_new_session_title(*navigation_state);
     std::size_t insertion = navigation_state->size();
     if (parent != navigation_state->size()) {
       (*navigation_state)[parent].expanded = true;
@@ -539,20 +616,26 @@ int run_application(int argc, char **argv) {
     const auto title = std::string(title_value);
     if (title.empty() || title.size() > 256)
       return;
+    bool found_session = false;
+    bool title_changed = false;
     for (auto &item : *navigation_state)
       if (item.selected && item.kind == "session") {
-        item.title = title_value;
+        found_session = true;
+        item.title_manual = true;
+        if (item.title != title_value) {
+          item.title = title_value;
+          title_changed = true;
+        }
         break;
       }
+    if (!found_session)
+      return;
     refresh_navigation(nav_model, navigation_state,
                        std::string(window->get_search_text()),
                        slint::ComponentWeakHandle<MainWindow>(window));
     controller->save_navigation();
-    controller->slash_command("/rename " + title,
-                              std::string(window->get_setting_provider()),
-                              std::string(window->get_model_name()),
-                              std::string(window->get_access_mode()),
-                              std::string(window->get_effort()));
+    if (title_changed)
+      controller->rename_session(title);
   });
   window->on_choose_attachment([](bool directory) {
     return display_string(choose_attachment(directory));

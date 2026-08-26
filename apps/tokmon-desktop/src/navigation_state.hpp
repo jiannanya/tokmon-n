@@ -28,7 +28,8 @@ NavigationItem make_navigation_item(const std::filesystem::path &assets,
                                     std::string title, int indent,
                                     bool selected, bool expanded = true,
                                     std::string ray = {},
-                                    std::string workspace = {});
+                                    std::string workspace = {},
+                                    bool title_manual = false);
 tokmon::cbor::Value navigation_value(const std::vector<NavigationItem> &items);
 std::optional<std::vector<NavigationItem>>
 navigation_items(const tokmon::cbor::Value &value,

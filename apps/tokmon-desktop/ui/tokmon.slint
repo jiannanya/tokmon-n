@@ -134,6 +134,7 @@ export component MainWindow inherits Window {
     in-out property <bool> task-expanded: true;
     in-out property <bool> conversation-workflow-expanded: true;
     in-out property <bool> title-editing: false;
+    out property <bool> title-confirm-hovered: workspace-panel.title-confirm-hovered;
     in-out property <bool> settings-open: false;
     in-out property <bool> access-menu-open: false;
     in-out property <bool> model-menu-open: false;
@@ -324,7 +325,7 @@ export component MainWindow inherits Window {
                 update-window-drag => { root.update-window-drag(); }
                 end-window-drag => { root.end-window-drag(); }
             }
-            WorkspacePanel {
+            workspace-panel := WorkspacePanel {
                 conversation-workflow: root.conversation-workflow;
                 slash-commands: root.slash-commands;
                 model-choices: root.model-choices;
@@ -452,6 +453,13 @@ export component MainWindow inherits Window {
         }
     }
     hs := FocusScope {
+        // Without explicit geometry this shortcut scope spans the complete
+        // window and steals pointer hover/focus from nested controls. It only
+        // needs keyboard focus, which all intended hand-offs request through
+        // hs.focus() explicitly, so keep it out of the pointer hit-test area.
+        width: 0px;
+        height: 0px;
+        focus-on-click: false;
         key-pressed(event) => {
             if event.modifiers.control && (event.text == "n" || event.text == "N") {
                 root.new-session();

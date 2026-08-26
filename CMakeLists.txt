@@ -202,6 +202,35 @@ if(TOKMON_BUILD_DESKTOP)
         $<TARGET_FILE_DIR:tokmon-desktop>
       COMMAND_EXPAND_LISTS)
   endif()
+
+  if(BUILD_TESTING)
+    add_executable(tokmon-desktop-title-edit-tests
+      tests/desktop/title_edit_tests.cpp)
+    target_link_libraries(tokmon-desktop-title-edit-tests PRIVATE Slint::Slint)
+    target_compile_definitions(tokmon-desktop-title-edit-tests PRIVATE
+      SLINT_FEATURE_EXPERIMENTAL)
+    # ElementHandle-based pointer tests need the Slint compiler's element IDs.
+    # Enable that metadata only for this test component, keeping the production
+    # desktop component unchanged.
+    get_target_property(_tokmon_slint_features Slint::Slint SLINT_ENABLED_FEATURES)
+    set_property(TARGET Slint::Slint APPEND PROPERTY
+      SLINT_ENABLED_FEATURES SYSTEM_TESTING)
+    slint_target_sources(tokmon-desktop-title-edit-tests
+      tests/desktop/title_edit_harness.slint)
+    set_property(TARGET Slint::Slint PROPERTY
+      SLINT_ENABLED_FEATURES "${_tokmon_slint_features}")
+    set_target_properties(tokmon-desktop-title-edit-tests PROPERTIES
+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+    if(WIN32)
+      add_custom_command(TARGET tokmon-desktop-title-edit-tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          $<TARGET_RUNTIME_DLLS:tokmon-desktop-title-edit-tests>
+          $<TARGET_FILE_DIR:tokmon-desktop-title-edit-tests>
+        COMMAND_EXPAND_LISTS)
+    endif()
+    add_test(NAME tokmon-desktop-title-edit
+      COMMAND tokmon-desktop-title-edit-tests)
+  endif()
 endif()
 
 set(TOKMON_RELEASE_TARGETS

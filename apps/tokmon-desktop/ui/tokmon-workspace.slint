@@ -1,4 +1,4 @@
-import { ScrollView } from "std-widgets.slint";
+import { LineEdit, ScrollView } from "std-widgets.slint";
 import { ModelChoice, TimelineItem, SlashCommandItem, ProjectFile, GanttSegment, TraceEvent } from "tokmon-models.slint";
 import { Palette, Icons } from "tokmon-theme.slint";
 import { ToolIcon, MenuOption, WorkflowStepRow } from "tokmon-components.slint";
@@ -67,9 +67,10 @@ export component WorkspacePanel inherits Rectangle {
     in-out property <bool> trajectory-selected;
     in-out property <bool> conversation-workflow-expanded;
     in-out property <bool> title-editing;
+    out property <bool> title-confirm-hovered;
     property <string> title-edit-draft;
     property <bool> title-editor-focus-pending;
-    property <bool> title-edit-commit-pending;
+    property <bool> title-editor-exit-pending;
     in-out property <bool> access-menu-open;
     in-out property <bool> model-menu-open;
     in-out property <bool> effort-menu-open;
@@ -134,7 +135,7 @@ export component WorkspacePanel inherits Rectangle {
 
     function begin-title-edit() {
         root.title-edit-draft = root.session-title;
-        root.title-edit-commit-pending = false;
+        root.title-editor-exit-pending = false;
         // Explicitly focus the freshly-created editor. Without this, the first
         // click only focused it and a second click was needed to place the caret.
         root.title-editor-focus-pending = true;
@@ -143,41 +144,32 @@ export component WorkspacePanel inherits Rectangle {
         root.title-editing = true;
     }
 
-    function commit-title-edit() {
+    function leave-title-edit() {
         if !root.title-editing {
             return;
         }
-        // An empty draft keeps the previous valid title. Enter and focus loss
-        // share this path so clicking anywhere else behaves exactly like Enter.
-        if root.title-edit-draft != "" {
+        // Saving is tied to the edit-state transition. This keeps transient
+        // focus changes from becoming a second, independent save mechanism.
+        root.title-editing = false;
+        root.title-editor-focus-pending = false;
+        root.title-editor-exit-pending = false;
+        root.return-focus();
+    }
+
+    changed title-editing => {
+        if !root.title-editing && root.title-edit-draft != "" {
             root.session-title = root.title-edit-draft;
             root.rename-session(root.title-edit-draft);
         }
-        root.title-editing = false;
-        root.title-editor-focus-pending = false;
-        root.title-edit-commit-pending = false;
-        root.return-focus();
     }
 
     function begin-titlebar-drag() {
-        // Moving focus first also commits an active title editor through its
-        // existing blur-as-Enter path before the native move loop begins.
-        root.return-focus();
-        root.drag-window();
-    }
-
-    // Focus leaves the TextInput before a neighboring TouchArea receives its
-    // click. Deferring the commit lets the clear button cancel it; a genuine
-    // outside click still commits immediately on the next event-loop tick.
-    Timer {
-        // Mouse release/click delivery can span more than one native event-loop
-        // tick, so leave enough time for the clear button to cancel the blur.
-        interval: 120ms;
-        running: root.title-edit-commit-pending;
-        triggered => {
-            root.title-edit-commit-pending = false;
-            root.commit-title-edit();
+        if root.title-editing {
+            root.leave-title-edit();
+        } else {
+            root.return-focus();
         }
+        root.drag-window();
     }
 
     pure function resolved-environment-button-x() -> length {
@@ -210,15 +202,19 @@ export component WorkspacePanel inherits Rectangle {
                             // neighboring drag zone would cover the pencil/input.
                             width: root.title-editing
                                 ? 240px
-                                // Include the pencil target plus a safety allowance
-                                // for mixed CJK/Latin glyph advance rounding. The
-                                // title remains bounded and elides on narrow windows.
-                                : Math.min(300px, session-title-label.preferred-width) + 66px;
+                                // The label has an explicit bounded width. Add only
+                                // the 8px gap and the pencil's 26px minimum width so
+                                // the adjacent drag region starts immediately after
+                                // the visible controls instead of leaving a dead zone.
+                                : Math.min(300px, session-title-label.preferred-width) + 34px;
                             horizontal-stretch: 0;
-                            spacing: 8px;
+                            spacing: root.title-editing ? 0px : 8px;
                             alignment: start;
                             session-title-label := Text {
                                 visible: !root.title-editing;
+                                width: root.title-editing
+                                    ? 0px
+                                    : Math.min(300px, self.preferred-width);
                                 text: root.session-title;
                                 font-size: 14.5px;
                                 font-weight: 600;
@@ -227,79 +223,90 @@ export component WorkspacePanel inherits Rectangle {
                                 overflow: elide;
                                 vertical-alignment: center;
                             }
-                            if root.title-editing : Rectangle {
+                            if root.title-editing : HorizontalLayout {
                                 width: 240px;
                                 height: 32px;
-                                border-radius: 9px;
-                                background: Palette.white;
-                                border-width: 1px;
-                                border-color: title-edit-input.has-focus ? Palette.accent : Palette.border;
-                                drop-shadow-color: title-edit-input.has-focus ? rgba(200, 106, 40, 0.12) : Palette.shadow;
-                                drop-shadow-offset-y: 2px;
-                                drop-shadow-blur: title-edit-input.has-focus ? 7px : 3px;
-                                // Slint hit-tests earlier siblings first. Keep the
-                                // clear target before TextInput so the editor does
-                                // not capture its pointer press.
-                                clear-title-touch := TouchArea {
-                                    x: parent.width - 33px;
-                                    y: 3px;
-                                    width: 27px;
-                                    height: 26px;
-                                    clicked => {
-                                        root.title-edit-commit-pending = false;
-                                        root.title-edit-draft = "";
-                                        root.title-editor-focus-pending = true;
-                                    }
-                                    mouse-cursor: pointer;
-                                }
+                                vertical-stretch: 0;
+                                y: (title-actions.height - self.height) / 2;
+                                spacing: 4px;
+                                // Keep the editor above the adjacent native drag
+                                // region so clicks always reach the TextInput.
+                                z: 10;
                                 Timer {
                                     interval: 1ms;
                                     running: root.title-editor-focus-pending;
                                     triggered => {
                                         title-edit-input.focus();
+                                        // Starting an edit should replace the current
+                                        // title when the user types. A later click can
+                                        // still place the caret for partial edits.
+                                        title-edit-input.select-all();
                                         root.title-editor-focus-pending = false;
                                     }
                                 }
-                                title-edit-input := TextInput {
-                                    x: 12px;
-                                    width: parent.width - 48px;
-                                    height: parent.height;
-                                    text <=> root.title-edit-draft;
-                                    single-line: true;
-                                    horizontal-alignment: left;
-                                    vertical-alignment: center;
-                                    font-size: 14px;
-                                    color: Palette.ink;
-                                    accepted => {
-                                        root.title-edit-commit-pending = false;
-                                        root.commit-title-edit();
-                                    }
-                                    changed has-focus => {
-                                        if self.has-focus {
-                                            root.title-edit-commit-pending = false;
-                                        } else if root.title-editing && !root.title-editor-focus-pending {
-                                            root.title-edit-commit-pending = true;
+                                Timer {
+                                    // Let a pointer click finish before deciding whether
+                                    // focus really moved outside the editor. This avoids
+                                    // turning an internal caret click into a save.
+                                    interval: 40ms;
+                                    running: root.title-editor-exit-pending;
+                                    triggered => {
+                                        root.title-editor-exit-pending = false;
+                                        if root.title-editing && !title-edit-input.has-focus {
+                                            root.leave-title-edit();
                                         }
                                     }
                                 }
-                                clear-title := Rectangle {
-                                    x: parent.width - 33px;
-                                    y: 3px;
-                                    width: 27px;
-                                    height: 26px;
-                                    border-radius: 7px;
-                                    background: clear-title-touch.has-hover ? Palette.sep : transparent;
-                                    z: 5;
-                                    Image {
-                                        source: Icons.close;
-                                        width: 12px;
-                                        height: 12px;
-                                        x: (parent.width - self.width) / 2;
-                                        y: (parent.height - self.height) / 2;
+                                input-frame := Rectangle {
+                                    horizontal-stretch: 1;
+                                    height: 32px;
+                                    clip: true;
+                                    title-edit-input := LineEdit {
+                                        width: parent.width;
+                                        height: parent.height;
+                                        text <=> root.title-edit-draft;
+                                        horizontal-alignment: left;
+                                        font-size: 14px;
+                                        accepted(value) => {
+                                            root.leave-title-edit();
+                                        }
+                                        changed has-focus => {
+                                            if self.has-focus {
+                                                root.title-editor-exit-pending = false;
+                                            } else if root.title-editing && !root.title-editor-focus-pending {
+                                                root.title-editor-exit-pending = true;
+                                            }
+                                        }
+                                    }
+                                    // LineEdit includes a style-provided clear button.
+                                    // Mask and intercept that area so title editing exposes
+                                    // exactly one action: the confirmation button below.
+                                    Rectangle {
+                                        x: parent.width - 31px;
+                                        y: 1px;
+                                        width: 30px;
+                                        height: parent.height - 2px;
+                                        background: Palette.white;
+                                        z: 20;
+                                        TouchArea {
+                                            clicked => { title-edit-input.focus(); }
+                                            mouse-cursor: text;
+                                        }
                                     }
                                 }
+                                confirm-title-button := ToolIcon {
+                                    width: 27px;
+                                    height: 28px;
+                                    vertical-stretch: 0;
+                                    source: Icons.check-small;
+                                    icon-size: 12px;
+                                    changed hovered => {
+                                        root.title-confirm-hovered = self.hovered;
+                                    }
+                                    clicked => { root.leave-title-edit(); }
+                                }
                             }
-                            if !root.title-editing : ToolIcon {
+                            if !root.title-editing : edit-title-button := ToolIcon {
                                 source: Icons.pencil;
                                 icon-size: 14px;
                                 clicked => { root.begin-title-edit(); }

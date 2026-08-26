@@ -5,6 +5,7 @@ export component ToolIcon inherits Rectangle {
     in property <image> source;
     in property <length> icon-size: 16px;
     in property <bool> enabled: true;
+    out property <bool> hovered: ta.has-hover;
     callback clicked;
     background: ta.has-hover ? Palette.sep : transparent;
     border-radius: 8px;

@@ -1,0 +1,23 @@
+import { MainWindow } from "../../apps/tokmon-desktop/ui/tokmon.slint";
+
+// Exercise the real desktop component tree. In particular, this includes the
+// UI scale layer, sidebar, code-panel slot and application-level FocusScope.
+export component TitleEditHarness inherits MainWindow {
+    width: 999px;
+    height: 900px;
+
+    in-out property <string> test-session-title <=> root.session-title;
+    in-out property <bool> test-title-editing <=> root.title-editing;
+    out property <bool> test-title-confirm-hovered: root.title-confirm-hovered;
+    out property <int> rename-count;
+    out property <string> last-renamed-title;
+    out property <int> new-session-count;
+    out property <int> drag-count;
+
+    rename-session(title) => {
+        root.rename-count += 1;
+        root.last-renamed-title = title;
+    }
+    new-session => { root.new-session-count += 1; }
+    drag-window => { root.drag-count += 1; }
+}

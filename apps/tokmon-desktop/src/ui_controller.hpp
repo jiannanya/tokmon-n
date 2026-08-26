@@ -19,6 +19,7 @@ public:
   virtual void slash_command(std::string text, std::string provider,
                              std::string model, std::string access_mode,
                              std::string effort) = 0;
+  virtual void rename_session(std::string title) = 0;
   virtual void reconcile() = 0;
   virtual void refresh_workspace() = 0;
   virtual void new_session(std::string workspace = {}) = 0;

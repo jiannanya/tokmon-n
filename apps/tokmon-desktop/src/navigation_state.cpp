@@ -137,13 +137,15 @@ NavigationItem make_navigation_item(const std::filesystem::path &assets,
                                     std::string id, std::string kind,
                                     std::string title, const int indent,
                                     const bool selected, const bool expanded,
-                                    std::string ray, std::string workspace) {
+                                    std::string ray, std::string workspace,
+                                    const bool title_manual) {
   NavigationItem item;
   item.id = display_string(id);
   item.ray = display_string(ray);
   item.workspace = display_string(workspace);
   item.kind = display_string(kind);
   item.title = display_string(title);
+  item.title_manual = title_manual;
   item.indent = indent;
   item.selected = selected;
   item.expandable = kind != "session";
@@ -166,6 +168,7 @@ tokmon::cbor::Value navigation_value(const std::vector<NavigationItem> &items) {
          {"workspace", std::string(item.workspace)},
          {"kind", std::string(item.kind)},
          {"title", std::string(item.title)},
+         {"title-manual", item.title_manual},
          {"indent", static_cast<std::int64_t>(item.indent)},
          {"selected", item.selected},
          {"expanded", item.expanded}}));
@@ -228,7 +231,14 @@ navigation_items(const tokmon::cbor::Value &value,
         tokmon::cbor::find(encoded, "ray")
             ? std::string(tokmon::cbor::find(encoded, "ray")->as_string())
             : std::string{},
-        std::move(workspace)));
+        std::move(workspace),
+        // Older navigation files predate this field. Treat their existing
+        // titles as intentional so an old empty conversation is never renamed
+        // just because it is opened after upgrading.
+        !tokmon::cbor::find(encoded, "title-manual") ||
+            !std::holds_alternative<bool>(
+                tokmon::cbor::find(encoded, "title-manual")->data) ||
+            tokmon::cbor::find(encoded, "title-manual")->as_bool()));
   }
   return items;
 }

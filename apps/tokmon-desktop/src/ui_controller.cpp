@@ -79,6 +79,9 @@ public:
                               {"surface", "desktop"}});
     enqueue_user(std::move(command));
   }
+  void rename_session(std::string title) {
+    enqueue_user(Command{"rename-session", std::move(title)});
+  }
   void snapshot() { enqueue(Command{"snapshot", {}}); }
   void reconcile() { enqueue(Command{"reconcile", {}}); }
   void refresh_workspace() { enqueue(Command{"workspace-refresh", {}}); }
@@ -1496,6 +1499,10 @@ private:
       }
       if (command.kind == "chat" || command.kind == "slash-command")
         publish_pending(command.text);
+      // A session without a Ray is persisted by navigation-save. Once a Ray
+      // exists, mirror the title into its immutable session metadata below.
+      if (command.kind == "rename-session" && active_ray_.empty())
+        continue;
       tokmon::SnowMessage request;
       request.request_id = tokmon::next_snow_request_id();
       if (command.kind == "snapshot") {
@@ -1517,6 +1524,12 @@ private:
           if (const auto *selection = command.payload.as_map())
             for (const auto &[key, value] : *selection)
               (*request.payload.as_map())[key] = value;
+        } else if (command.kind == "rename-session") {
+          request.payload = tokmon::cbor::object(
+              {{"action", "command.execute"},
+               {"text", "/rename " + command.text},
+               {"ray", active_ray_},
+               {"surface", "desktop-ui"}});
         } else if (command.kind == "settings-load")
           request.payload = tokmon::cbor::object({{"action", "settings.get"}});
         else if (command.kind == "providers-load")
@@ -1643,6 +1656,8 @@ private:
         continue;
       }
       if (command.kind == "reconcile")
+        continue;
+      if (command.kind == "rename-session")
         continue;
       if (command.kind == "slash-command") {
         if (const auto *ray = tokmon::cbor::find(response->payload, "ray"))
