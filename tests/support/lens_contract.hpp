@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "tests/support/test_framework.hpp"
+#include "tests/support/optical_harness.hpp"
 
 #include "tokmon/tokmon.hpp"
 #include "tokmon/yaml.hpp"
@@ -53,11 +54,11 @@ inline void verify_lens_contract(const std::string_view short_id,
   REQUIRE(manifest.id == "org.tokmon.lens." + std::string(short_id));
   REQUIRE_FALSE(manifest.display_name.empty());
   REQUIRE(manifest.version == "0.1.0");
-  REQUIRE(manifest.abi_major == 1);
+  REQUIRE(manifest.abi_major == 2);
   REQUIRE(manifest.abi_minor == 0);
   REQUIRE(manifest.trust == TrustLevel::t1);
   REQUIRE(manifest.stateless == expected_stateless);
-  REQUIRE_FALSE(manifest.view_channels.empty());
+  REQUIRE_FALSE(manifest.outputs.empty());
   REQUIRE_FALSE(manifest.observes.empty());
   REQUIRE_FALSE(manifest.refracts.empty());
 
@@ -75,27 +76,24 @@ inline void verify_lens_contract(const std::string_view short_id,
   REQUIRE(cbor::find(*runtime, "kind")->as_string() == to_string(manifest.runtime));
   REQUIRE(cbor::find(*encoded, "trust")->as_string() == "t1");
   REQUIRE(cbor::find(*encoded, "stateless")->as_bool() == manifest.stateless);
-  REQUIRE(yaml_strings(cbor::find(*encoded, "view_channels")) == manifest.view_channels);
+  REQUIRE(cbor::find(*encoded, "inputs")->as_array()->size() == manifest.inputs.size());
+  REQUIRE(cbor::find(*encoded, "outputs")->as_array()->size() == manifest.outputs.size());
   REQUIRE(yaml_strings(cbor::find(*encoded, "light_permissions")) ==
           manifest.light_permissions);
   verify_pattern_sequence(cbor::find(*encoded, "observes"), manifest.observes);
   verify_pattern_sequence(cbor::find(*encoded, "refracts"), manifest.refracts);
 
-  SurfaceBuilder first_builder(manifest.id);
-  SurfaceBuilder second_builder(manifest.id);
-  REQUIRE(lens->view(PhotonWindow{}, first_builder));
-  REQUIRE(lens->view(PhotonWindow{}, second_builder));
-  const SurfaceSnapshot first{.epoch = 1,
-      .contributions = first_builder.contributions(),
-      .proposals = first_builder.proposals()};
-  const SurfaceSnapshot second{.epoch = 1,
-      .contributions = second_builder.contributions(),
-      .proposals = second_builder.proposals()};
-  REQUIRE(cbor::encode(to_cbor(first)) == cbor::encode(to_cbor(second)));
-  for (const auto& contribution : first.contributions) {
+  auto first = view_lens_once(lens);
+  auto second = view_lens_once(lens);
+  REQUIRE(first);
+  REQUIRE(second);
+  REQUIRE(cbor::encode(to_cbor(first->surface)) ==
+          cbor::encode(to_cbor(second->surface)));
+  for (const auto& contribution : first->surface.contributions) {
     REQUIRE(contribution.lens == manifest.id);
-    REQUIRE(std::find(manifest.view_channels.begin(), manifest.view_channels.end(),
-                      contribution.channel) != manifest.view_channels.end());
+    REQUIRE(std::ranges::any_of(manifest.outputs, [&contribution](const auto& output) {
+      return output.surface && output.band == contribution.channel;
+    }));
   }
 
   struct RejectingHost final : OpticalHost {
@@ -116,8 +114,7 @@ inline void verify_lens_contract(const std::string_view short_id,
   REQUIRE(unmatched->status == RefractionStatus::passed);
 
   lens->request_stop();
-  SurfaceBuilder stopped_builder(manifest.id);
-  auto stopped = lens->view(PhotonWindow{}, stopped_builder);
+  auto stopped = view_lens_once(lens);
   REQUIRE_FALSE(stopped);
   REQUIRE(stopped.error().code == ErrorCode::cancelled);
 }

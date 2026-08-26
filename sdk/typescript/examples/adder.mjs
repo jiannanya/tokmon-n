@@ -5,8 +5,8 @@ const add = actPattern("tool.add", "tokmon.math.add.v1");
 export default defineLens({
   id: "org.tokmon.lens.adder-node",
   version: "0.1.0",
-  view(_window, surface) {
-    surface.model.addTool({
+  view(_input, outgoing) {
+    outgoing.model.addTool({
       name: "add", description: "计算两个数字之和", argumentsSchema: "tokmon.math.add.v1",
     });
     return ok(undefined);
@@ -20,4 +20,3 @@ export default defineLens({
     return emitted.ok ? ok(completed()) : emitted;
   },
 });
-

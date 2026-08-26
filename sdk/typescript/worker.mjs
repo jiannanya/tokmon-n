@@ -1,6 +1,6 @@
 import { pathToFileURL } from "node:url";
 import { encode, decode } from "./cbor.mjs";
-import { SurfaceBuilder, RefractionBeam } from "./index.mjs";
+import { OpticalInput, WavefrontBuilder, RefractionBeam } from "./index.mjs";
 
 const entryIndex = process.argv.indexOf("--entry");
 if (entryIndex < 0 || !process.argv[entryIndex + 1]) throw new Error("--entry is required");
@@ -30,16 +30,16 @@ for await (const chunk of process.stdin) {
     try {
       if (frame.type === "worker.hello") {
         response.type = "worker.ready";
-        response.payload = { protocol_major: 1, protocol_minor: 0, lens_id: lens.id,
+        response.payload = { protocol_major: 2, protocol_minor: 0, lens_id: lens.id,
           runtime: "node", runtime_version: process.versions.node,
           version: lens.version ?? "0.1.0" };
       } else if (frame.type === "lens.view.request") {
-        const surface = new SurfaceBuilder(lens.id);
-        const result = await lens.view(frame.payload.window, surface);
+        const input = new OpticalInput(frame.payload.optical_input);
+        const outgoing = new WavefrontBuilder(lens.id, input);
+        const result = await lens.view(input, outgoing);
         response.type = "lens.view.result";
         response.payload = result?.ok === false ? result : { ok: true,
-          surface: { epoch: frame.payload.epoch ?? 0,
-            contributions: surface.contributions, proposals: surface.proposals } };
+          wavefront_delta: outgoing.cells };
       } else if (frame.type === "lens.refract.request") {
         const controller = new AbortController(); controllers.set(frame.request_id, controller);
         const beam = new RefractionBeam(frame.payload.act, controller.signal);

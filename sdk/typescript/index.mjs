@@ -19,18 +19,62 @@ export function actPattern(kind, schema = "*") {
   });
 }
 
-export class SurfaceBuilder {
+export class OpticalInput {
+  constructor(frame) {
+    this.photonWindow = frame?.photon_window ?? { photons: [] };
+    this.incident = frame?.incident ?? {};
+    this.beat = frame?.beat ?? {};
+  }
+  get photons() { return this.photonWindow.photons ?? []; }
+  latest(kind) {
+    const values = kind ? this.photons.filter((photon) => photon.kind === kind) : this.photons;
+    return values.length ? values[values.length - 1] : undefined;
+  }
+  cells(port) { return this.incident?.[port]?.cells ?? []; }
+  one(port) { const values = this.cells(port); return values.length === 1 ? values[0] : undefined; }
+  sealed(port) { return this.incident?.[port]?.sealed === true; }
+}
+
+export class WavefrontBuilder {
   #lens;
-  contributions = [];
-  proposals = [];
-  constructor(lens) { this.#lens = lens; }
-  add(channel, key, value, priority = 0) {
-    this.contributions.push({ lens: this.#lens, channel, key, value, priority });
+  #input;
+  cells = [];
+  constructor(lens, input) { this.#lens = lens; this.#input = input; }
+  emit(output, key, value, options = {}) {
+    const causedBy = [...(options.causedBy ?? [])];
+    const visible = new Set(Object.values(this.#input.incident ?? {})
+      .flatMap((port) => port?.cells ?? []).map((cell) => cell.id));
+    if (causedBy.some((id) => !visible.has(id)))
+      return err("permission_denied", "provenance references an invisible input cell");
+    this.cells.push({
+      id: `worker-field-${this.cells.length + 1}`,
+      band: options.band ?? output,
+      schema: options.schema ?? "tokmon.surface.contribution.v1",
+      key,
+      value,
+      priority: options.priority ?? 0,
+      surface: options.surface ?? true,
+      sensitivity: options.sensitivity ?? "normal",
+      provenance: {
+        producer: this.#lens,
+        generation: 0,
+        epoch: this.#input.beat?.key?.epoch ?? 0,
+        path_index: 0,
+        output_port: output,
+        input_cells: causedBy,
+        input_photons: [],
+        assembly_hash: this.#input.beat?.key?.assembly_hash ?? "worker-boundary",
+      },
+    });
     return ok(undefined);
   }
-  propose(act) {
-    this.proposals.push(act);
-    return ok(undefined);
+  add(channel, key, value, priority = 0) {
+    return this.emit(channel, key, value, { priority, surface: true });
+  }
+  propose(act, causedBy = []) {
+    return this.emit("act.proposal", act.id ?? `worker-act-${this.cells.length + 1}`,
+      act, { causedBy, band: "act.proposal", schema: "tokmon.act.proposal.v1",
+        surface: true });
   }
   get model() {
     return {
@@ -79,4 +123,3 @@ export class RefractionBeam {
 export const passed = () => ({ status: "passed" });
 export const completed = (detail = "completed") => ({ status: "completed", detail });
 export const rejected = (detail) => ({ status: "rejected", detail });
-

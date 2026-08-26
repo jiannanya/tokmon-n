@@ -16,7 +16,7 @@ FallenLens::FallenLens() : LensBase(make_manifest("fallen", "Fallen / Policy 偏
      {"policy.evaluate", "tokmon.policy.evaluate.v1"},
      {"content.classify", "tokmon.content.classify.v1"}})) {}
 
-Result<void> FallenLens::view(const PhotonWindow& photons, SurfaceBuilder& surface) {
+Result<void> FallenLens::view(const OpticalInput& photons, WavefrontBuilder& surface) {
   if (auto status = ready(); !status) return status;
   const auto* proposed = photons.latest("act.proposed");
   std::string act_hash;

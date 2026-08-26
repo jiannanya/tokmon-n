@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from tokmon_lens_sdk import ActPattern, Lens, RefractionBeam, Result, SurfaceBuilder, completed, ok, passed
+from tokmon_lens_sdk import ActPattern, Lens, OpticalInput, RefractionBeam, Result, WavefrontBuilder, completed, ok, passed
 
 
 class LensEntry(Lens):
     id = "org.tokmon.lens.adder-python"
     add = ActPattern[dict[str, float]]("tool.add", "tokmon.math.add.v1")
 
-    def view(self, _photons: dict[str, Any], surface: SurfaceBuilder) -> Result[None]:
-        surface.add_tool(
+    def view(self, _input: OpticalInput, outgoing: WavefrontBuilder) -> Result[None]:
+        outgoing.add_tool(
             name="add", description="计算两个数字之和", arguments_schema="tokmon.math.add.v1"
         )
         return ok(None)
@@ -30,4 +30,3 @@ class LensEntry(Lens):
 
 
 lens = LensEntry()
-

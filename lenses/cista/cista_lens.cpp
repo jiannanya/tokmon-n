@@ -39,7 +39,7 @@ CistaLens::CistaLens() : LensBase(make_manifest("cista", "Cista / Secret 遮光�
      {"redaction.apply", "tokmon.redaction.apply.v1"}},
     {"photon.emit", "secret.bind", "os.keyring", "log.write"})) {}
 
-Result<void> CistaLens::view(const PhotonWindow& photons, SurfaceBuilder& surface) {
+Result<void> CistaLens::view(const OpticalInput& photons, WavefrontBuilder& surface) {
   if (auto status = ready(); !status) return status;
   cbor::Value::Map references;
   for (const auto& photon : photons.photons()) {

@@ -165,13 +165,13 @@ void NotaLens::request_stop() noexcept {
   LensBase::request_stop();
 }
 
-Result<void> NotaLens::view(const PhotonWindow& photons, SurfaceBuilder& surface) {
+Result<void> NotaLens::view(const OpticalInput& photons, WavefrontBuilder& surface) {
   if (auto status = ready(); !status) return status;
   {
     std::scoped_lock lock(impl_->mutex);
-    impl_->prometheus = prometheus_metrics(photons);
+    impl_->prometheus = prometheus_metrics(photons.photon_window());
   }
-  auto snapshot = metrics(photons);
+  auto snapshot = metrics(photons.photon_window());
   const auto failures = cbor::find(snapshot, "failures_total")->as_integer();
   if (auto result = surface.add("diagnostic.metrics", "active-ray", snapshot, 0); !result)
     return result;

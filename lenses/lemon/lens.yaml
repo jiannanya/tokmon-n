@@ -1,7 +1,8 @@
+api: tokmon.lens/wavefront
 id: org.tokmon.lens.lemon
 display_name: Lemon / 有界光纤波导
 version: 0.1.0
-abi: { major: 1, minor: 0 }
+abi: { major: 2, minor: 0 }
 runtime: { kind: in_process }
 trust: t1
 stateless: true
@@ -11,7 +12,10 @@ observes:
   - { kind: "waveguide.subscription-*", schema: "*" }
   - { kind: worker.progress, schema: "*" }
   - { kind: "model.*chunk", schema: "*" }
-view_channels: [diagnostic.transport, ui.stream]
+inputs: []
+outputs:
+  - { port: diagnostic.transport, band: diagnostic.transport, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
+  - { port: ui.stream, band: ui.stream, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
 refracts:
   - { kind: waveguide.send-frame, schema: tokmon.waveguide.frame.v1 }
   - { kind: waveguide.broadcast, schema: tokmon.waveguide.frame.v1 }

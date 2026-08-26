@@ -1,7 +1,8 @@
+api: tokmon.lens/wavefront
 id: org.tokmon.lens.cove
 display_name: Cove / Workspace 实景物镜
 version: 0.1.0
-abi: { major: 1, minor: 0 }
+abi: { major: 2, minor: 0 }
 runtime: { kind: in_process }
 trust: t1
 stateless: true
@@ -10,7 +11,12 @@ observes:
   - { kind: "fs.*", schema: "*" }
   - { kind: "git.*", schema: "*" }
   - { kind: "artifact.*", schema: "*" }
-view_channels: [workspace.tree, workspace.diff, workspace.git, ui.artifact]
+inputs: []
+outputs:
+  - { port: workspace.tree, band: workspace.tree, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
+  - { port: workspace.diff, band: workspace.diff, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
+  - { port: workspace.git, band: workspace.git, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
+  - { port: ui.artifact, band: ui.artifact, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
 refracts:
   - { kind: fs.read, schema: tokmon.fs.read.v1 }
   - { kind: fs.create, schema: tokmon.fs.create.v1 }

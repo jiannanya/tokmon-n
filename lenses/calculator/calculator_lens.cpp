@@ -45,7 +45,7 @@ CalculatorLens::CalculatorLens() : LensBase(make_manifest("calculator",
     "Calculator / 动态透镜参考实现", {"model.tools"}, {{"user.input", "*"}},
     {{"tool.calculate", "tokmon.math.calculate.v1"}})) {}
 
-Result<void> CalculatorLens::view(const PhotonWindow&, SurfaceBuilder& surface) {
+Result<void> CalculatorLens::view(const OpticalInput&, WavefrontBuilder& surface) {
   if (auto status = ready(); !status) return status;
   return surface.add("model.tools", "calculate", cbor::object({
       {"name", "calculate"}, {"description", "确定性计算二元算术表达式"},

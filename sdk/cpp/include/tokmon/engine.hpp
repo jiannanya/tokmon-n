@@ -24,6 +24,7 @@ class RayTracingEngine final : public OpticalHost {
            const LensId& lens) override;
 
   Result<SurfaceSnapshot> view(const RayId& ray);
+  Result<OpticalBeatResult> propagate(const RayId& ray);
   Result<RefractionResult> refract(Act act);
   Result<std::size_t> advance(const RayId& ray, std::size_t max_beats = 32);
   Result<RayId> begin(std::string input, MountEpoch epoch = 0,

@@ -23,7 +23,14 @@ bool version_matches(const std::string_view constraint, const std::string_view a
 }  // namespace
 
 LightPath::LightPath() {
-  active_.store(std::make_shared<const LightPathSnapshot>(), std::memory_order_release);
+  auto initial = std::make_shared<LightPathSnapshot>();
+  auto compiled = compile_optical_assembly(0, initial->lenses, initial->optical);
+  if (compiled) {
+    initial->assembly = std::move(*compiled);
+    initial->hash = initial->assembly->hash;
+  }
+  active_.store(std::shared_ptr<const LightPathSnapshot>(std::move(initial)),
+                std::memory_order_release);
 }
 
 std::shared_ptr<const LightPathSnapshot> LightPath::snapshot() const noexcept {
@@ -91,7 +98,14 @@ Result<void> LightPath::publish(std::shared_ptr<const LightPathSnapshot> candida
             "ambiguous ActPattern in LightPath: " + pattern.kind));
     }
   }
-  active_.store(std::move(candidate), std::memory_order_release);
+  auto compiled = compile_optical_assembly(candidate->epoch, candidate->lenses,
+                                           candidate->optical);
+  if (!compiled) return tl::unexpected(compiled.error());
+  auto resolved = std::make_shared<LightPathSnapshot>(*candidate);
+  resolved->assembly = std::move(*compiled);
+  if (resolved->hash.empty()) resolved->hash = resolved->assembly->hash;
+  active_.store(std::shared_ptr<const LightPathSnapshot>(std::move(resolved)),
+                std::memory_order_release);
   return {};
 }
 

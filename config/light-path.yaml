@@ -1,4 +1,4 @@
-version: 1
+api: tokmon.light-path/wavefront
 lenses:
   - { id: org.tokmon.lens.ignis, artifact: builtin:ignis, enabled: true, runtime: in_process }
   - { id: org.tokmon.lens.lemon, artifact: builtin:lemon, enabled: true, runtime: in_process }
@@ -19,4 +19,15 @@ lenses:
   - { id: org.tokmon.lens.cove, artifact: builtin:cove, enabled: true, runtime: in_process }
   - { id: org.tokmon.lens.snow, artifact: builtin:snow, enabled: true, runtime: in_process }
   - { id: org.tokmon.lens.termon, artifact: builtin:termon, enabled: true, runtime: desktop }
-
+assembly:
+  id: org.tokmon.assembly.default-agent
+  autowire_unique: true
+  connections: []
+  resonators: []
+  budget:
+    max_cells: 16384
+    max_bytes: 16777216
+    max_cell_bytes: 1048576
+    max_lens_executions: 4096
+    max_rounds: 8
+    deadline_ms: 5000

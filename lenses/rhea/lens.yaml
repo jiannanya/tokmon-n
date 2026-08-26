@@ -1,7 +1,8 @@
+api: tokmon.lens/wavefront
 id: org.tokmon.lens.rhea
 display_name: Rhea / 模型网关神谕聚焦镜
 version: 0.1.0
-abi: { major: 1, minor: 0 }
+abi: { major: 2, minor: 0 }
 runtime: { kind: in_process }
 trust: t1
 stateless: true
@@ -9,7 +10,10 @@ observes:
   - { kind: "model.provider-*", schema: "*" }
   - { kind: model.usage, schema: "*" }
   - { kind: config.selected, schema: "*" }
-view_channels: [model.catalog, diagnostic.model]
+inputs: []
+outputs:
+  - { port: model.catalog, band: model.catalog, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
+  - { port: diagnostic.model, band: diagnostic.model, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
 refracts:
   - { kind: model.call, schema: tokmon.model.call.v1 }
 light_permissions: [photon.emit, io.http, secret.bind, log.write]

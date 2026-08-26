@@ -14,12 +14,12 @@
 namespace tokmon {
 namespace {
 
-void release(TokmonOwnedBytesV1& bytes) {
+void release(TokmonOwnedBytes& bytes) {
   if (bytes.release && bytes.data) bytes.release(bytes.data, bytes.size, bytes.user);
   bytes = {};
 }
 
-Error decode_error(const TokmonOwnedBytesV1& bytes, const Error fallback) {
+Error decode_error(const TokmonOwnedBytes& bytes, const Error fallback) {
   if (!bytes.data || bytes.size == 0) return fallback;
   auto value = cbor::decode(std::span(bytes.data, bytes.size));
   if (!value) return fallback;
@@ -38,7 +38,7 @@ RuntimeKind runtime_from(std::string_view value) {
   return RuntimeKind::in_process;
 }
 
-Result<LensManifest> parse_manifest(const TokmonBytesV1 bytes) {
+Result<LensManifest> parse_manifest(const TokmonBytes bytes) {
   auto value = cbor::decode(std::span(bytes.data, bytes.size));
   if (!value) return tl::unexpected(value.error());
   LensManifest manifest;
@@ -54,8 +54,30 @@ Result<LensManifest> parse_manifest(const TokmonBytesV1 bytes) {
     manifest.runtime_entry = field->as_string();
   if (const auto* field = cbor::find(*value, "trust")) manifest.trust = static_cast<TrustLevel>(field->as_integer());
   if (const auto* field = cbor::find(*value, "stateless")) manifest.stateless = field->as_bool(true);
-  if (const auto* field = cbor::find(*value, "view_channels"); field && field->as_array())
-    for (const auto& item : *field->as_array()) manifest.view_channels.emplace_back(item.as_string());
+  const auto read_ports = [&](const std::string_view name,
+                              std::vector<OpticalPortSpec>& output) -> Result<void> {
+    const auto* field = cbor::find(*value, name);
+    if (!field || !field->as_array())
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                       "Lens manifest port array is missing"));
+    for (const auto& item : *field->as_array()) {
+      auto port = optical_port_spec_from_cbor(item);
+      if (!port) return tl::unexpected(port.error());
+      output.push_back(std::move(*port));
+    }
+    return {};
+  };
+  if (auto parsed = read_ports("inputs", manifest.inputs); !parsed)
+    return tl::unexpected(parsed.error());
+  if (auto parsed = read_ports("outputs", manifest.outputs); !parsed)
+    return tl::unexpected(parsed.error());
+  if (const auto* field = cbor::find(*value, "trigger")) {
+    auto trigger = trigger_policy_from_string(field->as_string());
+    if (!trigger) return tl::unexpected(trigger.error());
+    manifest.trigger = *trigger;
+  }
+  if (const auto* field = cbor::find(*value, "monotone"))
+    manifest.monotone = field->as_bool();
   if (const auto* field = cbor::find(*value, "permissions"); field && field->as_array())
     for (const auto& item : *field->as_array()) manifest.light_permissions.emplace_back(item.as_string());
   if (const auto* field = cbor::find(*value, "dependencies"); field && field->as_array())
@@ -110,7 +132,7 @@ struct CAbiLens::Impl {
 #else
   void* library{nullptr};
 #endif
-  TokmonLensApiV1 api{};
+  TokmonLensApi api{};
   void* instance{nullptr};
   LensManifest manifest;
 };
@@ -134,19 +156,19 @@ Result<std::shared_ptr<CAbiLens>> CAbiLens::load(const std::filesystem::path& pa
   if (!lens->impl_->library)
     return tl::unexpected(make_error(ErrorCode::io_error,
                                      "LoadLibrary failed for " + path.string()));
-  auto entry = reinterpret_cast<TokmonLensEntryV1>(
-      GetProcAddress(lens->impl_->library, "tokmon_lens_entry_v1"));
+  auto entry = reinterpret_cast<TokmonLensEntry>(
+      GetProcAddress(lens->impl_->library, "tokmon_lens_entry"));
 #else
   lens->impl_->library = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
   if (!lens->impl_->library)
     return tl::unexpected(make_error(ErrorCode::io_error,
                                      std::string("dlopen failed: ") + dlerror()));
-  auto entry = reinterpret_cast<TokmonLensEntryV1>(
-      dlsym(lens->impl_->library, "tokmon_lens_entry_v1"));
+  auto entry = reinterpret_cast<TokmonLensEntry>(
+      dlsym(lens->impl_->library, "tokmon_lens_entry"));
 #endif
   if (!entry)
     return tl::unexpected(make_error(ErrorCode::abi_mismatch,
-                                     "tokmon_lens_entry_v1 is missing"));
+                                     "tokmon_lens_entry is missing"));
   lens->impl_->api = entry();
   if (lens->impl_->api.abi_major != TOKMON_LENS_ABI_MAJOR ||
       lens->impl_->api.abi_minor > TOKMON_LENS_ABI_MINOR)
@@ -164,11 +186,12 @@ Result<std::shared_ptr<CAbiLens>> CAbiLens::load(const std::filesystem::path& pa
 
 const LensManifest& CAbiLens::manifest() const noexcept { return impl_->manifest; }
 
-Result<void> CAbiLens::view(const PhotonWindow& photons, SurfaceBuilder& surface) {
-  const auto request = cbor::encode(to_cbor(photons));
-  TokmonOwnedBytesV1 output{}; TokmonOwnedBytesV1 error{};
+Result<void> CAbiLens::view(const OpticalInput& input,
+                            WavefrontBuilder& outgoing) {
+  const auto request = cbor::encode(to_cbor(input));
+  TokmonOwnedBytes output{}; TokmonOwnedBytes error{};
   const auto status = impl_->api.view(impl_->instance,
-      TokmonBytesV1{request.data(), request.size()}, &output, &error);
+      TokmonBytes{request.data(), request.size()}, &output, &error);
   if (status != 0) {
     const auto failure = decode_error(error, make_error(ErrorCode::lens_crashed,
                                                         "C ABI Lens view failed"));
@@ -177,16 +200,24 @@ Result<void> CAbiLens::view(const PhotonWindow& photons, SurfaceBuilder& surface
   auto value = cbor::decode(std::span(output.data, output.size));
   release(output); release(error);
   if (!value) return tl::unexpected(value.error());
-  auto snapshot = surface_from_cbor(*value);
-  if (!snapshot) return tl::unexpected(snapshot.error());
-  for (auto& contribution : snapshot->contributions) {
-    auto result = surface.add(std::move(contribution.channel), std::move(contribution.key),
-                              std::move(contribution.value), contribution.priority);
-    if (!result) return result;
-  }
-  for (auto& proposal : snapshot->proposals) {
-    auto result = surface.propose(std::move(proposal));
-    if (!result) return result;
+  const auto* cells = cbor::find(*value, "cells");
+  if (!cells || !cells->as_array())
+    return tl::unexpected(make_error(ErrorCode::protocol_error,
+                                     "C ABI Lens returned no wavefront cells"));
+  for (const auto& encoded : *cells->as_array()) {
+    auto cell = field_cell_from_cbor(encoded);
+    if (!cell) return tl::unexpected(cell.error());
+    if (cell->band == "act.proposal") {
+      auto act = act_from_cbor(cell->value);
+      if (!act) return tl::unexpected(act.error());
+      auto result = outgoing.propose(std::move(*act), cell->provenance.input_cells);
+      if (!result) return result;
+    } else {
+      auto result = outgoing.emit(cell->provenance.output_port, std::move(cell->key),
+                                  std::move(cell->value),
+                                  cell->provenance.input_cells, cell->priority);
+      if (!result) return tl::unexpected(result.error());
+    }
   }
   return {};
 }
@@ -195,10 +226,10 @@ Result<RefractionResult> CAbiLens::refract(const PhotonWindow& photons, const Ac
                                            RefractionBeam& beam) {
   const auto window = cbor::encode(to_cbor(photons));
   const auto encoded_act = cbor::encode(to_cbor(act));
-  TokmonOwnedBytesV1 output{}; TokmonOwnedBytesV1 drafts{}; TokmonOwnedBytesV1 error{};
+  TokmonOwnedBytes output{}; TokmonOwnedBytes drafts{}; TokmonOwnedBytes error{};
   const auto status = impl_->api.refract(impl_->instance,
-      TokmonBytesV1{window.data(), window.size()},
-      TokmonBytesV1{encoded_act.data(), encoded_act.size()}, &output, &drafts, &error);
+      TokmonBytes{window.data(), window.size()},
+      TokmonBytes{encoded_act.data(), encoded_act.size()}, &output, &drafts, &error);
   if (status != 0) {
     const auto failure = decode_error(error, make_error(ErrorCode::lens_crashed,
                                                         "C ABI Lens refract failed"));

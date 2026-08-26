@@ -1,7 +1,8 @@
+api: tokmon.lens/wavefront
 id: org.tokmon.lens.janus
 display_name: Janus / 默认 Agent 双面反射镜
 version: 0.1.0
-abi: { major: 1, minor: 0 }
+abi: { major: 2, minor: 0 }
 runtime: { kind: in_process }
 trust: t1
 stateless: true
@@ -14,7 +15,10 @@ observes:
   - { kind: "act.*", schema: "*" }
   - { kind: "ray.*", schema: "*" }
   - { kind: user.steering, schema: "*" }
-view_channels: [ray.status, model.intent]
+inputs: []
+outputs:
+  - { port: ray.status, band: ray.status, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
+  - { port: model.intent, band: model.intent, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
 refracts:
   - { kind: ray.cancel, schema: tokmon.ray.cancel.v1 }
   - { kind: ray.steer, schema: tokmon.ray.steer.v1 }

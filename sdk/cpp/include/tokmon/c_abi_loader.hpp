@@ -18,7 +18,8 @@ class CAbiLens final : public ILens {
   static Result<std::shared_ptr<CAbiLens>> load(const std::filesystem::path& path);
 
   [[nodiscard]] const LensManifest& manifest() const noexcept override;
-  Result<void> view(const PhotonWindow& photons, SurfaceBuilder& surface) override;
+  Result<void> view(const OpticalInput& input,
+                    WavefrontBuilder& outgoing) override;
   Result<RefractionResult> refract(const PhotonWindow& photons, const Act& act,
                                    RefractionBeam& beam) override;
   void request_stop() noexcept override;
@@ -30,4 +31,3 @@ class CAbiLens final : public ILens {
 };
 
 }  // namespace tokmon
-

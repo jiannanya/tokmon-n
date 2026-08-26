@@ -23,14 +23,14 @@ bool LensBase::accepts(const Act& act) const noexcept {
       [&act](const ActPattern& pattern) { return pattern.matches(act); });
 }
 
-Result<void> LensBase::identify(SurfaceBuilder& surface, std::string channel,
+Result<void> LensBase::identify(WavefrontBuilder& outgoing, std::string channel,
                                 cbor::Value detail) const {
   auto map = detail.as_map();
   if (!map) detail = cbor::Value::Map{};
   map = detail.as_map();
   (*map)["lens_id"] = manifest_.id;
   (*map)["version"] = manifest_.version;
-  return surface.add(std::move(channel), manifest_.id, std::move(detail), -100);
+  return outgoing.add(std::move(channel), manifest_.id, std::move(detail), -100);
 }
 
 Result<RefractionResult> LensBase::emit(RefractionBeam& beam, std::string kind,
@@ -68,12 +68,34 @@ LensManifest LensBase::make_manifest(std::string_view short_id,
     std::string display_name, std::vector<std::string> channels,
     std::vector<PhotonPattern> observes, std::vector<ActPattern> refracts,
     std::vector<std::string> permissions, const RuntimeKind runtime) {
-  return LensManifest{.id = "org.tokmon.lens." + std::string(short_id),
+  LensManifest manifest{.id = "org.tokmon.lens." + std::string(short_id),
       .display_name = std::move(display_name), .version = "0.1.0",
       .runtime = runtime, .trust = TrustLevel::t1,
-      .observes = std::move(observes), .view_channels = std::move(channels),
+      .observes = std::move(observes),
       .refracts = std::move(refracts), .light_permissions = std::move(permissions),
       .stateless = true};
+  manifest.outputs.reserve(channels.size());
+  for (auto& channel : channels) {
+    manifest.outputs.push_back(OpticalPortSpec{
+        .name = channel,
+        .band = channel,
+        .schema = "tokmon.surface.contribution.v1",
+        .cardinality = PortCardinality::many,
+        .requirement = PortRequirement::optional,
+        .merge = MergeLaw::stable_concat,
+        .surface = true});
+  }
+  return manifest;
+}
+
+void LensBase::set_optical_ports(std::vector<OpticalPortSpec> inputs,
+                                 std::vector<OpticalPortSpec> outputs,
+                                 const TriggerPolicy trigger,
+                                 const bool monotone) {
+  manifest_.inputs = std::move(inputs);
+  manifest_.outputs = std::move(outputs);
+  manifest_.trigger = trigger;
+  manifest_.monotone = monotone;
 }
 
 }  // namespace tokmon::builtin

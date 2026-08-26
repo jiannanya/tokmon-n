@@ -204,7 +204,7 @@ EnsoLens::EnsoLens() : LensBase(make_manifest("enso", "Enso / 上下文全息定
      {"rag.reindex", "tokmon.rag.reindex.v1"}},
     {"photon.emit", "io.workspace.read", "index.write", "log.write"})) {}
 
-Result<void> EnsoLens::view(const PhotonWindow& photons, SurfaceBuilder& surface) {
+Result<void> EnsoLens::view(const OpticalInput& photons, WavefrontBuilder& surface) {
   if (auto status = ready(); !status) return status;
   cbor::Value::Array sources;
   cbor::Value::Array memories;

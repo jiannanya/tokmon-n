@@ -372,20 +372,75 @@ Result<void> merge_config_file(RuntimeConfig& config, const std::filesystem::pat
   return {};
 }
 
-Result<void> merge_light_path(std::vector<DesiredLens>& lenses,
+Result<void> parse_optical_budget(const cbor::Value* encoded, OpticalBudget& budget,
+                                  const std::filesystem::path& source) {
+  if (!encoded) return {};
+  if (auto checked = reject_unknown(*encoded,
+      {"max_cells", "max_bytes", "max_cell_bytes", "max_lens_executions",
+       "max_rounds", "deadline_ms"}, source); !checked)
+    return checked;
+  const auto positive = [&](const std::string_view name) -> Result<std::int64_t> {
+    const auto* field = cbor::find(*encoded, name);
+    if (!field) return std::int64_t{0};
+    if (!std::holds_alternative<std::int64_t>(field->data) || field->as_integer() <= 0)
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                       "optical budget values must be positive integers"));
+    return field->as_integer();
+  };
+  auto max_cells = positive("max_cells");
+  auto max_bytes = positive("max_bytes");
+  auto max_cell_bytes = positive("max_cell_bytes");
+  auto max_executions = positive("max_lens_executions");
+  auto max_rounds = positive("max_rounds");
+  auto deadline = positive("deadline_ms");
+  for (const auto* value : {&max_cells, &max_bytes, &max_cell_bytes,
+                            &max_executions, &max_rounds, &deadline})
+    if (!*value) return tl::unexpected(value->error());
+  if (*max_cells) budget.max_cells = static_cast<std::size_t>(*max_cells);
+  if (*max_bytes) budget.max_bytes = static_cast<std::size_t>(*max_bytes);
+  if (*max_cell_bytes) budget.max_cell_bytes = static_cast<std::size_t>(*max_cell_bytes);
+  if (*max_executions)
+    budget.max_lens_executions = static_cast<std::size_t>(*max_executions);
+  if (*max_rounds) budget.max_rounds = static_cast<std::uint32_t>(*max_rounds);
+  if (*deadline) budget.deadline = std::chrono::milliseconds(*deadline);
+  return {};
+}
+
+Result<OpticalEndpoint> parse_optical_endpoint(
+    const cbor::Value* value, const std::filesystem::path& source) {
+  if (!value || !value->is_map())
+    return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                     "optical endpoint must be a map"));
+  if (auto checked = reject_unknown(*value, {"lens", "port"}, source); !checked)
+    return tl::unexpected(checked.error());
+  const auto* lens = cbor::find(*value, "lens");
+  const auto* port = cbor::find(*value, "port");
+  if (!lens || !port || lens->as_string().empty() || port->as_string().empty())
+    return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                     "optical endpoint requires lens and port"));
+  return OpticalEndpoint{std::string(lens->as_string()),
+                         std::string(port->as_string())};
+}
+
+Result<void> merge_light_path(RuntimeConfig& config,
                               const std::filesystem::path& source) {
   if (!std::filesystem::exists(source)) return {};
   auto loaded = yaml::load(source);
   if (!loaded) return tl::unexpected(loaded.error());
   const auto& root = *loaded;
-  if (auto result = reject_unknown(root, {"version", "lenses"}, source); !result)
+  if (auto result = reject_unknown(root, {"api", "lenses", "assembly"}, source); !result)
     return result;
+  const auto* api = cbor::find(root, "api");
+  if (!api || api->as_string() != "tokmon.light-path/wavefront")
+    return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                     source.string() + ": unsupported light-path api"));
   const auto* entries = cbor::find(root, "lenses");
   if (!entries || !entries->as_array())
     return tl::unexpected(make_error(ErrorCode::schema_mismatch,
                                      source.string() + ": lenses must be a sequence"));
   std::unordered_map<std::string, std::size_t> index;
-  for (std::size_t i = 0; i < lenses.size(); ++i) index[lenses[i].id] = i;
+  for (std::size_t i = 0; i < config.light_path.size(); ++i)
+    index[config.light_path[i].id] = i;
   for (const auto& entry : *entries->as_array()) {
     if (!entry.is_map())
       return tl::unexpected(make_error(ErrorCode::schema_mismatch,
@@ -422,11 +477,63 @@ Result<void> merge_light_path(std::vector<DesiredLens>& lenses,
     if (!runtime) return tl::unexpected(runtime.error());
     lens.runtime = *runtime;
     if (const auto found = index.find(lens.id); found != index.end())
-      lenses[found->second] = lens;
+      config.light_path[found->second] = lens;
     else {
-      index[lens.id] = lenses.size();
-      lenses.push_back(std::move(lens));
+      index[lens.id] = config.light_path.size();
+      config.light_path.push_back(std::move(lens));
     }
+  }
+  if (const auto* assembly = cbor::find(root, "assembly")) {
+    if (auto result = reject_unknown(*assembly,
+        {"id", "autowire_unique", "connections", "resonators", "budget"}, source);
+        !result) return result;
+    OpticalAssemblySpec parsed;
+    if (const auto* id = cbor::find(*assembly, "id")) parsed.id = std::string(id->as_string());
+    if (const auto* autowire = cbor::find(*assembly, "autowire_unique")) {
+      if (!std::holds_alternative<bool>(autowire->data))
+        return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                         "assembly.autowire_unique must be boolean"));
+      parsed.autowire_unique = autowire->as_bool();
+    }
+    if (auto budget = parse_optical_budget(cbor::find(*assembly, "budget"),
+                                           parsed.budget, source); !budget)
+      return budget;
+    if (const auto* connections = cbor::find(*assembly, "connections")) {
+      if (!connections->as_array())
+        return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                         "assembly.connections must be a sequence"));
+      for (const auto& item : *connections->as_array()) {
+        if (auto checked = reject_unknown(item, {"from", "to"}, source); !checked)
+          return checked;
+        auto from = parse_optical_endpoint(cbor::find(item, "from"), source);
+        auto to = parse_optical_endpoint(cbor::find(item, "to"), source);
+        if (!from) return tl::unexpected(from.error());
+        if (!to) return tl::unexpected(to.error());
+        parsed.connections.push_back({std::move(*from), std::move(*to)});
+      }
+    }
+    if (const auto* resonators = cbor::find(*assembly, "resonators")) {
+      if (!resonators->as_array())
+        return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                         "assembly.resonators must be a sequence"));
+      for (const auto& item : *resonators->as_array()) {
+        if (auto checked = reject_unknown(item, {"id", "lenses", "budget"}, source);
+            !checked) return checked;
+        ResonatorSpec resonator;
+        if (const auto* id = cbor::find(item, "id")) resonator.id = std::string(id->as_string());
+        const auto* members = cbor::find(item, "lenses");
+        if (resonator.id.empty() || !members || !members->as_array())
+          return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                           "resonator requires id and lenses"));
+        for (const auto& member : *members->as_array())
+          resonator.lenses.emplace_back(member.as_string());
+        if (auto budget = parse_optical_budget(cbor::find(item, "budget"),
+                                               resonator.budget, source); !budget)
+          return budget;
+        parsed.resonators.push_back(std::move(resonator));
+      }
+    }
+    config.optical_assembly = std::move(parsed);
   }
   return {};
 }
@@ -599,9 +706,9 @@ Result<RuntimeConfig> load_config(const std::optional<std::filesystem::path>& wo
   if (selected == config.model_providers.end() || !selected->second.enabled)
     return tl::unexpected(make_error(ErrorCode::schema_mismatch,
         "models.default must name an enabled configured provider"));
-  if (auto result = merge_light_path(config.light_path, config.paths.user / "light-path.yaml"); !result)
+  if (auto result = merge_light_path(config, config.paths.user / "light-path.yaml"); !result)
     return tl::unexpected(result.error());
-  if (auto result = merge_light_path(config.light_path, config.paths.project / "light-path.yaml"); !result)
+  if (auto result = merge_light_path(config, config.paths.project / "light-path.yaml"); !result)
     return tl::unexpected(result.error());
   return config;
 }

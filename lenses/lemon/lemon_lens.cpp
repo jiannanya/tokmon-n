@@ -32,7 +32,7 @@ LemonLens::LemonLens() : LensBase(make_manifest("lemon", "Lemon / 有界光纤�
      {"waveguide.unsubscribe", "tokmon.waveguide.subscription.v1"},
      {"waveguide.reconnect", "tokmon.waveguide.reconnect.v1"}})) {}
 
-Result<void> LemonLens::view(const PhotonWindow& photons, SurfaceBuilder& surface) {
+Result<void> LemonLens::view(const OpticalInput& photons, WavefrontBuilder& surface) {
   if (auto status = ready(); !status) return status;
   struct Conduit {
     std::int64_t frames{0};

@@ -12,7 +12,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tokmon_lens_sdk.cbor import decode, encode
-from tokmon_lens_sdk.core import RefractionBeam, Result, SurfaceBuilder
+from tokmon_lens_sdk.core import OpticalInput, RefractionBeam, Result, WavefrontBuilder
 
 
 def load_lens(path: Path) -> Any:
@@ -70,21 +70,18 @@ async def main() -> int:
         try:
             if frame["type"] == "worker.hello":
                 response.update(type="worker.ready", payload={
-                    "protocol_major": 1, "protocol_minor": 0, "lens_id": lens.id,
+                    "protocol_major": 2, "protocol_minor": 0, "lens_id": lens.id,
                     "runtime": "cpython",
                     "runtime_version": ".".join(str(value) for value in sys.version_info[:3]),
                     "version": getattr(lens, "version", "0.1.0"),
                 })
             elif frame["type"] == "lens.view.request":
-                surface = SurfaceBuilder(lens.id)
-                result = lens.view(frame["payload"]["window"], surface)
+                input_value = OpticalInput(frame["payload"].get("optical_input"))
+                outgoing = WavefrontBuilder(lens.id, input_value)
+                result = lens.view(input_value, outgoing)
                 response.update(type="lens.view.result", payload=result_payload(result))
                 if response["payload"].get("ok"):
-                    response["payload"]["surface"] = {
-                        "epoch": frame["payload"].get("epoch", 0),
-                        "contributions": surface.contributions,
-                        "proposals": surface.proposals,
-                    }
+                    response["payload"]["wavefront_delta"] = outgoing.cells
             elif frame["type"] == "lens.refract.request":
                 beam = RefractionBeam(frame["payload"]["act"])
                 task = asyncio.create_task(lens.refract(
@@ -114,11 +111,13 @@ async def main() -> int:
             else:
                 raise RuntimeError(f"unknown frame type: {frame['type']}")
         except asyncio.CancelledError:
-            response.update(type="lens.refract.result", payload={
+            response.update(type="lens.view.result" if frame.get("type") == "lens.view.request"
+                            else "lens.refract.result", payload={
                 "ok": False, "error": {"code": "cancelled", "message": "beam cancelled"},
             })
         except Exception as exception:  # boundary conversion is intentional
-            response.update(type="lens.refract.result", payload={
+            response.update(type="lens.view.result" if frame.get("type") == "lens.view.request"
+                            else "lens.refract.result", payload={
                 "ok": False,
                 "error": {"code": "lens_crashed", "message": str(exception), "retryable": False},
             })

@@ -395,7 +395,7 @@ RheaLens::RheaLens() : LensBase(make_manifest("rhea", "Rhea / 模型网关神谕
     {{"model.call", "tokmon.model.call.v1"}},
     {"photon.emit", "io.http", "secret.bind", "log.write"})) {}
 
-Result<void> RheaLens::view(const PhotonWindow& photons, SurfaceBuilder& surface) {
+Result<void> RheaLens::view(const OpticalInput& photons, WavefrontBuilder& surface) {
   if (auto status = ready(); !status) return status;
   if (auto result = surface.add("model.catalog", "local-deterministic", cbor::object({
       {"id", "local-deterministic"}, {"provider", "local"},

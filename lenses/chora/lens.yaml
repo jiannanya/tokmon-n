@@ -1,13 +1,18 @@
+api: tokmon.lens/wavefront
 id: org.tokmon.lens.chora
 display_name: Chora / 不可改写光感底片
 version: 0.1.0
-abi: { major: 1, minor: 0 }
+abi: { major: 2, minor: 0 }
 runtime: { kind: in_process }
 trust: t1
 stateless: true
 observes:
   - { kind: "*", schema: "*" }
-view_channels: [fact.storage, diagnostic.capacity, storage.kv]
+inputs: []
+outputs:
+  - { port: fact.storage, band: fact.storage, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
+  - { port: diagnostic.capacity, band: diagnostic.capacity, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
+  - { port: storage.kv, band: storage.kv, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
 refracts:
   - { kind: photon.export, schema: tokmon.photon.export.v1 }
   - { kind: kv.put, schema: tokmon.kv.put.v1 }

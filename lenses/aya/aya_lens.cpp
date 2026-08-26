@@ -54,7 +54,7 @@ AyaLens::AyaLens() : LensBase(make_manifest("aya", "Aya / 子运行分形复眼�
      {"workspace.merge-proposal", "tokmon.workspace.merge-proposal.v1"}},
     {"photon.emit", "io.process.git", "workspace.worktree", "log.write"})) {}
 
-Result<void> AyaLens::view(const PhotonWindow& photons, SurfaceBuilder& surface) {
+Result<void> AyaLens::view(const OpticalInput& photons, WavefrontBuilder& surface) {
   if (auto status = ready(); !status) return status;
   std::map<std::string, cbor::Value, std::less<>> states;
   cbor::Value::Array messages;

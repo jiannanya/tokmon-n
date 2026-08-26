@@ -1,13 +1,18 @@
+api: tokmon.lens/wavefront
 id: org.tokmon.lens.tracket
 display_name: Tracket / 因果记录与回放光路镜
 version: 0.1.0
-abi: { major: 1, minor: 0 }
+abi: { major: 2, minor: 0 }
 runtime: { kind: in_process }
 trust: t1
 stateless: true
 observes:
   - { kind: "*", schema: "*" }
-view_channels: [fact.integrity, ui.trajectory, ui.causality]
+inputs: []
+outputs:
+  - { port: fact.integrity, band: fact.integrity, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
+  - { port: ui.trajectory, band: ui.trajectory, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
+  - { port: ui.causality, band: ui.causality, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
 refracts:
   - { kind: integrity.verify, schema: tokmon.integrity.verify.v1 }
   - { kind: trace.vault-write, schema: tokmon.trace.vault-write.v1 }

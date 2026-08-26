@@ -1,7 +1,8 @@
+api: tokmon.lens/wavefront
 id: org.tokmon.lens.techor
 display_name: Techor / Tool 光能作动镜
 version: 0.1.0
-abi: { major: 1, minor: 0 }
+abi: { major: 2, minor: 0 }
 runtime: { kind: in_process }
 trust: t1
 stateless: true
@@ -14,7 +15,11 @@ observes:
   - { kind: external.catalog-observed, schema: "*" }
   - { kind: workflow.step-dispatched, schema: "*" }
   - { kind: workflow.compensation-dispatched, schema: "*" }
-view_channels: [model.tools, act.candidates, diagnostic.tool-decode]
+inputs: []
+outputs:
+  - { port: model.tools, band: model.tools, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
+  - { port: act.candidates, band: act.candidates, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
+  - { port: diagnostic.tool-decode, band: diagnostic.tool-decode, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
 refracts:
   - { kind: tool.decode, schema: tokmon.tool.decode.v1 }
 light_permissions: [photon.emit, log.write]

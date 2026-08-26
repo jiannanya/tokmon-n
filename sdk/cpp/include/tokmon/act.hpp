@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <string>
+#include <vector>
 
 #include "tokmon/cbor.hpp"
 #include "tokmon/ids.hpp"
@@ -28,6 +29,9 @@ struct Act {
   bool approved{false};
   std::string idempotency_key;
   std::chrono::milliseconds timeout{30'000};
+  std::string assembly_hash;
+  FieldCellId proposal_cell;
+  std::vector<FieldCellId> optical_inputs;
 };
 
 struct ActPattern {

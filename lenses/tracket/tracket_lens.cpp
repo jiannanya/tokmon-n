@@ -105,7 +105,7 @@ TracketLens::TracketLens() : LensBase(make_manifest("tracket", "Tracket / 因果
      {"trajectory.export", "tokmon.trajectory.export.v1"}},
     {"photon.emit", "trace.write", "artifact.write", "log.write"})) {}
 
-Result<void> TracketLens::view(const PhotonWindow& photons, SurfaceBuilder& surface) {
+Result<void> TracketLens::view(const OpticalInput& photons, WavefrontBuilder& surface) {
   if (auto status = ready(); !status) return status;
   cbor::Value::Array timeline;
   cbor::Value::Array edges;
@@ -123,7 +123,7 @@ Result<void> TracketLens::view(const PhotonWindow& photons, SurfaceBuilder& surf
       !result) return result;
   if (auto result = surface.add("ui.causality", "active-ray", std::move(edges), 15);
       !result) return result;
-  return identify(surface, "fact.integrity", verify_window(photons));
+  return identify(surface, "fact.integrity", verify_window(photons.photon_window()));
 }
 
 Result<RefractionResult> TracketLens::refract(const PhotonWindow& photons, const Act& act,

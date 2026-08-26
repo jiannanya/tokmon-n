@@ -10,7 +10,7 @@ SnowLens::SnowLens() : LensBase(make_manifest("snow", "Snow / 本地协议纯白
      {"snow.cancel", "tokmon.snow.cancel.v1"},
      {"snow.reconnect", "tokmon.snow.reconnect.v1"}})) {}
 
-Result<void> SnowLens::view(const PhotonWindow& photons, SurfaceBuilder& surface) {
+Result<void> SnowLens::view(const OpticalInput& photons, WavefrontBuilder& surface) {
   if (auto status = ready(); !status) return status;
   const auto* tail = photons.latest();
   if (auto result = identify(surface, "snow.protocol", cbor::object({

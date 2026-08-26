@@ -96,7 +96,7 @@ JanusLens::JanusLens() : LensBase(make_manifest("janus", "Janus / 默认 Agent �
      {"ray.steer", "tokmon.ray.steer.v1"},
      {"ray.terminate", "tokmon.ray.terminate.v1"}})) {}
 
-Result<void> JanusLens::view(const PhotonWindow& photons, SurfaceBuilder& surface) {
+Result<void> JanusLens::view(const OpticalInput& photons, WavefrontBuilder& surface) {
   if (auto status = ready(); !status) return status;
   const auto* input = photons.latest("user.input");
   if (!input)

@@ -367,41 +367,53 @@ Result<std::shared_ptr<WorkerLensProxy>> WorkerLensProxy::launch(WorkerLensOptio
 
 const LensManifest& WorkerLensProxy::manifest() const noexcept { return impl_->manifest; }
 
-Result<void> WorkerLensProxy::view(const PhotonWindow& photons, SurfaceBuilder& surface) {
-  auto response = impl_->request("lens.view.request", cbor::object({
-      {"window", to_cbor(photons)},
-      {"epoch", photons.latest() ? static_cast<std::int64_t>(photons.latest()->epoch) : 0}}),
-      std::chrono::steady_clock::now() + std::chrono::seconds(5));
+Result<void> WorkerLensProxy::view(const OpticalInput& input,
+                                   WavefrontBuilder& outgoing) {
+  const auto deadline = input.beat().deadline == std::chrono::steady_clock::time_point{}
+      ? std::chrono::steady_clock::now() + impl_->manifest.resources.deadline
+      : input.beat().deadline;
+  auto response = impl_->request("lens.view.request",
+      cbor::object({{"optical_input", to_cbor(input)}}), deadline);
   if (!response) return tl::unexpected(response.error());
-  if (response->type != "lens.view.result")
+  if (response->type != "lens.view.result") {
+    impl_->terminate();
     return tl::unexpected(make_error(ErrorCode::protocol_error,
                                      "unexpected worker view response"));
+  }
   const auto* ok = cbor::find(response->payload, "ok");
   if (!ok || !ok->as_bool())
     return tl::unexpected(worker_error(response->payload, "worker Lens view failed"));
-  const auto* encoded_surface = cbor::find(response->payload, "surface");
-  if (!encoded_surface)
+  const auto* cells = cbor::find(response->payload, "wavefront_delta");
+  if (!cells || !cells->as_array()) {
+    impl_->terminate();
     return tl::unexpected(make_error(ErrorCode::protocol_error,
-                                     "worker view result has no Surface"));
-  auto snapshot = surface_from_cbor(*encoded_surface);
-  if (!snapshot) return tl::unexpected(snapshot.error());
-  for (auto& contribution : snapshot->contributions) {
-    if (std::find(impl_->manifest.view_channels.begin(), impl_->manifest.view_channels.end(),
-                  contribution.channel) == impl_->manifest.view_channels.end())
-      return tl::unexpected(make_error(ErrorCode::permission_denied,
-          "worker Lens contributed an undeclared Surface channel"));
-    if (auto added = surface.add(std::move(contribution.channel),
-        std::move(contribution.key), std::move(contribution.value), contribution.priority);
-        !added) return added;
+                                     "worker view result has no Wavefront delta"));
   }
-  if (!snapshot->proposals.empty() &&
-      std::find(impl_->manifest.light_permissions.begin(),
-                impl_->manifest.light_permissions.end(), "act.request") ==
+  for (const auto& encoded : *cells->as_array()) {
+    auto cell = field_cell_from_cbor(encoded);
+    if (!cell) {
+      impl_->terminate();
+      return tl::unexpected(make_error(ErrorCode::protocol_error,
+                                       "worker returned an invalid FieldCell"));
+    }
+    if (cell->band == "act.proposal") {
+      if (std::find(impl_->manifest.light_permissions.begin(),
+                    impl_->manifest.light_permissions.end(), "act.request") ==
           impl_->manifest.light_permissions.end())
-    return tl::unexpected(make_error(ErrorCode::permission_denied,
-                                     "worker Lens proposed without act.request"));
-  for (auto& proposal : snapshot->proposals)
-    if (auto proposed = surface.propose(std::move(proposal)); !proposed) return proposed;
+        return tl::unexpected(make_error(ErrorCode::permission_denied,
+                                         "worker Lens proposed without act.request"));
+      auto act = act_from_cbor(cell->value);
+      if (!act) return tl::unexpected(act.error());
+      if (auto proposed = outgoing.propose(std::move(*act),
+              cell->provenance.input_cells); !proposed)
+        return proposed;
+    } else {
+      auto emitted = outgoing.emit(cell->provenance.output_port,
+          std::move(cell->key), std::move(cell->value),
+          cell->provenance.input_cells, cell->priority);
+      if (!emitted) return tl::unexpected(emitted.error());
+    }
+  }
   return {};
 }
 

@@ -12,7 +12,7 @@ TermonLens::TermonLens() : LensBase(make_manifest("termon", "Termon / Slint å…¨æ
     {{"ui.intent", "tokmon.ui.intent.v1"}},
     {"photon.emit", "snow.intent", "log.write"}, RuntimeKind::desktop)) {}
 
-Result<void> TermonLens::view(const PhotonWindow& photons, SurfaceBuilder& surface) {
+Result<void> TermonLens::view(const OpticalInput& photons, WavefrontBuilder& surface) {
   if (auto status = ready(); !status) return status;
   cbor::Value::Array trajectory; cbor::Value::Array conversation;
   cbor::Value::Array terminal; cbor::Value::Array approvals;

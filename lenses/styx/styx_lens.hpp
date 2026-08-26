@@ -9,7 +9,7 @@ class StyxLens final : public LensBase {
  public:
   StyxLens();
   ~StyxLens() override;
-  Result<void> view(const PhotonWindow&, SurfaceBuilder&) override;
+  Result<void> view(const OpticalInput&, WavefrontBuilder&) override;
   Result<RefractionResult> refract(const PhotonWindow&, const Act&, RefractionBeam&) override;
 
  private:

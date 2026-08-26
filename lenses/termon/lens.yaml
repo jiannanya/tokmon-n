@@ -1,15 +1,28 @@
+api: tokmon.lens/wavefront
 id: org.tokmon.lens.termon
 display_name: Termon / Slint 全息显像屏
 version: 0.1.0
-abi: { major: 1, minor: 0 }
+abi: { major: 2, minor: 0 }
 runtime: { kind: desktop }
 trust: t1
 stateless: true
 observes:
   - { kind: "*", schema: "*" }
-view_channels: [ui.conversation, ui.trajectory, ui.code, ui.terminal, ui.approval,
-  ui.context, ui.models, ui.tools, ui.workspace, ui.children, ui.lenses,
-  ui.diagnostics, ui.settings]
+inputs: []
+outputs:
+  - { port: ui.conversation, band: ui.conversation, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
+  - { port: ui.trajectory, band: ui.trajectory, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
+  - { port: ui.code, band: ui.code, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
+  - { port: ui.terminal, band: ui.terminal, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
+  - { port: ui.approval, band: ui.approval, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
+  - { port: ui.context, band: ui.context, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
+  - { port: ui.models, band: ui.models, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
+  - { port: ui.tools, band: ui.tools, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
+  - { port: ui.workspace, band: ui.workspace, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
+  - { port: ui.children, band: ui.children, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
+  - { port: ui.lenses, band: ui.lenses, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
+  - { port: ui.diagnostics, band: ui.diagnostics, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
+  - { port: ui.settings, band: ui.settings, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
 refracts:
   - { kind: ui.intent, schema: tokmon.ui.intent.v1 }
 light_permissions: [photon.emit, snow.intent, log.write]

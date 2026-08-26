@@ -363,13 +363,13 @@ ClothoLens::ClothoLens() : LensBase(make_manifest("clotho", "Clotho / 显式工�
      {"workflow.resume", "tokmon.workflow.resume.v1"},
      {"workflow.cancel", "tokmon.workflow.cancel.v1"}})) {}
 
-Result<void> ClothoLens::view(const PhotonWindow& photons, SurfaceBuilder& surface) {
+Result<void> ClothoLens::view(const OpticalInput& photons, WavefrontBuilder& surface) {
   if (auto status = ready(); !status) return status;
   const auto* definition = photons.latest("workflow.defined");
   if (!definition) return {};
   auto nodes = workflow_nodes(*definition);
   if (!nodes) return tl::unexpected(nodes.error());
-  const auto current = state(photons);
+  const auto current = state(photons.photon_window());
   std::map<std::string, const WorkflowNode*, std::less<>> by_id;
   for (const auto& node : *nodes) by_id[node.id] = &node;
   std::size_t continued_failures = 0;

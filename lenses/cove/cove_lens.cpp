@@ -193,7 +193,7 @@ CoveLens::CoveLens() : LensBase(make_manifest("cove", "Cove / Workspace 实景�
      {"artifact.export", "tokmon.artifact.export.v1"}},
     {"photon.emit", "io.workspace", "artifact.write", "log.write"})) {}
 
-Result<void> CoveLens::view(const PhotonWindow& photons, SurfaceBuilder& surface) {
+Result<void> CoveLens::view(const OpticalInput& photons, WavefrontBuilder& surface) {
   if (auto status = ready(); !status) return status;
   const auto* changed = photons.latest("fs.changed");
   const auto* git = photons.latest("git.status-observed");

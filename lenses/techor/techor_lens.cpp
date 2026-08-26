@@ -249,9 +249,9 @@ TechorLens::TechorLens() : LensBase(make_manifest("techor", "Techor / Tool å…‰èƒ
      {"workflow.compensation-dispatched", "*"}},
     {{"tool.decode", "tokmon.tool.decode.v1"}})) {}
 
-Result<void> TechorLens::view(const PhotonWindow& photons, SurfaceBuilder& surface) {
+Result<void> TechorLens::view(const OpticalInput& photons, WavefrontBuilder& surface) {
   if (auto status = ready(); !status) return status;
-  auto catalog = tool_catalog(photons);
+  auto catalog = tool_catalog(photons.photon_window());
   for (const auto& [name, definitions] : catalog) {
     if (definitions.size() == 1u) {
       if (auto result = surface.add("model.tools", name, model_schema(definitions.front()), 40);

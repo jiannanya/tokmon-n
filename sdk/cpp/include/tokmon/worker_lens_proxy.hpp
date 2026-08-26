@@ -27,7 +27,8 @@ class WorkerLensProxy final : public ILens {
       WorkerLensOptions options);
 
   [[nodiscard]] const LensManifest& manifest() const noexcept override;
-  Result<void> view(const PhotonWindow& photons, SurfaceBuilder& surface) override;
+  Result<void> view(const OpticalInput& input,
+                    WavefrontBuilder& outgoing) override;
   Result<RefractionResult> refract(const PhotonWindow& photons, const Act& act,
                                    RefractionBeam& beam) override;
   void request_stop() noexcept override;

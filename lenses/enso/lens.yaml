@@ -1,7 +1,8 @@
+api: tokmon.lens/wavefront
 id: org.tokmon.lens.enso
 display_name: Enso / 上下文全息定影镜
 version: 0.1.0
-abi: { major: 1, minor: 0 }
+abi: { major: 2, minor: 0 }
 runtime: { kind: in_process }
 trust: t1
 stateless: true
@@ -11,7 +12,12 @@ observes:
   - { kind: "memory.*", schema: "*" }
   - { kind: "rag.*", schema: "*" }
   - { kind: "workspace.*", schema: "*" }
-view_channels: [model.context, ui.context-sources, memory.catalog, rag.catalog]
+inputs: []
+outputs:
+  - { port: model.context, band: model.context, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
+  - { port: ui.context-sources, band: ui.context-sources, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
+  - { port: memory.catalog, band: memory.catalog, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
+  - { port: rag.catalog, band: rag.catalog, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
 refracts:
   - { kind: skill.discover, schema: tokmon.skill.discover.v1 }
   - { kind: skill.load, schema: tokmon.skill.load.v1 }

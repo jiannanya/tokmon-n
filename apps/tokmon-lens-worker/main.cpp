@@ -72,23 +72,43 @@ int serve_lens(std::shared_ptr<tokmon::ILens> lens, const std::string_view runti
           {"lens_id", lens->manifest().id}, {"runtime", std::string(runtime_name)},
           {"version", lens->manifest().version}});
     } else if (frame->type == "lens.view.request") {
-      const auto* value = tokmon::cbor::find(frame->payload, "window");
-      auto window = value ? tokmon::photon_window_from_cbor(*value)
+      const auto* encoded_input = tokmon::cbor::find(frame->payload, "optical_input");
+      const auto* window_value = encoded_input
+          ? tokmon::cbor::find(*encoded_input, "photon_window") : nullptr;
+      const auto* incident_value = encoded_input
+          ? tokmon::cbor::find(*encoded_input, "incident") : nullptr;
+      const auto* beat_value = encoded_input
+          ? tokmon::cbor::find(*encoded_input, "beat") : nullptr;
+      auto window = window_value ? tokmon::photon_window_from_cbor(*window_value)
                           : tokmon::Result<tokmon::PhotonWindow>(tl::unexpected(
                                 tokmon::make_error(tokmon::ErrorCode::protocol_error,
-                                                   "view request has no window")));
-      if (!window) {
+                                                   "view request has no OpticalInput")));
+      auto incident = incident_value ? tokmon::incident_wave_from_cbor(*incident_value)
+          : tokmon::Result<tokmon::IncidentWave>(tl::unexpected(tokmon::make_error(
+                tokmon::ErrorCode::protocol_error, "view request has no incident wave")));
+      auto beat = beat_value ? tokmon::beat_context_from_cbor(*beat_value)
+          : tokmon::Result<tokmon::BeatContext>(tl::unexpected(tokmon::make_error(
+                tokmon::ErrorCode::protocol_error, "view request has no beat context")));
+      if (!window || !incident || !beat) {
+        const auto error = !window ? window.error() : !incident ? incident.error() : beat.error();
         response.type = "lens.view.result";
         response.payload = tokmon::cbor::object({{"ok", false},
-                                                 {"error", error_payload(window.error())}});
+                                                 {"error", error_payload(error)}});
       } else {
-        tokmon::SurfaceBuilder builder(lens->manifest().id);
-        auto result = lens->view(*window, builder);
+        std::vector<tokmon::PhotonId> photons;
+        for (const auto& photon : window->photons()) photons.push_back(photon.id);
+        tokmon::WavefrontBuilder builder(lens->manifest().id, 0, 0,
+            lens->manifest().outputs, *beat, incident->cell_ids(), std::move(photons));
+        const tokmon::OpticalInput input(*window, *incident, *beat);
+        auto result = lens->view(input, builder);
         if (!result) response.payload = tokmon::cbor::object(
             {{"ok", false}, {"error", error_payload(result.error())}});
-        else response.payload = tokmon::cbor::object({{"ok", true},
-            {"surface", tokmon::to_cbor(tokmon::SurfaceSnapshot{
-                .contributions = builder.contributions(), .proposals = builder.proposals()})}});
+        else {
+          tokmon::cbor::Value::Array cells;
+          for (const auto& cell : builder.cells()) cells.push_back(tokmon::to_cbor(cell));
+          response.payload = tokmon::cbor::object({{"ok", true},
+              {"wavefront_delta", std::move(cells)}});
+        }
         response.type = "lens.view.result";
       }
     } else if (frame->type == "lens.refract.request") {

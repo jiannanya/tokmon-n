@@ -1,4 +1,5 @@
 #include <atomic>
+#include <array>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -7,6 +8,7 @@
 #include <vector>
 
 #include "tests/support/test_framework.hpp"
+#include "tests/support/optical_harness.hpp"
 #include <sqlite3.h>
 
 #include "tokmon/tokmon.hpp"
@@ -43,8 +45,141 @@ class ManifestLens final : public tokmon::ILens {
  public:
   explicit ManifestLens(tokmon::LensManifest manifest) : manifest_(std::move(manifest)) {}
   const tokmon::LensManifest& manifest() const noexcept override { return manifest_; }
-  tokmon::Result<void> view(const tokmon::PhotonWindow&,
-                            tokmon::SurfaceBuilder&) override { return {}; }
+  tokmon::Result<void> view(const tokmon::OpticalInput&,
+                            tokmon::WavefrontBuilder&) override { return {}; }
+  tokmon::Result<tokmon::RefractionResult> refract(
+      const tokmon::PhotonWindow&, const tokmon::Act&,
+      tokmon::RefractionBeam&) override {
+    return tokmon::RefractionResult{.status = tokmon::RefractionStatus::passed};
+  }
+  void request_stop() noexcept override {}
+
+ private:
+  tokmon::LensManifest manifest_;
+};
+
+tokmon::OpticalPortSpec optical_port(
+    std::string name, std::string band,
+    const bool surface = false,
+    const tokmon::MergeLaw merge = tokmon::MergeLaw::set_union) {
+  return tokmon::OpticalPortSpec{.name = std::move(name), .band = std::move(band),
+      .schema = "tokmon.test.field.v1", .merge = merge, .surface = surface};
+}
+
+class EmittingLens final : public tokmon::ILens {
+ public:
+  struct Emission {
+    std::string port;
+    std::string key;
+    tokmon::cbor::Value value;
+    std::int32_t priority{0};
+  };
+
+  EmittingLens(tokmon::LensId id, std::vector<tokmon::OpticalPortSpec> outputs,
+               std::vector<Emission> emissions)
+      : manifest_{.id = std::move(id), .display_name = "Test Emitter",
+            .version = "1.0.0", .abi_major = 2,
+            .runtime = tokmon::RuntimeKind::in_process,
+            .trust = tokmon::TrustLevel::t1, .outputs = std::move(outputs),
+            .monotone = true},
+        emissions_(std::move(emissions)) {}
+
+  const tokmon::LensManifest& manifest() const noexcept override { return manifest_; }
+  tokmon::Result<void> view(const tokmon::OpticalInput&,
+                            tokmon::WavefrontBuilder& outgoing) override {
+    for (const auto& emission : emissions_) {
+      auto result = outgoing.emit(emission.port, emission.key, emission.value,
+                                  {}, emission.priority);
+      if (!result) return tl::unexpected(result.error());
+    }
+    return {};
+  }
+  tokmon::Result<tokmon::RefractionResult> refract(
+      const tokmon::PhotonWindow&, const tokmon::Act&,
+      tokmon::RefractionBeam&) override {
+    return tokmon::RefractionResult{.status = tokmon::RefractionStatus::passed};
+  }
+  void request_stop() noexcept override {}
+
+ private:
+  tokmon::LensManifest manifest_;
+  std::vector<Emission> emissions_;
+};
+
+class CapturingOpticalHost final : public tokmon::OpticalHost {
+ public:
+  tokmon::Result<tokmon::Photon> emit(tokmon::PhotonDraft draft) override {
+    tokmon::Photon photon{.sequence = ++sequence_,
+        .id = tokmon::make_id("photon"), .ray = draft.ray,
+        .parent = std::move(draft.parent), .kind = std::move(draft.kind),
+        .schema = std::move(draft.schema), .payload = std::move(draft.payload),
+        .epoch = draft.epoch, .caused_by_act = std::move(draft.caused_by_act)};
+    emitted.push_back(photon);
+    return photon;
+  }
+  void log(std::string_view, std::string_view, const tokmon::LensId&) override {}
+
+  std::vector<tokmon::Photon> emitted;
+
+ private:
+  std::uint64_t sequence_{0};
+};
+
+class ResonatorActLens final : public tokmon::ILens {
+ public:
+  ResonatorActLens()
+      : manifest_{.id = "test.resonator-act", .display_name = "Invalid resonator",
+            .abi_major = 2, .runtime = tokmon::RuntimeKind::in_process,
+            .inputs = {optical_port("in", "test.resonator-act")},
+            .outputs = {optical_port("out", "test.resonator-act")},
+            .trigger = tokmon::TriggerPolicy::on_delta, .monotone = true,
+            .refracts = {{"test.effect", "test.effect.v1"}}} {}
+  const tokmon::LensManifest& manifest() const noexcept override { return manifest_; }
+  tokmon::Result<void> view(const tokmon::OpticalInput& input,
+                            tokmon::WavefrontBuilder& outgoing) override {
+    return outgoing.propose(tokmon::Act{.id = "test-effect", .ray = input.beat().key.ray,
+        .kind = "test.effect", .schema = "test.effect.v1",
+        .target = manifest_.id, .epoch = input.beat().key.epoch});
+  }
+  tokmon::Result<tokmon::RefractionResult> refract(
+      const tokmon::PhotonWindow&, const tokmon::Act&,
+      tokmon::RefractionBeam&) override {
+    return tokmon::RefractionResult{.status = tokmon::RefractionStatus::passed};
+  }
+  void request_stop() noexcept override {}
+
+ private:
+  tokmon::LensManifest manifest_;
+};
+
+class KeyJoinLens final : public tokmon::ILens {
+ public:
+  KeyJoinLens() {
+    auto left = optical_port("left", "test.join");
+    auto right = optical_port("right", "test.join");
+    left.requirement = tokmon::PortRequirement::required;
+    right.requirement = tokmon::PortRequirement::required;
+    manifest_ = tokmon::LensManifest{.id = "test.key-join",
+        .display_name = "Key Join", .abi_major = 2,
+        .runtime = tokmon::RuntimeKind::in_process,
+        .inputs = {left, right},
+        .outputs = {optical_port("out", "test.joined", true)},
+        .trigger = tokmon::TriggerPolicy::per_key_join, .monotone = true};
+  }
+  const tokmon::LensManifest& manifest() const noexcept override { return manifest_; }
+  tokmon::Result<void> view(const tokmon::OpticalInput& input,
+                            tokmon::WavefrontBuilder& outgoing) override {
+    const auto* left = input.incident().one("left");
+    const auto* right = input.incident().one("right");
+    if (!left || !right || left->key != right->key)
+      return tl::unexpected(tokmon::make_error(
+          tokmon::ErrorCode::invalid_state, "per-key input was not joined"));
+    const std::array<tokmon::FieldCellId, 2> causes{left->id, right->id};
+    auto emitted = outgoing.emit("out", left->key,
+        left->value.as_integer() + right->value.as_integer(), causes);
+    if (!emitted) return tl::unexpected(emitted.error());
+    return {};
+  }
   tokmon::Result<tokmon::RefractionResult> refract(
       const tokmon::PhotonWindow&, const tokmon::Act&,
       tokmon::RefractionBeam&) override {
@@ -134,6 +269,271 @@ TEST_CASE("canonical CBOR is deterministic and rejects trailing bytes") {
   REQUIRE_FALSE(tokmon::cbor::decode(malformed));
 }
 
+TEST_CASE("Wavefront optical assembly composes merge aperture and projection") {
+  auto raw_a = optical_port("out", "test.raw");
+  auto raw_b = optical_port("out", "test.raw");
+  auto left = optical_port("left", "test.raw");
+  auto right = optical_port("right", "test.raw");
+  left.requirement = tokmon::PortRequirement::required;
+  right.requirement = tokmon::PortRequirement::required;
+  auto merged = optical_port("merged", "test.merged");
+  auto aperture_in = optical_port("in", "test.merged");
+  aperture_in.requirement = tokmon::PortRequirement::required;
+  auto selected = optical_port("selected", "test.selected");
+  auto projection_in = optical_port("in", "test.selected");
+  projection_in.requirement = tokmon::PortRequirement::required;
+  auto surface = optical_port("surface", "test.surface", true,
+                              tokmon::MergeLaw::stable_concat);
+
+  auto source_a = std::make_shared<EmittingLens>("test.source-a", std::vector{raw_a},
+      std::vector<EmittingLens::Emission>{{"out", "a-low", 1, 10},
+                                          {"out", "a-high", 3, 30}});
+  auto source_b = std::make_shared<EmittingLens>("test.source-b", std::vector{raw_b},
+      std::vector<EmittingLens::Emission>{{"out", "b-mid", 2, 20}});
+  auto merge = std::make_shared<tokmon::MergeLens>("test.merge",
+      std::vector{left, right}, merged);
+  auto aperture = std::make_shared<tokmon::ApertureLens>(
+      "test.aperture", aperture_in, selected, 2);
+  auto projection = std::make_shared<tokmon::ProjectionLens>(
+      "test.projection", projection_in, surface);
+  const std::vector<tokmon::MountedLens> lenses{
+      {source_a, 1, "a"}, {source_b, 1, "b"}, {merge, 1, "merge"},
+      {aperture, 1, "aperture"}, {projection, 1, "projection"}};
+  tokmon::OpticalAssemblySpec spec;
+  spec.id = "test.assembly.composition";
+  spec.autowire_unique = false;
+  spec.connections = {
+      {{"test.source-a", "out"}, {"test.merge", "left"}},
+      {{"test.source-b", "out"}, {"test.merge", "right"}},
+      {{"test.merge", "merged"}, {"test.aperture", "in"}},
+      {{"test.aperture", "selected"}, {"test.projection", "in"}}};
+  auto assembly = tokmon::compile_optical_assembly(7, lenses, spec);
+  REQUIRE(assembly);
+  tokmon::OpticalPropagator propagator;
+  auto first = propagator.propagate("ray-optical", tokmon::PhotonWindow{},
+                                    lenses, **assembly);
+  auto second = propagator.propagate("ray-optical", tokmon::PhotonWindow{},
+                                     lenses, **assembly);
+  REQUIRE(first);
+  REQUIRE(second);
+  REQUIRE(first->surface.contributions.size() == 2);
+  REQUIRE(first->surface.contributions[0].key == "a-high");
+  REQUIRE(first->surface.contributions[1].key == "b-mid");
+  REQUIRE(first->wavefront.band("diagnostic.optical").size() == 1);
+  REQUIRE(tokmon::cbor::find(first->wavefront.band("diagnostic.optical").front().value,
+                             "dropped_count")->as_integer() == 1);
+  REQUIRE(first->surface.assembly_hash == (*assembly)->hash);
+  REQUIRE(first->surface.wavefront_hash == second->surface.wavefront_hash);
+  REQUIRE_FALSE(first->surface.contributions.front().field_cell.empty());
+  REQUIRE_FALSE(first->surface.contributions.front().input_cells.empty());
+}
+
+TEST_CASE("Optical assembly rejects bare cycles and converges guarded resonators") {
+  auto input_a = optical_port("in", "test.loop");
+  auto output_a = optical_port("out", "test.loop");
+  auto input_b = optical_port("in", "test.loop");
+  auto output_b = optical_port("out", "test.loop");
+  auto lens_a = std::make_shared<tokmon::IdentityLens>(
+      "test.loop-a", input_a, output_a);
+  auto lens_b = std::make_shared<tokmon::IdentityLens>(
+      "test.loop-b", input_b, output_b);
+  const std::vector<tokmon::MountedLens> lenses{
+      {lens_a, 1, "a"}, {lens_b, 1, "b"}};
+  tokmon::OpticalAssemblySpec spec;
+  spec.id = "test.assembly.loop";
+  spec.autowire_unique = false;
+  spec.connections = {{{"test.loop-a", "out"}, {"test.loop-b", "in"}},
+                      {{"test.loop-b", "out"}, {"test.loop-a", "in"}}};
+  auto bare = tokmon::compile_optical_assembly(1, lenses, spec);
+  REQUIRE_FALSE(bare);
+  REQUIRE(bare.error().code == tokmon::ErrorCode::invalid_state);
+
+  spec.resonators.push_back(tokmon::ResonatorSpec{
+      .id = "test.resonator", .lenses = {"test.loop-a", "test.loop-b"},
+      .budget = {.max_rounds = 4}});
+  auto guarded = tokmon::compile_optical_assembly(1, lenses, spec);
+  REQUIRE(guarded);
+  auto result = tokmon::OpticalPropagator{}.propagate(
+      "ray-loop", tokmon::PhotonWindow{}, lenses, **guarded);
+  REQUIRE(result);
+  REQUIRE(result->surface.propagation_rounds == 1);
+
+  auto invalid = std::make_shared<ResonatorActLens>();
+  const std::vector<tokmon::MountedLens> invalid_lenses{{invalid, 1, "invalid"}};
+  tokmon::OpticalAssemblySpec invalid_spec;
+  invalid_spec.id = "test.resonator-act.assembly";
+  invalid_spec.autowire_unique = false;
+  invalid_spec.connections = {{{"test.resonator-act", "out"},
+                               {"test.resonator-act", "in"}}};
+  invalid_spec.resonators = {{.id = "test.resonator-act.region",
+      .lenses = {"test.resonator-act"}, .budget = {.max_rounds = 2}}};
+  auto invalid_assembly = tokmon::compile_optical_assembly(
+      1, invalid_lenses, invalid_spec);
+  REQUIRE(invalid_assembly);
+  auto forbidden = tokmon::OpticalPropagator{}.propagate(
+      "ray-resonator-act", tokmon::PhotonWindow{}, invalid_lenses,
+      **invalid_assembly);
+  REQUIRE_FALSE(forbidden);
+  REQUIRE(forbidden.error().code == tokmon::ErrorCode::permission_denied);
+}
+
+TEST_CASE("Optical per-key join invokes a Lens once for each ready key") {
+  auto left = std::make_shared<EmittingLens>("test.join-left",
+      std::vector{optical_port("out", "test.join")},
+      std::vector<EmittingLens::Emission>{{"out", "x", 1, 0},
+                                          {"out", "y", 2, 0}});
+  auto right = std::make_shared<EmittingLens>("test.join-right",
+      std::vector{optical_port("out", "test.join")},
+      std::vector<EmittingLens::Emission>{{"out", "x", 1, 0},
+                                          {"out", "y", 20, 0},
+                                          {"out", "unmatched", 30, 0}});
+  auto join = std::make_shared<KeyJoinLens>();
+  const std::vector<tokmon::MountedLens> lenses{
+      {left, 1, "left"}, {right, 1, "right"}, {join, 1, "join"}};
+  tokmon::OpticalAssemblySpec spec;
+  spec.id = "test.join.assembly";
+  spec.autowire_unique = false;
+  spec.connections = {{{"test.join-left", "out"}, {"test.key-join", "left"}},
+                      {{"test.join-right", "out"}, {"test.key-join", "right"}}};
+  auto assembly = tokmon::compile_optical_assembly(1, lenses, spec);
+  REQUIRE(assembly);
+  auto result = tokmon::OpticalPropagator{}.propagate(
+      "ray-join", tokmon::PhotonWindow{}, lenses, **assembly);
+  REQUIRE(result);
+  REQUIRE(result->surface.contributions.size() == 2);
+  REQUIRE(result->surface.contributions[0].key == "x");
+  REQUIRE(result->surface.contributions[0].value.as_integer() == 2);
+  REQUIRE(result->surface.contributions[1].key == "y");
+  REQUIRE(result->surface.contributions[1].value.as_integer() == 22);
+  REQUIRE(std::ranges::count_if(result->trace, [](const auto& entry) {
+    return entry.lens == "test.key-join" && entry.status == "completed";
+  }) == 2);
+}
+
+TEST_CASE("Optical assembly Lens preserves explicit nested boundaries and provenance") {
+  auto inner_input = optical_port("in", "test.nested.in");
+  inner_input.requirement = tokmon::PortRequirement::required;
+  auto inner_output = optical_port("out", "test.nested.out");
+  auto identity = std::make_shared<tokmon::IdentityLens>(
+      "test.nested.identity", inner_input, inner_output);
+  std::vector<tokmon::MountedLens> internal{{identity, 1, "identity"}};
+  tokmon::OpticalAssemblySpec inner_spec;
+  inner_spec.id = "test.nested.internal";
+  inner_spec.autowire_unique = false;
+  inner_spec.inputs = {{"in", {"test.nested.identity", "in"}}};
+  inner_spec.outputs = {{{"test.nested.identity", "out"}, "out"}};
+  tokmon::LensManifest boundary{.id = "test.nested.facade",
+      .display_name = "Nested facade", .abi_major = 2,
+      .inputs = {optical_port("in", "test.nested.in")},
+      .outputs = {optical_port("out", "test.nested.out", true)}};
+  auto facade = tokmon::OpticalAssemblyLens::create(boundary, internal, inner_spec);
+  REQUIRE(facade);
+  auto source = std::make_shared<EmittingLens>("test.nested.source",
+      std::vector{optical_port("out", "test.nested.in")},
+      std::vector<EmittingLens::Emission>{{"out", "nested", "value", 4}});
+  const std::vector<tokmon::MountedLens> lenses{
+      {source, 1, "source"}, {*facade, 1, "facade"}};
+  tokmon::OpticalAssemblySpec outer;
+  outer.id = "test.nested.outer";
+  outer.autowire_unique = false;
+  outer.connections = {{{"test.nested.source", "out"},
+                        {"test.nested.facade", "in"}}};
+  auto compiled = tokmon::compile_optical_assembly(3, lenses, outer);
+  REQUIRE(compiled);
+  auto result = tokmon::OpticalPropagator{}.propagate(
+      "ray-nested", tokmon::PhotonWindow{}, lenses, **compiled);
+  REQUIRE(result);
+  REQUIRE(result->surface.contributions.size() == 1);
+  REQUIRE(result->surface.contributions.front().lens == "test.nested.facade");
+  REQUIRE(result->surface.contributions.front().key == "nested");
+  REQUIRE(result->surface.contributions.front().input_cells.size() == 1);
+}
+
+TEST_CASE("Causal delay Lens crosses a committed Photon boundary between beats") {
+  auto source = std::make_shared<EmittingLens>("test.delay.source",
+      std::vector{optical_port("out", "test.delay.in")},
+      std::vector<EmittingLens::Emission>{{"out", "delayed", 42, 9}});
+  auto delay_input = optical_port("in", "test.delay.in");
+  delay_input.requirement = tokmon::PortRequirement::required;
+  auto delay = std::make_shared<tokmon::CausalDelayLens>(
+      "test.delay", delay_input, optical_port("out", "test.delay.out", true));
+  const std::vector<tokmon::MountedLens> lenses{
+      {source, 1, "source"}, {delay, 1, "delay"}};
+  tokmon::OpticalAssemblySpec spec;
+  spec.id = "test.delay.assembly";
+  spec.autowire_unique = false;
+  spec.connections = {{{"test.delay.source", "out"}, {"test.delay", "in"}}};
+  auto assembly = tokmon::compile_optical_assembly(5, lenses, spec);
+  REQUIRE(assembly);
+  tokmon::OpticalPropagator propagator;
+  auto first = propagator.propagate("ray-delay", tokmon::PhotonWindow{},
+                                    lenses, **assembly);
+  REQUIRE(first);
+  REQUIRE(first->surface.proposals.size() == 1);
+  REQUIRE(first->surface.contributions.empty());
+
+  CapturingOpticalHost host;
+  std::stop_source stop;
+  tokmon::RefractionBeam beam(host, first->surface.proposals.front(),
+      stop.get_token(), std::chrono::steady_clock::now() + std::chrono::seconds(1));
+  auto refracted = delay->refract(tokmon::PhotonWindow{},
+                                  first->surface.proposals.front(), beam);
+  REQUIRE(refracted);
+  REQUIRE(refracted->status == tokmon::RefractionStatus::completed);
+  REQUIRE(host.emitted.size() == 1);
+
+  auto second = propagator.propagate("ray-delay", tokmon::PhotonWindow(host.emitted),
+                                     lenses, **assembly);
+  REQUIRE(second);
+  REQUIRE(second->surface.proposals.empty());
+  REQUIRE(second->surface.contributions.size() == 1);
+  REQUIRE(second->surface.contributions.front().key == "delayed");
+  REQUIRE(second->surface.contributions.front().value.as_integer() == 42);
+}
+
+TEST_CASE("Optical assembly enforces sensitivity audience and process boundaries") {
+  auto sensitive = optical_port("out", "test.secure");
+  sensitive.sensitivity = tokmon::FieldSensitivity::sensitive;
+  auto source = std::make_shared<EmittingLens>("test.secure.source",
+      std::vector{sensitive}, std::vector<EmittingLens::Emission>{});
+  auto normal_input = optical_port("in", "test.secure");
+  auto consumer_manifest = tokmon::LensManifest{.id = "test.secure.consumer",
+      .display_name = "Consumer", .abi_major = 2,
+      .inputs = std::vector{normal_input}};
+  auto consumer = std::make_shared<ManifestLens>(consumer_manifest);
+  std::vector<tokmon::MountedLens> lenses{{source, 1, "source"},
+                                          {consumer, 1, "consumer"}};
+  tokmon::OpticalAssemblySpec spec;
+  spec.id = "test.secure.assembly";
+  spec.autowire_unique = false;
+  spec.connections = {{{"test.secure.source", "out"},
+                       {"test.secure.consumer", "in"}}};
+  auto lowered = tokmon::compile_optical_assembly(1, lenses, spec);
+  REQUIRE_FALSE(lowered);
+  REQUIRE(lowered.error().code == tokmon::ErrorCode::permission_denied);
+
+  sensitive.sensitivity = tokmon::FieldSensitivity::normal;
+  sensitive.allowed_audiences = {"test.someone-else"};
+  source = std::make_shared<EmittingLens>("test.secure.source",
+      std::vector{sensitive}, std::vector<EmittingLens::Emission>{});
+  lenses = {{source, 1, "source"}, {consumer, 1, "consumer"}};
+  auto audience = tokmon::compile_optical_assembly(1, lenses, spec);
+  REQUIRE_FALSE(audience);
+  REQUIRE(audience.error().code == tokmon::ErrorCode::permission_denied);
+
+  sensitive.allowed_audiences.clear();
+  sensitive.exportable = false;
+  source = std::make_shared<EmittingLens>("test.secure.source",
+      std::vector{sensitive}, std::vector<EmittingLens::Emission>{});
+  consumer_manifest.inputs.front().sensitivity = tokmon::FieldSensitivity::normal;
+  consumer_manifest.runtime = tokmon::RuntimeKind::native_worker;
+  consumer = std::make_shared<ManifestLens>(consumer_manifest);
+  lenses = {{source, 1, "source"}, {consumer, 1, "consumer"}};
+  auto escaped = tokmon::compile_optical_assembly(1, lenses, spec);
+  REQUIRE_FALSE(escaped);
+  REQUIRE(escaped.error().code == tokmon::ErrorCode::permission_denied);
+}
+
 TEST_CASE("Photon store is hash chained and physically append-only") {
   const auto root = temporary_directory("append-only");
   const auto database = root / "photons.sqlite3";
@@ -204,9 +604,9 @@ TEST_CASE("C ABI Lens loads and passes a dark-lane view") {
   auto lens = tokmon::CAbiLens::load(TOKMON_TEST_LENS_PATH);
   REQUIRE(lens);
   REQUIRE((*lens)->manifest().id == "org.tokmon.lens.calculator");
-  tokmon::SurfaceBuilder surface((*lens)->manifest().id);
-  REQUIRE((*lens)->view(tokmon::PhotonWindow{}, surface));
-  REQUIRE_FALSE(surface.contributions().empty());
+  auto result = tokmon::tests::view_lens_once(*lens);
+  REQUIRE(result);
+  REQUIRE_FALSE(result->surface.contributions.empty());
 }
 
 TEST_CASE("Snow framing carries canonical requests and responses") {
@@ -414,14 +814,15 @@ TEST_CASE("Lens manifest parses dependency order resources and immutable evidenc
   const auto root = temporary_directory("rich-manifest");
   const auto path = root / "lens.yaml";
   std::ofstream output(path);
-  output << "api: tokmon.lens/v1\n"
+  output << "api: tokmon.lens/wavefront\n"
       "id: org.example.rich\n"
       "display_name: Rich lens\n"
       "version: 2.1.0\n"
-      "abi: { major: 1, minor: 0 }\n"
+      "abi: { major: 2, minor: 0 }\n"
       "runtime: { kind: node, version: 24.0.0, entry: main.mjs }\n"
       "observes: [{ kind: user.input, schema: '*' }]\n"
-      "view_channels: [model.tools]\n"
+      "inputs: []\n"
+      "outputs: [{ port: model.tools, band: model.tools, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }]\n"
       "refracts: [{ kind: example.run, schema: example.run.v1 }]\n"
       "light_permissions: [photon.emit]\n"
       "dependencies: [{ id: org.tokmon.lens.techor, version: ^0.1.0 }]\n"
@@ -446,7 +847,9 @@ TEST_CASE("Lens manifest parses dependency order resources and immutable evidenc
 TEST_CASE("LightPath refuses missing dependencies conflicts and invalid optical order") {
   const auto basic = [](std::string id) {
     return tokmon::LensManifest{.id = std::move(id), .display_name = "test",
-        .view_channels = {"test.channel"}, .refracts = {{"test.run", "*"}},
+        .outputs = {{.name = "test.channel", .band = "test.channel",
+                     .schema = "tokmon.test.field.v1", .surface = true}},
+        .refracts = {{"test.run", "*"}},
         .light_permissions = {"photon.emit"}};
   };
   {
@@ -508,14 +911,15 @@ TEST_CASE("signature-required runtime rejects an unlocked external Lens") {
   std::ofstream(artifact / "lens.yaml")
       << "id: org.tokmon.lens.calculator\n"
       "display_name: Calculator\nversion: 0.1.0\n"
-      "abi: { major: 1, minor: 0 }\n"
+      "abi: { major: 2, minor: 0 }\n"
       "runtime: { kind: in_process, entry: " << library_name << " }\n"
       "observes: [{ kind: user.input, schema: tokmon.user.input.v1 }]\n"
-      "view_channels: [model.tools]\n"
+      "inputs: []\n"
+      "outputs: [{ port: model.tools, band: model.tools, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }]\n"
       "refracts: [{ kind: tool.calculate, schema: tokmon.math.calculate.v1 }]\n"
       "light_permissions: [photon.emit, log.write]\n";
   std::ofstream(project / "light-path.yaml")
-      << "version: 1\nlenses:\n"
+      << "api: tokmon.light-path/wavefront\nlenses:\n"
       "  - { id: org.tokmon.lens.calculator, artifact: calculator-artifact, enabled: true, runtime: in_process }\n";
   tokmon::TokmonRuntime runtime;
   auto opened = runtime.open(workspace, "tokmon-signature-test");
@@ -544,17 +948,18 @@ TEST_CASE("runtime hot swaps a C ABI Lens generation through a higher epoch") {
     manifest << "id: org.tokmon.lens.calculator\n"
         "display_name: Calculator / 计算透镜\n"
         "version: 0.1.0\n"
-        "abi: { major: 1, minor: 0 }\n"
+        "abi: { major: 2, minor: 0 }\n"
         "runtime: { kind: in_process, entry: " << library_name << " }\n"
         "trust: t1\nstateless: true\n"
         "observes:\n  - { kind: user.input, schema: tokmon.user.input.v1 }\n"
-        "view_channels: [model.tools]\n"
+        "inputs: []\n"
+        "outputs: [{ port: model.tools, band: model.tools, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }]\n"
         "refracts:\n  - { kind: tool.calculate, schema: tokmon.math.calculate.v1 }\n"
         "light_permissions: [photon.emit, log.write]\n";
   }
   {
     std::ofstream path(project / "light-path.yaml");
-    path << "version: 1\nlenses:\n"
+    path << "api: tokmon.light-path/wavefront\nlenses:\n"
         "  - id: org.tokmon.lens.calculator\n"
         "    artifact: calculator-artifact\n"
         "    enabled: true\n"
@@ -572,7 +977,7 @@ TEST_CASE("runtime hot swaps a C ABI Lens generation through a higher epoch") {
 
   {
     std::ofstream path(project / "light-path.yaml", std::ios::trunc);
-    path << "version: 1\nlenses:\n"
+    path << "api: tokmon.light-path/wavefront\nlenses:\n"
         "  - id: org.tokmon.lens.calculator\n"
         "    artifact: builtin:calculator\n"
         "    enabled: true\n"

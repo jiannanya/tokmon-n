@@ -151,20 +151,21 @@ signed bootstrap lenses
 示例：
 
 ```yaml
-api: tokmon.light-path/v1
+api: tokmon.light-path/wavefront
 lenses:
-  - lens_id: org.tokmon.lens.rhea
-    artifact: org.tokmon.lens.rhea@2.1.0
-    order: 400
-  - lens_id: org.example.lens.company-rag
+  - id: org.tokmon.lens.rhea
+    artifact: builtin:rhea
+    enabled: true
+    runtime: in_process
+  - id: org.example.lens.company-rag
     artifact: sha256:8a...
+    enabled: true
     runtime: cpython
-    order: 850
-    config_ref: project-rag
-overlays:
-  review:
-    enable: [org.example.lens.security-review]
-    disable: [org.example.lens.company-rag]
+assembly:
+  id: org.example.assembly.project
+  autowire_unique: true
+  connections: []
+  resonators: []
 ```
 
 ### 3.3 组合合法性
@@ -1088,20 +1089,24 @@ open SQLite WAL → validate Photon tail/hash
 每个正式透镜必须声明：
 
 ```yaml
-api: tokmon.lens/v1
+api: tokmon.lens/wavefront
 id: org.tokmon.lens.example
+display_name: Example
 version: 1.0.0
-runtime:
-  kind: native-cabi       # native-cabi | native-worker | node | cpython | wasm | desktop
-  abi: tokmon-lens-c-v1
-  entry: payload/example
+abi: { major: 2, minor: 0 }
+runtime: { kind: native_worker, entry: payload/example }
+trust: t2
+stateless: true
 observes: []
-surfaces: []
-acts: []
-permissions:
-  filesystem: []
-  network: []
-  secrets: []
+inputs: []
+outputs:
+  - { port: ui.example, band: ui.example,
+      schema: tokmon.surface.contribution.v1,
+      merge: stable_concat, surface: true }
+trigger: once_when_ready
+monotone: false
+refracts: []
+light_permissions: []
 resources:
   memory_mb: 256
   output_bytes: 1048576

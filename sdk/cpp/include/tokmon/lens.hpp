@@ -11,7 +11,7 @@
 #include "tokmon/act.hpp"
 #include "tokmon/error.hpp"
 #include "tokmon/photon.hpp"
-#include "tokmon/surface.hpp"
+#include "tokmon/wavefront.hpp"
 
 namespace tokmon {
 
@@ -33,14 +33,17 @@ struct LensManifest {
   LensId id;
   std::string display_name;
   std::string version{"0.1.0"};
-  std::uint32_t abi_major{1};
+  std::uint32_t abi_major{2};
   std::uint32_t abi_minor{0};
   RuntimeKind runtime{RuntimeKind::in_process};
   std::string runtime_version;
   std::string runtime_entry;
   TrustLevel trust{TrustLevel::t1};
   std::vector<PhotonPattern> observes;
-  std::vector<std::string> view_channels;
+  std::vector<OpticalPortSpec> inputs;
+  std::vector<OpticalPortSpec> outputs;
+  TriggerPolicy trigger{TriggerPolicy::once_when_ready};
+  bool monotone{false};
   std::vector<ActPattern> refracts;
   std::vector<std::string> light_permissions;
   bool stateless{true};
@@ -96,11 +99,18 @@ class ILens {
  public:
   virtual ~ILens() = default;
   [[nodiscard]] virtual const LensManifest& manifest() const noexcept = 0;
-  virtual Result<void> view(const PhotonWindow& photons, SurfaceBuilder& surface) = 0;
+  virtual Result<void> view(const OpticalInput& input,
+                            WavefrontBuilder& outgoing) = 0;
   virtual Result<RefractionResult> refract(const PhotonWindow& photons,
                                            const Act& act,
                                            RefractionBeam& beam) = 0;
   virtual void request_stop() noexcept = 0;
+};
+
+struct MountedLens {
+  std::shared_ptr<ILens> lens;
+  GenerationId generation{0};
+  std::string artifact_hash;
 };
 
 [[nodiscard]] std::string_view to_string(RuntimeKind kind) noexcept;

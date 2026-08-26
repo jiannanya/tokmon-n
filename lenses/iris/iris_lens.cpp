@@ -242,7 +242,7 @@ IrisLens::IrisLens() : LensBase(make_manifest("iris", "Iris / 跨界折射镜",
      {"external.serve", "tokmon.external.serve.v1"}},
     {"photon.emit", "io.http", "io.process", "log.write"})) {}
 
-Result<void> IrisLens::view(const PhotonWindow& photons, SurfaceBuilder& surface) {
+Result<void> IrisLens::view(const OpticalInput& photons, WavefrontBuilder& surface) {
   if (auto status = ready(); !status) return status;
   cbor::Value::Map endpoint_state;
   cbor::Value::Array tools;

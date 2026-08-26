@@ -1,7 +1,8 @@
+api: tokmon.lens/wavefront
 id: org.tokmon.lens.snow
 display_name: Snow / 本地协议纯白投影幕
 version: 0.1.0
-abi: { major: 1, minor: 0 }
+abi: { major: 2, minor: 0 }
 runtime: { kind: in_process }
 trust: t1
 stateless: true
@@ -10,7 +11,11 @@ observes:
   - { kind: "command.*", schema: "*" }
   - { kind: "snow.*", schema: "*" }
   - { kind: system.started, schema: "*" }
-view_channels: [snow.protocol, cli.output, diagnostic.connection]
+inputs: []
+outputs:
+  - { port: snow.protocol, band: snow.protocol, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
+  - { port: cli.output, band: cli.output, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
+  - { port: diagnostic.connection, band: diagnostic.connection, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
 refracts:
   - { kind: snow.intent, schema: tokmon.snow.intent.v1 }
   - { kind: command.invoke, schema: tokmon.command.invoke.v1 }

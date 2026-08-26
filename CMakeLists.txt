@@ -42,8 +42,11 @@ add_library(tokmon_core STATIC
   nyxia/base/redaction.cpp
   nyxia/base/yaml.cpp
   nyxia/base/value_types.cpp
+  nyxia/base/wavefront.cpp
   nyxia/config/config.cpp
   nyxia/engine/act_pipeline.cpp
+  nyxia/engine/optical_assembly.cpp
+  nyxia/engine/structural_lenses.cpp
   nyxia/engine/ray_tracing_engine.cpp
   nyxia/light_path/light_path.cpp
   nyxia/loader/c_abi_loader.cpp

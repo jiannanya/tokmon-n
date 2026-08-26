@@ -30,8 +30,8 @@ struct Instance {
   std::stop_source stop;
 };
 
-TokmonOwnedBytesV1 owned(std::vector<std::uint8_t> bytes) {
-  TokmonOwnedBytesV1 result{};
+TokmonOwnedBytes owned(std::vector<std::uint8_t> bytes) {
+  TokmonOwnedBytes result{};
   if (bytes.empty()) return result;
   result.data = static_cast<std::uint8_t*>(std::malloc(bytes.size()));
   if (!result.data) return result;
@@ -48,8 +48,10 @@ cbor::Value error_value(const Error& error) {
 }
 
 cbor::Value manifest_value(const LensManifest& manifest) {
-  cbor::Value::Array channels;
-  for (const auto& channel : manifest.view_channels) channels.emplace_back(channel);
+  cbor::Value::Array inputs;
+  for (const auto& port : manifest.inputs) inputs.push_back(to_cbor(port));
+  cbor::Value::Array outputs;
+  for (const auto& port : manifest.outputs) outputs.push_back(to_cbor(port));
   cbor::Value::Array observes;
   for (const auto& pattern : manifest.observes)
     observes.push_back(cbor::object({{"kind", pattern.kind}, {"schema", pattern.schema}}));
@@ -75,7 +77,10 @@ cbor::Value manifest_value(const LensManifest& manifest) {
       {"runtime_version", manifest.runtime_version},
       {"runtime_entry", manifest.runtime_entry},
       {"trust", static_cast<std::int64_t>(manifest.trust)},
-      {"observes", std::move(observes)}, {"view_channels", std::move(channels)},
+      {"observes", std::move(observes)}, {"inputs", std::move(inputs)},
+      {"outputs", std::move(outputs)},
+      {"trigger", std::string(to_string(manifest.trigger))},
+      {"monotone", manifest.monotone},
       {"refracts", std::move(refracts)}, {"permissions", std::move(permissions)},
       {"stateless", manifest.stateless}, {"dependencies", std::move(dependencies)},
       {"conflicts", std::move(conflicts)}, {"optical_before", std::move(before)},
@@ -122,27 +127,44 @@ void* create_instance() {
   try { return new Instance(); } catch (...) { return nullptr; }
 }
 
-int32_t view_instance(void* raw, TokmonBytesV1 bytes, TokmonOwnedBytesV1* output,
-                      TokmonOwnedBytesV1* error) {
+int32_t view_instance(void* raw, TokmonBytes bytes, TokmonOwnedBytes* output,
+                      TokmonOwnedBytes* error) {
   if (!raw || !output || !error) return -1;
   auto decoded = cbor::decode(std::span(bytes.data, bytes.size));
   if (!decoded) { *error = owned(cbor::encode(error_value(decoded.error()))); return 1; }
-  auto window = photon_window_from_cbor(*decoded);
+  const auto* window_value = cbor::find(*decoded, "photon_window");
+  const auto* incident_value = cbor::find(*decoded, "incident");
+  const auto* beat_value = cbor::find(*decoded, "beat");
+  if (!window_value || !incident_value || !beat_value) {
+    *error = owned(cbor::encode(error_value(make_error(
+        ErrorCode::protocol_error, "OpticalInput frame is incomplete"))));
+    return 1;
+  }
+  auto window = photon_window_from_cbor(*window_value);
   if (!window) { *error = owned(cbor::encode(error_value(window.error()))); return 1; }
+  auto incident = incident_wave_from_cbor(*incident_value);
+  if (!incident) { *error = owned(cbor::encode(error_value(incident.error()))); return 1; }
+  auto beat = beat_context_from_cbor(*beat_value);
+  if (!beat) { *error = owned(cbor::encode(error_value(beat.error()))); return 1; }
   auto* instance = static_cast<Instance*>(raw);
   if (!instance->lens) return -1;
-  SurfaceBuilder builder(instance->lens->manifest().id);
-  auto result = instance->lens->view(*window, builder);
+  std::vector<PhotonId> photons;
+  for (const auto& photon : window->photons()) photons.push_back(photon.id);
+  WavefrontBuilder builder(instance->lens->manifest().id, 0, 0,
+                           instance->lens->manifest().outputs, *beat,
+                           incident->cell_ids(), std::move(photons));
+  const OpticalInput input(*window, *incident, *beat);
+  auto result = instance->lens->view(input, builder);
   if (!result) { *error = owned(cbor::encode(error_value(result.error()))); return 1; }
-  SurfaceSnapshot surface{.contributions = builder.contributions(),
-                          .proposals = builder.proposals()};
-  *output = owned(cbor::encode(to_cbor(surface)));
+  cbor::Value::Array cells;
+  for (const auto& cell : builder.cells()) cells.push_back(to_cbor(cell));
+  *output = owned(cbor::encode(cbor::object({{"cells", std::move(cells)}})));
   return 0;
 }
 
-int32_t refract_instance(void* raw, TokmonBytesV1 window_bytes, TokmonBytesV1 act_bytes,
-                         TokmonOwnedBytesV1* output, TokmonOwnedBytesV1* drafts,
-                         TokmonOwnedBytesV1* error) {
+int32_t refract_instance(void* raw, TokmonBytes window_bytes, TokmonBytes act_bytes,
+                         TokmonOwnedBytes* output, TokmonOwnedBytes* drafts,
+                         TokmonOwnedBytes* error) {
   if (!raw || !output || !drafts || !error) return -1;
   auto window_value = cbor::decode(std::span(window_bytes.data, window_bytes.size));
   auto act_value = cbor::decode(std::span(act_bytes.data, act_bytes.size));
@@ -180,13 +202,13 @@ void destroy_instance(void* raw) { delete static_cast<Instance*>(raw); }
 
 }  // namespace
 
-extern "C" TOKMON_LENS_EXPORT TokmonLensApiV1 tokmon_lens_entry_v1(void) {
+extern "C" TOKMON_LENS_EXPORT TokmonLensApi tokmon_lens_entry(void) {
   static const auto manifest = [] {
     const SelectedLens lens;
     return tokmon::cbor::encode(manifest_value(lens.manifest()));
   }();
-  return TokmonLensApiV1{
+  return TokmonLensApi{
       TOKMON_LENS_ABI_MAJOR, TOKMON_LENS_ABI_MINOR,
-      TokmonBytesV1{manifest.data(), manifest.size()}, &create_instance,
+      TokmonBytes{manifest.data(), manifest.size()}, &create_instance,
       &view_instance, &refract_instance, &request_stop, &destroy_instance};
 }

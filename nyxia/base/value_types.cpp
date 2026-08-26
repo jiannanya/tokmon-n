@@ -119,6 +119,9 @@ std::string_view to_string(const RiskClass risk) noexcept {
 }
 
 cbor::Value to_cbor(const Act& act) {
+  cbor::Value::Array optical_inputs;
+  optical_inputs.reserve(act.optical_inputs.size());
+  for (const auto& id : act.optical_inputs) optical_inputs.emplace_back(id);
   return cbor::object({
       {"id", act.id}, {"ray", act.ray}, {"kind", act.kind}, {"schema", act.schema},
       {"parameters", act.parameters}, {"target", act.target},
@@ -126,7 +129,9 @@ cbor::Value to_cbor(const Act& act) {
       {"generation", static_cast<std::int64_t>(act.generation)},
       {"risk", std::string(to_string(act.risk))}, {"approved", act.approved},
       {"idempotency_key", act.idempotency_key},
-      {"timeout_ms", static_cast<std::int64_t>(act.timeout.count())}});
+      {"timeout_ms", static_cast<std::int64_t>(act.timeout.count())},
+      {"assembly_hash", act.assembly_hash}, {"proposal_cell", act.proposal_cell},
+      {"optical_inputs", std::move(optical_inputs)}});
 }
 
 Result<Act> act_from_cbor(const cbor::Value& value) {
@@ -146,6 +151,11 @@ Result<Act> act_from_cbor(const cbor::Value& value) {
   if (const auto* approved = cbor::find(value, "approved")) act.approved = approved->as_bool();
   act.idempotency_key = required_string(value, "idempotency_key");
   act.timeout = std::chrono::milliseconds(required_integer(value, "timeout_ms"));
+  act.assembly_hash = required_string(value, "assembly_hash");
+  act.proposal_cell = required_string(value, "proposal_cell");
+  if (const auto* inputs = cbor::find(value, "optical_inputs"); inputs && inputs->as_array())
+    for (const auto& input : *inputs->as_array())
+      act.optical_inputs.emplace_back(input.as_string());
   if (act.id.empty() || act.ray.empty() || act.kind.empty())
     return tl::unexpected(make_error(ErrorCode::schema_mismatch,
                                      "Act id, ray and kind are required"));
@@ -153,6 +163,9 @@ Result<Act> act_from_cbor(const cbor::Value& value) {
 }
 
 std::string act_binding_hash(const Act& act) {
+  cbor::Value::Array optical_inputs;
+  optical_inputs.reserve(act.optical_inputs.size());
+  for (const auto& id : act.optical_inputs) optical_inputs.emplace_back(id);
   return sha256_hex(cbor::encode(cbor::object({
       {"id", act.id}, {"ray", act.ray}, {"kind", act.kind}, {"schema", act.schema},
       {"parameters", act.parameters}, {"target", act.target},
@@ -160,7 +173,9 @@ std::string act_binding_hash(const Act& act) {
       {"generation", static_cast<std::int64_t>(act.generation)},
       {"risk", std::string(to_string(act.risk))},
       {"idempotency_key", act.idempotency_key},
-      {"timeout_ms", static_cast<std::int64_t>(act.timeout.count())}})));
+      {"timeout_ms", static_cast<std::int64_t>(act.timeout.count())},
+      {"assembly_hash", act.assembly_hash}, {"proposal_cell", act.proposal_cell},
+      {"optical_inputs", std::move(optical_inputs)}})));
 }
 
 std::string act_secret_scope_hash(const Act& act) {
@@ -180,6 +195,9 @@ std::string act_secret_scope_hash(const Act& act) {
       }
     }
   }
+  cbor::Value::Array optical_inputs;
+  optical_inputs.reserve(act.optical_inputs.size());
+  for (const auto& id : act.optical_inputs) optical_inputs.emplace_back(id);
   return sha256_hex(cbor::encode(cbor::object({
       {"id", act.id}, {"ray", act.ray}, {"kind", act.kind}, {"schema", act.schema},
       {"parameters", std::move(parameters)}, {"target", act.target},
@@ -187,41 +205,29 @@ std::string act_secret_scope_hash(const Act& act) {
       {"generation", static_cast<std::int64_t>(act.generation)},
       {"risk", std::string(to_string(act.risk))},
       {"idempotency_key", act.idempotency_key},
-      {"timeout_ms", static_cast<std::int64_t>(act.timeout.count())}})));
+      {"timeout_ms", static_cast<std::int64_t>(act.timeout.count())},
+      {"assembly_hash", act.assembly_hash}, {"proposal_cell", act.proposal_cell},
+      {"optical_inputs", std::move(optical_inputs)}})));
 }
-
-SurfaceBuilder::SurfaceBuilder(LensId source) : source_(std::move(source)) {}
-Result<void> SurfaceBuilder::add(std::string channel, std::string key,
-                                 cbor::Value value, const std::int32_t priority) {
-  if (channel.empty() || key.empty())
-    return tl::unexpected(make_error(ErrorCode::invalid_argument,
-                                     "surface channel and key are required"));
-  contributions_.push_back(SurfaceContribution{source_, std::move(channel),
-                                                std::move(key), std::move(value), priority});
-  return {};
-}
-Result<void> SurfaceBuilder::propose(Act act) {
-  if (act.kind.empty())
-    return tl::unexpected(make_error(ErrorCode::invalid_argument,
-                                     "proposed Act kind is required"));
-  if (act.id.empty()) act.id = make_id("act");
-  proposals_.push_back(std::move(act));
-  return {};
-}
-const std::vector<SurfaceContribution>& SurfaceBuilder::contributions() const noexcept {
-  return contributions_;
-}
-const std::vector<Act>& SurfaceBuilder::proposals() const noexcept { return proposals_; }
 
 cbor::Value to_cbor(const SurfaceSnapshot& surface) {
   cbor::Value::Array contributions;
   for (const auto& item : surface.contributions) {
-    contributions.push_back(cbor::object({{"lens", item.lens}, {"channel", item.channel},
-        {"key", item.key}, {"value", item.value}, {"priority", item.priority}}));
+    cbor::Value::Array inputs;
+    for (const auto& id : item.input_cells) inputs.emplace_back(id);
+    contributions.push_back(cbor::object({{"lens", item.lens},
+        {"generation", static_cast<std::int64_t>(item.generation)},
+        {"channel", item.channel}, {"key", item.key}, {"value", item.value},
+        {"priority", item.priority}, {"field_cell", item.field_cell},
+        {"input_cells", std::move(inputs)}, {"assembly_hash", item.assembly_hash}}));
   }
   cbor::Value::Array proposals;
   for (const auto& act : surface.proposals) proposals.push_back(to_cbor(act));
   return cbor::object({{"epoch", static_cast<std::int64_t>(surface.epoch)},
+                       {"assembly_hash", surface.assembly_hash},
+                       {"wavefront_hash", surface.wavefront_hash},
+                       {"wavefront_cells", static_cast<std::int64_t>(surface.wavefront_cells)},
+                       {"propagation_rounds", static_cast<std::int64_t>(surface.propagation_rounds)},
                        {"contributions", std::move(contributions)},
                        {"proposals", std::move(proposals)}});
 }
@@ -232,14 +238,25 @@ Result<SurfaceSnapshot> surface_from_cbor(const cbor::Value& value) {
                                      "SurfaceSnapshot must be a map"));
   SurfaceSnapshot surface;
   surface.epoch = static_cast<MountEpoch>(required_integer(value, "epoch"));
+  surface.assembly_hash = required_string(value, "assembly_hash");
+  surface.wavefront_hash = required_string(value, "wavefront_hash");
+  surface.wavefront_cells = static_cast<std::size_t>(required_integer(value, "wavefront_cells"));
+  surface.propagation_rounds = static_cast<std::size_t>(
+      required_integer(value, "propagation_rounds"));
   if (const auto* items = cbor::find(value, "contributions"); items && items->as_array()) {
     for (const auto& item : *items->as_array()) {
       SurfaceContribution contribution;
       contribution.lens = required_string(item, "lens");
+      contribution.generation = static_cast<GenerationId>(required_integer(item, "generation"));
       contribution.channel = required_string(item, "channel");
       contribution.key = required_string(item, "key");
       if (const auto* field = cbor::find(item, "value")) contribution.value = *field;
       contribution.priority = static_cast<std::int32_t>(required_integer(item, "priority"));
+      contribution.field_cell = required_string(item, "field_cell");
+      contribution.assembly_hash = required_string(item, "assembly_hash");
+      if (const auto* inputs = cbor::find(item, "input_cells"); inputs && inputs->as_array())
+        for (const auto& input : *inputs->as_array())
+          contribution.input_cells.emplace_back(input.as_string());
       surface.contributions.push_back(std::move(contribution));
     }
   }

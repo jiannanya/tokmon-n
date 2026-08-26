@@ -11,19 +11,16 @@
 #include "tokmon/error.hpp"
 #include "tokmon/ids.hpp"
 #include "tokmon/lens.hpp"
+#include "tokmon/optical_assembly.hpp"
 
 namespace tokmon {
-
-struct MountedLens {
-  std::shared_ptr<ILens> lens;
-  GenerationId generation{0};
-  std::string artifact_hash;
-};
 
 struct LightPathSnapshot {
   MountEpoch epoch{0};
   std::string hash;
   std::vector<MountedLens> lenses;
+  OpticalAssemblySpec optical;
+  std::shared_ptr<const OpticalAssemblySnapshot> assembly;
 };
 
 class LightPath {

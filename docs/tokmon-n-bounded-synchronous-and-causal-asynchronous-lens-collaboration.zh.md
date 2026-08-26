@@ -7,6 +7,8 @@
 > 上位约束：[DESIGN.md](DESIGN.md)  
 > 配套路线图：[tokmon-n-rcld-improvement-roadmap.zh.md](tokmon-n-rcld-improvement-roadmap.zh.md)
 
+> 状态：**未实现、已被 Wavefront Optical Assembly 方案取代的历史候选设计。** 本文中的接口从未成为运行时 API，不构成兼容或迁移要求。当前规范见 [DESIGN.md](DESIGN.md) 与 [波前镜组设计](tokmon-n-wavefront-optical-assembly-and-refractive-field-calculus.zh.md)。
+
 ## 1. 执行摘要
 
 `tokmon-n` 当前采用直线 LightPath：Nyxia 读取同一份 `PhotonWindow`，按固定顺序调用每个 Lens 的 `view()`，合并 Surface contribution 和 Act proposal，再选择一个 Act 路由到唯一目标 Lens 的 `refract()`。该设计降低了循环调用、重入和死锁风险，但也意味着同一拍内后一个 Lens 看不到前一个 Lens 刚刚派生的 Surface，更不能同步查询其他 Lens 的内部派生状态。

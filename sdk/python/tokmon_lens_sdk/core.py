@@ -57,18 +57,65 @@ class ActPattern(Generic[T]):
         return ok(act.get("parameters", {}))  # type: ignore[arg-type]
 
 
-class SurfaceBuilder:
-    def __init__(self, lens: str) -> None:
+class OpticalInput:
+    def __init__(self, frame: Mapping[str, Any] | None) -> None:
+        value = frame or {}
+        self.photon_window = value.get("photon_window", {"photons": []})
+        self.incident = value.get("incident", {})
+        self.beat = value.get("beat", {})
+
+    @property
+    def photons(self) -> list[dict[str, Any]]:
+        return list(self.photon_window.get("photons", []))
+
+    def latest(self, kind: str | None = None) -> dict[str, Any] | None:
+        values = [item for item in self.photons if kind is None or item.get("kind") == kind]
+        return values[-1] if values else None
+
+    def cells(self, port: str) -> list[dict[str, Any]]:
+        return list(self.incident.get(port, {}).get("cells", []))
+
+    def one(self, port: str) -> dict[str, Any] | None:
+        values = self.cells(port)
+        return values[0] if len(values) == 1 else None
+
+    def sealed(self, port: str) -> bool:
+        return bool(self.incident.get(port, {}).get("sealed", False))
+
+
+class WavefrontBuilder:
+    def __init__(self, lens: str, input_value: OpticalInput) -> None:
         self.lens = lens
-        self.contributions: list[dict[str, Any]] = []
-        self.proposals: list[dict[str, Any]] = []
+        self.input = input_value
+        self.cells: list[dict[str, Any]] = []
+
+    def emit(
+        self, output: str, key: str, value: Any, *, caused_by: list[str] | None = None,
+        priority: int = 0, band: str | None = None,
+        schema: str = "tokmon.surface.contribution.v1", surface: bool = True,
+        sensitivity: str = "normal",
+    ) -> Result[None]:
+        causes = list(caused_by or [])
+        visible = {cell.get("id") for port in self.input.incident.values()
+                   for cell in port.get("cells", [])}
+        if any(item not in visible for item in causes):
+            return err("permission_denied", "provenance references an invisible input cell")
+        beat_key = self.input.beat.get("key", {})
+        self.cells.append({
+            "id": f"worker-field-{len(self.cells) + 1}",
+            "band": band or output, "schema": schema, "key": key, "value": value,
+            "priority": priority, "surface": surface, "sensitivity": sensitivity,
+            "provenance": {
+                "producer": self.lens, "generation": 0,
+                "epoch": beat_key.get("epoch", 0), "path_index": 0,
+                "output_port": output, "input_cells": causes, "input_photons": [],
+                "assembly_hash": beat_key.get("assembly_hash", "worker-boundary"),
+            },
+        })
+        return ok(None)
 
     def add(self, channel: str, key: str, value: Any, priority: int = 0) -> Result[None]:
-        self.contributions.append(
-            {"lens": self.lens, "channel": channel, "key": key,
-             "value": value, "priority": priority}
-        )
-        return ok(None)
+        return self.emit(channel, key, value, priority=priority)
 
     def add_tool(self, *, name: str, description: str, arguments_schema: str) -> Result[None]:
         return self.add("model.tools", name, {
@@ -76,9 +123,10 @@ class SurfaceBuilder:
             "argumentsSchema": arguments_schema,
         })
 
-    def propose(self, act: dict[str, Any]) -> Result[None]:
-        self.proposals.append(act)
-        return ok(None)
+    def propose(self, act: dict[str, Any], caused_by: list[str] | None = None) -> Result[None]:
+        return self.emit("act.proposal", act.get("id", f"worker-act-{len(self.cells) + 1}"),
+                         act, caused_by=caused_by, band="act.proposal",
+                         schema="tokmon.act.proposal.v1")
 
 
 @dataclass
@@ -121,11 +169,11 @@ class Lens:
     id: str
     version: str = "0.1.0"
 
-    def view(self, photons: Mapping[str, Any], surface: SurfaceBuilder) -> Result[None]:
+    def view(self, input_value: OpticalInput,
+             outgoing: WavefrontBuilder) -> Result[None]:
         raise NotImplementedError
 
     async def refract(
         self, photons: Mapping[str, Any], act: dict[str, Any], beam: RefractionBeam
     ) -> Result[dict[str, Any]]:
         raise NotImplementedError
-

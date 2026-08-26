@@ -7,6 +7,8 @@
 > 上位规范：[DESIGN.md](DESIGN.md)  
 > 背景评估：[RCLD 与 tokmon-n 客观评估](rcld-tokmon-n-comparative-objective-analysis.zh.md)
 
+> 状态：历史路线图。其中与共享 Surface、BeatBoard/SOQ 或旧动态接口有关的条目从未实现，现已由 [DESIGN.md](DESIGN.md) 的 Wavefront Optical Assembly 架构取代。
+
 ## 1. 执行摘要
 
 `tokmon-n` 已经具备 RCLD 的主要工程骨架：append-only Photon、hash chain、不可变 LightPath snapshot、Lens `view/refract`、结构化 Act、Beam ticket、动态库换代、多语言 worker、Windows Job Object、审批与 Secret binding，以及覆盖真实文件、Git、PTY、HTTP、MCP/LSP 等边界的测试。

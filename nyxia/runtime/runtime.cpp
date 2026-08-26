@@ -387,7 +387,8 @@ Result<std::shared_ptr<ILens>> stage_lens(const DesiredLens& desired,
     const auto& embedded = (*loaded)->manifest();
     if (embedded.id != manifest->id || embedded.version != manifest->version ||
         embedded.runtime != manifest->runtime ||
-        embedded.view_channels != manifest->view_channels ||
+        embedded.inputs != manifest->inputs || embedded.outputs != manifest->outputs ||
+        embedded.trigger != manifest->trigger || embedded.monotone != manifest->monotone ||
         embedded.light_permissions != manifest->light_permissions ||
         embedded.refracts.size() != manifest->refracts.size())
       return tl::unexpected(make_error(ErrorCode::integrity_error,
@@ -604,6 +605,7 @@ Result<void> TokmonRuntime::reconcile() {
   const auto current = path_.snapshot();
   auto candidate = std::make_shared<LightPathSnapshot>();
   candidate->epoch = current->epoch + 1u;
+  candidate->optical = config_.optical_assembly;
   const auto control_ray = make_id("mount-ray");
   cbor::Value::Array desired_entries;
   for (const auto& desired : config_.light_path) {
@@ -657,12 +659,6 @@ Result<void> TokmonRuntime::reconcile() {
               "Lens replacement expands authority with permission '" + permission +
               "'; an explicitly approved configuration epoch is required")));
     }
-    SurfaceBuilder dark_surface(lens->manifest().id);
-    auto dark_result = lens->view(PhotonWindow{}, dark_surface);
-    if (!dark_result)
-      return tl::unexpected(rejected(desired.id, make_error(ErrorCode::invalid_state,
-          "dark-lane view failed for " + desired.id + ": " +
-          dark_result.error().describe())));
     auto hash = artifact_hash(desired);
     if (!hash) return tl::unexpected(rejected(desired.id, hash.error()));
     const auto mounted_generation = generation++;
@@ -673,8 +669,8 @@ Result<void> TokmonRuntime::reconcile() {
             {"runtime", std::string(to_string(desired.runtime))},
             {"generation", static_cast<std::int64_t>(mounted_generation)},
             {"candidate_epoch", static_cast<std::int64_t>(candidate->epoch)},
-            {"dark_surface_contributions",
-             static_cast<std::int64_t>(dark_surface.contributions().size())}}),
+            {"declared_output_ports",
+             static_cast<std::int64_t>(lens->manifest().outputs.size())}}),
         .epoch = current->epoch});
     if (!verified) return tl::unexpected(verified.error());
     candidate->lenses.push_back(MountedLens{
@@ -689,7 +685,11 @@ Result<void> TokmonRuntime::reconcile() {
                                             generation++, sha256_hex("builtin:calculator:0.1.0")});
   if (auto ordered = order_light_path(candidate->lenses); !ordered)
     return tl::unexpected(rejected("org.tokmon.lens.ignis", ordered.error()));
-  candidate->hash = path_hash(*candidate);
+  auto compiled = compile_optical_assembly(candidate->epoch, candidate->lenses,
+                                           candidate->optical);
+  if (!compiled) return tl::unexpected(compiled.error());
+  candidate->assembly = std::move(*compiled);
+  candidate->hash = candidate->assembly->hash;
 
   // Validate the complete graph before recording the durable epoch decision.
   LightPath dark_path;

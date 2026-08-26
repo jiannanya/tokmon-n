@@ -17,7 +17,7 @@ class LensBase : public ILens {
  protected:
   [[nodiscard]] Result<void> ready() const;
   [[nodiscard]] bool accepts(const Act& act) const noexcept;
-  [[nodiscard]] Result<void> identify(SurfaceBuilder& surface,
+  [[nodiscard]] Result<void> identify(WavefrontBuilder& outgoing,
                                       std::string channel,
                                       cbor::Value detail) const;
   [[nodiscard]] Result<RefractionResult> emit(RefractionBeam& beam,
@@ -33,6 +33,10 @@ class LensBase : public ILens {
       std::vector<PhotonPattern> observes, std::vector<ActPattern> refracts,
       std::vector<std::string> permissions = {"photon.emit", "log.write"},
       RuntimeKind runtime = RuntimeKind::in_process);
+  void set_optical_ports(std::vector<OpticalPortSpec> inputs,
+                         std::vector<OpticalPortSpec> outputs,
+                         TriggerPolicy trigger = TriggerPolicy::once_when_ready,
+                         bool monotone = false);
   void mark_stateful() noexcept { manifest_.stateless = false; }
 
  private:

@@ -19,7 +19,7 @@
 
 ## 1. 本次交付结论
 
-`tokmon-n/` 已形成一套可编译、可安装、可执行测试的新版 Tokmon。Nyxia 只保留微内核职责；业务能力以 `committed Photon → Lens view → Surface/Act → Beam refract → new Photon` 进入同一条光路。十九个正式内置透镜与 Calculator 参考透镜均有独立 C++ 实现、独立 `lens.yaml`、独立动态库和契约测试。
+`tokmon-n/` 已形成一套可编译、可安装、可执行测试的新版 Tokmon。Nyxia 只保留微内核职责；业务能力以 `committed Photon → OpticalInput/Lens view → Wavefront → Surface/Act → Beam refract → new Photon` 进入同一条光路。十九个正式内置透镜与 Calculator 参考透镜均有独立 C++ 实现、独立 `lens.yaml`、独立动态库和契约测试。
 
 Windows 当前目标构建已完成：
 
@@ -36,8 +36,8 @@ Windows 当前目标构建已完成：
 
 实现中没有引入第二套业务扩展机制。内置 C++、C ABI、native worker、Node.js 和 CPython 最终都适配成同一个 `ILens` 契约：
 
-1. Lens 只读取不可变 `PhotonWindow`；
-2. `view` 只贡献 Surface 或提出 Act，不执行现实 I/O；
+1. Lens 只读取不可变 `PhotonWindow` 和显式连接的 `IncidentWave`；
+2. `view` 只发射 Wavefront Field 或提出 Act，不执行现实 I/O；
 3. 现实 I/O 只能在取得 Beam 后的 `refract` 中发生；
 4. 结果必须追加为新 Photon，不能回写旧事实；
 5. 跨透镜协作依赖 Photon、SurfaceChannel 和 ActPattern，不依赖彼此的 C++ 对象。
@@ -111,13 +111,13 @@ tokmon lens reconcile
 
 | 形式 | 进程/ABI 边界 | 热替换单位 |
 | --- | --- | --- |
-| C++ 动态透镜 | `tokmon_lens_entry_v1` 稳定 C ABI | DLL/shared-object generation |
+| C++ 动态透镜 | `tokmon_lens_entry` 稳定 Wavefront C ABI | DLL/shared-object generation |
 | JS/编译后的 TS | Node.js ESM adapter + Worker Protocol | 独立 Worker generation |
 | Python | CPython adapter + Worker Protocol | 独立 Worker generation |
 
 脚本透镜没有使用 QuickJS 或 MicroPython，因此可以使用正常的 npm/PyPI 包生态。依赖必须在构建/打包时锁定进不可变 artifact；运行时不在线安装包，也不允许联网改变依赖图。
 
-Worker Protocol 使用 4-byte 大端长度 + canonical CBOR frame。C++ host 会复核脚本返回的 SurfaceChannel、Act proposal、Photon kind 与 manifest 权限；Worker 异常、超时或退出被转换成 `tl::expected<..., Error>`，不能穿透 Nyxia。
+Worker Protocol 使用 4-byte 大端长度 + canonical CBOR frame。C++ host 会复核脚本返回的 Wavefront delta、Act proposal、Photon kind 与 manifest 端口/权限，并重建 provenance；Worker 异常、超时或退出被转换成 `tl::expected<..., Error>`，不能穿透 Nyxia。
 
 ## 6. Snow、daemon 与桌面进程
 

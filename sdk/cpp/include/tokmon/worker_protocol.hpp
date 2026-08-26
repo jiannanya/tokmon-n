@@ -10,7 +10,7 @@
 
 namespace tokmon {
 
-inline constexpr std::uint32_t worker_protocol_major = 1;
+inline constexpr std::uint32_t worker_protocol_major = 2;
 inline constexpr std::uint32_t worker_protocol_minor = 0;
 inline constexpr std::uint32_t worker_max_frame = 16u * 1024u * 1024u;
 
@@ -27,4 +27,3 @@ Result<void> write_frame(std::ostream& output, const WorkerFrame& frame);
                                              std::uint32_t max_frame = worker_max_frame);
 
 }  // namespace tokmon
-

@@ -28,43 +28,21 @@ void RayTracingEngine::log(const std::string_view level, const std::string_view 
 }
 
 Result<SurfaceSnapshot> RayTracingEngine::view(const RayId& ray) {
+  auto result = propagate(ray);
+  if (!result) return tl::unexpected(result.error());
+  return std::move(result->surface);
+}
+
+Result<OpticalBeatResult> RayTracingEngine::propagate(const RayId& ray) {
   auto photons = store_.read_ray(ray);
   if (!photons) return tl::unexpected(photons.error());
   PhotonWindow window(std::move(*photons));
   const auto path = path_.snapshot();
-  SurfaceSnapshot snapshot;
-  snapshot.epoch = path->epoch;
-  for (const auto& mounted : path->lenses) {
-    SurfaceBuilder builder(mounted.lens->manifest().id);
-    try {
-      auto result = mounted.lens->view(window, builder);
-      if (!result) {
-        log("warn", result.error().describe(), mounted.lens->manifest().id);
-        snapshot.contributions.push_back(SurfaceContribution{
-            .lens = mounted.lens->manifest().id,
-            .channel = "diagnostic",
-            .key = "view.error",
-            .value = cbor::object({{"message", result.error().describe()}}),
-            .priority = 100});
-        continue;
-      }
-    } catch (const std::exception& exception) {
-      log("error", std::string("view exception: ") + exception.what(),
-          mounted.lens->manifest().id);
-      continue;
-    } catch (...) {
-      log("error", "view unknown exception", mounted.lens->manifest().id);
-      continue;
-    }
-    snapshot.contributions.insert(snapshot.contributions.end(),
-                                  builder.contributions().begin(),
-                                  builder.contributions().end());
-    snapshot.proposals.insert(snapshot.proposals.end(),
-                              builder.proposals().begin(), builder.proposals().end());
-  }
-  std::stable_sort(snapshot.contributions.begin(), snapshot.contributions.end(),
-      [](const auto& left, const auto& right) { return left.priority > right.priority; });
-  return snapshot;
+  if (!path->assembly)
+    return tl::unexpected(make_error(ErrorCode::invalid_state,
+                                     "LightPath has no compiled OpticalAssembly"));
+  OpticalPropagator propagator;
+  return propagator.propagate(ray, window, path->lenses, *path->assembly);
 }
 
 Result<void> RayTracingEngine::audit_act(const Act& act, std::string kind,

@@ -10,7 +10,7 @@ IgnisLens::IgnisLens() : LensBase(make_manifest("ignis", "Ignis / 光圈调焦�
      {"lens.reconcile", "tokmon.lens.reconcile.v1"}},
     {"photon.emit", "artifact.read", "log.write"})) {}
 
-Result<void> IgnisLens::view(const PhotonWindow& photons, SurfaceBuilder& surface) {
+Result<void> IgnisLens::view(const OpticalInput& photons, WavefrontBuilder& surface) {
   if (auto status = ready(); !status) return status;
   const auto* desired = photons.latest("config.light-path-observed");
   const auto* committed = photons.latest("mount.epoch-committed");

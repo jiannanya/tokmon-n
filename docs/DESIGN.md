@@ -2,8 +2,8 @@
 
 ## C++20 + Slint 总体设计与实现
 
-> 文档状态：Architecture Baseline / Implementation Guide 3.0  
-> 设计基线：2026-08-22  
+> 文档状态：Architecture Baseline / Implemented Guide 4.0
+> 设计基线：2026-08-26
 > 目标目录：`tokmon-n/`  
 > 宿主实现语言：ISO C++20  
 > 动态 Lens 开发语言：C++20、JavaScript/TypeScript（Node.js）、Python（CPython）与 WASM  
@@ -15,11 +15,12 @@
 规范来源按以下优先级排列：
 
 1. 本文；
-2. [`tokmon-lens-architecture-explained.zh.md`](tokmon-lens-architecture-explained.zh.md) 中的透镜公理、6.5 光流发动机和第 7 章动态透镜开发模型；
-3. 架构论文中文版、英文版及 `advise.md` 中与纯透镜语义一致的部分；
-4. 旧 C++ Tokmon 仅作为产品需求、协议、安全经验和 UI 资产来源。
+2. [`tokmon-n-wavefront-optical-assembly-and-refractive-field-calculus.zh.md`](tokmon-n-wavefront-optical-assembly-and-refractive-field-calculus.zh.md) 中已经落地的 Wavefront Optical Assembly 与 Refractive Field Calculus；
+3. [`tokmon-lens-architecture-explained.zh.md`](tokmon-lens-architecture-explained.zh.md) 中仍与当前实现一致的透镜公理和光流闭环；
+4. 架构论文中文版、英文版及 `advise.md` 中与纯透镜语义一致的部分；
+5. 旧 C++ Tokmon 仅作为产品需求、协议、安全经验和 UI 资产来源。
 
-其他理论资料只能作为历史启发，不得把它们的术语、抽象对象或执行模型引入本设计。Tokmon 的公开语义、内部语义和实现命名必须全部来自透镜、光子、光流、光路、视界、折射和显像。
+其他理论资料只能作为历史启发，不得把它们的术语、抽象对象或执行模型引入本设计。Tokmon 的公开语义、内部语义和实现命名必须全部来自透镜、光子、光流、光路、视界、折射和显像。旧的 bounded synchronous / causal asynchronous 协作文档从未实现，现仅作历史对照，不能作为兼容接口或迁移目标。
 
 ---
 
@@ -61,14 +62,16 @@
 
 1. **光子只能追加**：committed Photon 不能编辑、覆盖、删除、替换、撤销或复用序号；
 2. **透镜只有两种行为**：`view` 从光流投影视界，`refract` 接收 Act 并把执行结果折射成新光子；
-3. **只有一条直线光路**：透镜之间不得直接调用、私建总线或横向广播；
+3. **只有一个权威镜组快照**：透镜之间不得直接调用、私建总线或横向广播；镜组内部允许显式类型端口构成 DAG、嵌套镜组以及受控反馈环；
 4. **按需拉取显像**：Prompt、UI、CLI、诊断画面都在需要时从 Fact 重新折叠，不成为第二事实源；
 5. **无新 Act 即自然停机**：一拍结束后既无新 Act、也无等待中的现实结果，光流发动机立即静止；
 6. **Nyxia 只守光学定律**：Nyxia 是唯一静态内建的元框架微内核，不承载模型、工具、存储、策略或 UI 业务；
 7. **其余十九透镜可换代**：运行中的新代码必须能在不重启整个 daemon 的情况下接管后续光束；
 8. **现实动作只有一条出口**：所有 Act 都经过 Techor、Fallen、Cista、Styx、目标透镜和 Chora/Tracket 的固定管线；
 9. **Lens 不拥有规范状态**：可丢弃缓存、连接和工作线程由 Nyxia 的镜座托管；拔出镜片后，其后续显像贡献和新 Act 接收资格立即归零；
-10. **全工程只使用 C++20**：源码、依赖、CI、示例和动态边界都以同一语言基线实现。
+10. **全工程只使用 C++20**：宿主源码、依赖、CI 和动态二进制边界以 C++20 为基线；Node.js、CPython 与 WASM 只作为隔离 Lens runtime；
+11. **波前只在一拍内存在**：`Wavefront`/`FieldCell` 是可重算的瞬态派生场，不成为第二事实源；
+12. **反馈必须有边界**：普通组合必须无环，只有 `CausalDelay` 或显式 `Resonator` 可以形成反馈，并受轮数、单元、字节、执行次数和 deadline 预算约束。
 
 ```text
                     append-only Causal Photon Stream
@@ -94,7 +97,7 @@
                                                Slint
 ```
 
-图中顺序表达一条典型 Agent 光路，不等于每一拍必须让每个透镜执行现实动作。`view` 是线性折叠；`refract` 只在 Act 的光斑模式命中时发生。
+图中顺序表达一条典型业务光路，而不是镜组只能线性排列。`view` 由 `OpticalPropagator` 沿已编译的镜组拓扑传播、分束、汇合和收敛；`refract` 只在 Act 的光斑模式命中并通过固定准入管线后发生。
 
 ---
 
@@ -117,7 +120,7 @@
 - 不允许透镜保存会改变恢复结果的私有规范状态；
 - 不把最终 Prompt、UI widget tree、窗口临时状态、日志或遥测当作恢复源；
 - 不把每个函数、token 或控件都拆成独立透镜；
-- 不允许透镜绕过 `PhotonEmitter` 修改历史；
+- 不允许透镜绕过 `RefractionBeam`/Chora append gate 修改历史；
 - 不允许透镜绕过 `ActGate` 直接执行外部写操作；
 - 不在同进程加载来源未知的 native code；
 - 不移植旧 White 的 DOM/CSS/Lexbor/Yoga/Skia/SDL3 UI 栈；
@@ -146,18 +149,19 @@ Fact 是已经发生且被 Tokmon 承认的事实。Photon 是 Fact 在因果光
 Lens 是双向镜片：
 
 ```text
-view    : PhotonWindow × SurfaceBuilder → SurfaceBuilder
-refract : PhotonWindow × Act × PhotonEmitter → RefractionResult
+view    : OpticalInput × WavefrontBuilder → Wavefront delta
+refract : PhotonWindow × Act × RefractionBeam → RefractionResult
 ```
 
-- `view` 只观察光子并贡献视界，不执行外部写操作；
+- `OpticalInput` 同时提供只读 `PhotonWindow`、上游 `IncidentWave` 和不可变 `BeatContext`；
+- `view` 只观察入射光与光子并向声明过的输出端口发射 `FieldCell`，不执行外部写操作；
 - `refract` 只在 Act 模式命中且 Act 已通过固定管线后运行；
-- `refract` 不能取得可变光流，只能通过只追加 emitter 产生新 Photon；
+- `refract` 不能取得可变光流，只能通过受限 `RefractionBeam` 产生新 Photon；
 - Lens 可以真实计算、读写受控资源和调用外部系统，但结果必须以 Photon 回到光流。
 
 #### Surface
 
-Surface 是某一刻从光流折叠得到的视界。主要种类：
+Surface 是 `OpticalPropagator` 从一拍结束时 `surface=true` 的 `FieldCell` 投影得到的终端视界，不再是多个 Lens 共同修改的可变对象。主要种类：
 
 | Surface | 用途 | 最终消费者 |
 | --- | --- | --- |
@@ -176,15 +180,20 @@ Act 是准备触碰现实世界的结构化动作。它不是 Photon，也不能
 ```cpp
 struct Act {
     ActId id;
+    RayId ray;
     std::string kind;          // tool.calculate, fs.write, process.exec, model.call ...
+    std::string schema;
+    cbor::Value parameters;
     LensId target;
-    SchemaId arguments_schema;
-    Bytes arguments;
-    ImpactClass impact;
-    PhotonId caused_by;
-    MountEpoch light_path_epoch;
-    ApprovalMode approval;
-    IdempotencyKey idempotency_key;
+    MountEpoch epoch;
+    GenerationId generation;
+    RiskClass risk;
+    bool approved;
+    std::string idempotency_key;
+    std::chrono::milliseconds timeout;
+    std::string assembly_hash;
+    FieldCellId proposal_cell;
+    std::vector<FieldCellId> optical_inputs;
 };
 ```
 
@@ -192,21 +201,21 @@ Act 成功、失败、被拒绝、超时或结果未知，都会产生新的 Pho
 
 #### LightPath
 
-LightPath 是当前按顺序装入的 Lens generation 的不可变数组。发动机每一拍只读取一次 LightPath 快照，因此一拍内部顺序确定；换代只影响后续新拍和未开始的 Act。
+LightPath 是当前装入的 Lens generation、`OpticalAssemblySpec` 与已编译 `OpticalAssemblySnapshot` 的不可变集合。数组只保留稳定镜片身份和 generation；空间组合由有类型端口和显式连接表达。发动机每一拍只读取一次 LightPath 快照，因此一拍内部镜组、端口、合并律和 artifact 均确定；换代只影响后续新拍和未开始的 Act。
 
 ### 3.2 三条透镜公理
 
 1. **唯光不灭**：过去只存在于只追加因果光子流中；
 2. **万物皆透镜**：业务能力只能通过 `view/refract` 加入系统；
-3. **组合即叠镜**：挂载改变后续光束经过的镜片顺序，拔出让该镜片对后续光束立即失去贡献资格。
+3. **组合即成镜**：串联、并联、分束、棱镜分流、合束、光圈、因果延迟、谐振腔和嵌套镜组仍然表现为一枚具有输入/输出端口的 Lens；拔出让该镜片对后续光束立即失去贡献资格。
 
 ### 3.3 七条 Lens Law
 
 1. **Append Only**：只有 Chora 的 append gate 能产生 committed Photon；
-2. **Pure View**：相同 PhotonWindow、LightPath 版本和配置必须得到相同视界贡献；
+2. **Pure View**：相同 PhotonWindow、IncidentWave、Assembly hash 和配置必须得到相同波前贡献；
 3. **Act Before Reality**：现实执行前先提交 Act 意图和准入结果；
 4. **No Side Channel**：Lens 之间禁止直接调用和横向通信；
-5. **Linear Fold**：所有显像贡献按 LightPath 顺序折叠；
+5. **Composed Propagation**：显像贡献只沿不可变镜组中的显式类型连接传播；DAG 按拓扑层运行，反馈只能进入有界 `CausalDelay` 或 `Resonator`；
 6. **Patterned Refraction**：只有 manifest 声明并通过 schema 校验的 Act 才能命中 `refract`；
 7. **Darkness Means Stop**：一拍没有产生新 Act 且没有待收束光束时，发动机停止。
 
@@ -239,7 +248,7 @@ Lens 无状态不是说进程不能有缓存或 socket，而是说：
                                │ Act
 ┌──────────────────────────────▼────────────────────────────────┐
 │ Act Plane                                                     │
-│ Techor → Fallen → Cista → Styx → target → PhotonEmitter       │
+│ Techor → Fallen → Cista → Styx → target → RefractionBeam      │
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -265,8 +274,8 @@ Termon/Snow/Iris source
 
 ```text
 PhotonWindow
-→ ordered view fold
-→ ModelSurface
+→ OpticalAssembly wavefront propagation
+→ model.* terminal fields → ModelSurface
 → model.call Act
 → Fallen/Cista admission
 → Rhea.refract
@@ -288,8 +297,8 @@ model.response Photon
 
 ```text
 PhotonWindow
-→ ordered view fold
-→ UiSurface / CliSurface
+→ OpticalAssembly wavefront propagation
+→ ui.* / cli.* terminal fields → UiSurface / CliSurface
 → Termon / Snow
 ```
 
@@ -364,6 +373,42 @@ launcher verifies tokmond + bootstrap.lock.yaml
 ```
 
 任何一步失败都进入只读 rescue 显像：可以检查、导出和修复，但不能假装系统已经正常接收 Act。
+
+### 4.6 Wavefront Optical Assembly 与折射场
+
+`OpticalAssembly` 是 LightPath 内部的空间组合结构。它没有引入第二条消息总线：所有数据都以带来源的 `FieldCell` 沿有类型连接传播，整个镜组对外仍可封装成一枚 Lens。
+
+```text
+PhotonWindow ─┐
+              ├─ OpticalInput ── Lens.view ── WavefrontBuilder
+IncidentWave ┘                         │
+                                      ▼
+                      FieldCell + provenance + merge law
+                                      │
+             ┌────────────── OpticalAssembly ──────────────┐
+             │ serial / parallel / split / prism / merge   │
+             │ aperture / causal-delay / resonator / nest  │
+             └──────────────────────┬──────────────────────┘
+                                    ▼
+                         Wavefront + SurfaceSnapshot
+                                    │
+                              Act proposal cells
+                                    ▼
+                        fixed admission + refract
+```
+
+核心对象：
+
+- `FieldCell`：不可变折射场单元，携带 band、schema、key、value、priority、敏感度、可见范围与完整 provenance；
+- `IncidentWave`：某 Lens 输入端口已经按端口 `MergeLaw` 合并、排序并封口后的只读入射波；
+- `Wavefront`：同一 `BeatKey(ray, epoch, input-prefix-hash, assembly-hash)` 下所有派生场单元的确定性集合；
+- `OpticalAssemblySpec`：声明连接、镜组输入/输出映射、谐振腔和总预算；
+- `OpticalAssemblySnapshot`：编译、校验并哈希后的不可变执行计划；
+- `OpticalPropagator`：按拓扑层或有界谐振轮次执行 Lens，并产出波前、终端 Surface 和逐 Lens trace。
+
+端口连接必须通过 band、schema、cardinality、required/optional、敏感度、受众和资源上限校验。每个输入端口拥有自己的 `MergeLaw`，可选择集合并、唯一键 map、优先级后路径、top-k、笛卡尔积、可选单值或稳定拼接。这样，多透镜协同不依赖全局调用顺序或共享可变 Surface，而是由可验证的空间结构决定。
+
+时间组合仍由 append-only Photon、Act 和下一拍维持；空间组合由一拍内 Wavefront 完成。`CausalDelay` 把输入折射成下一拍 Photon，`Resonator` 则只允许显式声明的强连通分量在本拍内迭代到不动点。两者分别承担跨拍因果反馈和本拍有界收敛，不能互相冒充。
 
 ---
 
@@ -508,8 +553,8 @@ Nyxia 静态链接进 `tokmond`。它只包含：
 1. `RayTracingEngine` 驱动入口；
 2. immutable `LightPathSnapshot` 的原子发布；
 3. Lens artifact 验证、加载和 C ABI adapter；
-4. `LensMount`、`MountGuard`、`BeamTicket` 与换代控制；
-5. `OpticalHost` 的最小系统调用表；
+4. `MountedLens`、`BeamRegistry::Ticket` 与 generation 换代控制；
+5. `OpticalAssembly` 编译、确定性传播与 `OpticalHost` 最小系统调用表；
 6. 有界 Lemon 光纤与 cursor wakeup；
 7. Photon append gate、Act gate 的不可绕过连接；
 8. 动态代码的 worker/WASM 边界；
@@ -521,27 +566,26 @@ Nyxia 不包含 provider 策略、Prompt、tool catalog、memory、workflow、wo
 ### 6.2 光具座对象
 
 ```cpp
-struct LensMount {
-    LensId lens_id;
-    GenerationId generation;
-    ArtifactHash artifact;
-    LensManifest manifest;
+struct MountedLens {
     std::shared_ptr<ILens> lens;
-    std::shared_ptr<MountGuard> guard;
+    GenerationId generation;
+    std::string artifact_hash;
 };
 
 struct LightPathSnapshot {
     MountEpoch epoch;
-    std::vector<std::shared_ptr<const LensMount>> ordered;
-    Hash path_hash;
+    std::string hash;
+    std::vector<MountedLens> lenses;
+    OpticalAssemblySpec optical;
+    std::shared_ptr<const OpticalAssemblySnapshot> assembly;
 };
 ```
 
-`LightPathSnapshot` 发布后不可变。一拍开始时取得 `shared_ptr<const LightPathSnapshot>`；这一拍不受并发换镜影响。
+`LightPathSnapshot` 发布后不可变。候选必须先成功编译 `assembly` 并计算 hash；一拍开始时取得 `shared_ptr<const LightPathSnapshot>`，这一拍不受并发换镜影响。
 
-### 6.3 MountGuard
+### 6.3 Generation 生命周期与托管资源
 
-`MountGuard` 是纯透镜体系的镜座电源与资源托盘。Lens 想创建下列对象，必须通过 guard 提供的 `OpticalHost`：
+镜座/runtime proxy 负责每个 generation 的代码映像、worker 进程和托管资源。Lens 想创建下列对象，必须由宿主或 worker supervisor 归属到该 generation：
 
 - `std::jthread` 或 coroutine runner；
 - timer；
@@ -553,12 +597,12 @@ struct LightPathSnapshot {
 - temporary artifact；
 - callback registration。
 
-Guard 维护枚举表和停止源，但不保存业务事实。拔镜顺序为：
+托管层维护资源枚举与停止源，但不保存业务事实。拔镜顺序为：
 
 ```text
 remove mount from next LightPath
 → reject new BeamTicket
-→ request_stop for hosted activities
+→ ILens.request_stop and stop generation Beam tickets
 → wait bounded afterglow deadline
 → terminate worker/process tree if required
 → close handles and release code image
@@ -572,17 +616,17 @@ remove mount from next LightPath
 每次 `refract` 获得一个 `BeamTicket`：
 
 ```cpp
-struct BeamTicket {
-    BeamId beam_id;
-    MountEpoch epoch;
-    GenerationId target_generation;
-    std::stop_token stop;
-    Deadline deadline;
-    RayBudget budget;
+struct BeamRegistry::Ticket {
+    std::string id;
+    LensId lens;
+    RayId ray;
+    GenerationId generation;
+    std::stop_source stop;
+    std::chrono::steady_clock::time_point deadline;
 };
 ```
 
-Ticket 固定目标 generation，避免换镜时调用跳到另一份代码。一旦开始的折射可以在 afterglow 时限内完成；新 Act 只寻址新 LightPath。
+Ticket 固定 Lens、ray 和目标 generation，Act 自身另行绑定 epoch 与 assembly hash，避免换镜时调用跳到另一份代码。一旦开始的折射可以在 afterglow 时限内完成；新 Act 只寻址新 LightPath。
 
 ### 6.5 OpticalHost
 
@@ -591,17 +635,15 @@ Lens 不能直接取得 daemon 内部对象。Nyxia 按 manifest 给出窄接口
 ```cpp
 class OpticalHost {
 public:
-    virtual PhotonReader& photons() noexcept = 0;
-    virtual PhotonEmitter& emitter() noexcept = 0;
-    virtual ActGate& acts() noexcept = 0;
-    virtual HostedIo& io() noexcept = 0;
-    virtual HostedTasks& tasks() noexcept = 0;
-    virtual SecretBinder& secrets() noexcept = 0;
-    virtual ArtifactStore& artifacts() noexcept = 0;
+    virtual ~OpticalHost() = default;
+    virtual Result<Photon> emit(PhotonDraft draft) = 0;
+    virtual void log(std::string_view level,
+                     std::string_view message,
+                     const LensId& lens) = 0;
 };
 ```
 
-实际可见方法由 manifest 中的 `light_permissions` 缩减。未知 native lens 只能通过 worker RPC 使用更窄的 host bridge。
+Lens 不直接持有 `OpticalHost`；宿主为每次已准入 Act 构造带 deadline 和 stop token 的 `RefractionBeam`，只转发 emit/log。文件、网络、进程和 Secret 能力由目标业务 Lens 在固定 Act 管线之后实现，未知 native Lens 只能通过 worker RPC 使用更窄的 bridge。
 
 ### 6.6 Nyxia 更新
 
@@ -623,13 +665,10 @@ Nyxia 不在活动 daemon 内换代，因为它持有 LightPath 发布点、动�
 
 ### 7.1 C++20 核心接口
 
-解释文档中的 `view/refract` 是唯一 Lens 形状。工程版本保留这一形状，同时用结构化 Act 和只追加 emitter 替代裸字符串与可变容器：
+工程只保留一套 `ILens` 接口。`view` 接收光子窗口、入射波和本拍上下文的组合输入，输出新的波前单元；`refract` 仍负责受控现实动作：
 
 ```cpp
-#include <tl/expected.hpp>
-
-template<class T>
-using Result = tl::expected<T, Error>;
+#include <tokmon/lens.hpp>
 
 class ILens {
 public:
@@ -637,116 +676,154 @@ public:
 
     [[nodiscard]] virtual const LensManifest& manifest() const noexcept = 0;
 
-    // 看：只读折叠，不允许外部写操作。
     virtual Result<void> view(
-        const PhotonWindow& photons,
-        SurfaceBuilder& surface) const = 0;
+        const OpticalInput& input,
+        WavefrontBuilder& outgoing) = 0;
 
-    // 做：Act 已通过固定准入管线；只能用 emitter 追加结果。
-    virtual Task<Result<RefractionResult>> refract(
+    virtual Result<RefractionResult> refract(
         const PhotonWindow& photons,
         const Act& act,
         RefractionBeam& beam) = 0;
+
+    virtual void request_stop() noexcept = 0;
 };
 ```
 
-`RefractionBeam` 组合 `BeamTicket`、受限 `OpticalHost` 和 `PhotonEmitter`。接口不返回可变 `CausalRay`，从类型上阻止覆写历史。
+这不是在旧接口旁增加兼容层：共享可变视界构建接口已删除，宿主、内建 Lens、C ABI 和语言 worker 都使用同一波前语义。`OpticalInput` 保留 `photons()`、`latest()` 等只读转发方法，让只关心 Photon 的业务 Lens 不必为迁移而复制窗口。
 
-### 7.2 LensManifest
+`view` 不得执行外部写操作、发起网络调用或依赖未声明的共享状态。`refract` 只能通过 `RefractionBeam` 请求 host 追加结果 Photon；异常、allocator、STL 容器和 runtime 对象都不能跨动态边界。
+
+### 7.2 LensManifest 与类型端口
 
 ```cpp
 struct LensManifest {
     LensId id;
-    SemVer version;
-    AbiVersion abi;
-    std::int32_t optical_order;
-    std::vector<SurfaceChannel> view_channels;
-    std::vector<PhotonPatternSpec> photon_patterns;
-    std::vector<ActPatternSpec> act_patterns;
-    std::vector<LightPermission> light_permissions;
-    Determinism view_determinism;
-    IsolationMode isolation;
-    Hash schema_bundle_hash;
+    std::string display_name;
+    std::string version;
+    std::uint32_t abi_major{2};
+    std::uint32_t abi_minor{0};
+    RuntimeKind runtime;
+    std::string runtime_version;
+    std::string runtime_entry;
+    TrustLevel trust;
+    std::vector<PhotonPattern> observes;
+    std::vector<OpticalPortSpec> inputs;
+    std::vector<OpticalPortSpec> outputs;
+    TriggerPolicy trigger;
+    bool monotone;
+    std::vector<ActPattern> refracts;
+    std::vector<std::string> light_permissions;
+    bool stateless;
+    std::vector<LensDependency> dependencies;
+    std::vector<LensId> conflicts;
+    std::vector<LensId> optical_before;
+    std::vector<LensId> optical_after;
+    LensResourceLimits resources;
+    std::string replacement;
+    std::string schema_bundle;
+    std::string sbom;
 };
 ```
 
-Manifest 是签名 artifact 的一部分。运行时不能自行扩大 pattern、permission 或 surface channel。
+Manifest 是签名 artifact 的一部分。运行时不能扩大观察模式、端口、Act pattern、permission、受众或资源上限。ABI 的数值版本由字段协商，公共类型和入口函数名称不带版本后缀。
 
-### 7.3 Photon Pattern Matching
+每个 `OpticalPortSpec` 至少声明：
 
-开发者不手写字符串扫描。SDK 根据 schema 把命中的 Photon/Act 解码成 C++20 类型：
+- `port`、`band` 和 `schema`，用于连接时的类型检查；
+- `one|many` cardinality 与 `required|optional` requirement；
+- 输入端的确定性 `MergeLaw`；
+- sensitivity、最大信任级别、允许受众、脱敏策略和 exportable；
+- 单元数、单元字节上限，以及是否成为终端 Surface。
+
+`autowire_unique` 只在一个输入恰好有一个类型兼容上游时补线；零个或多个候选都不能猜测。显式连接始终优先。
+
+### 7.3 Photon 与 Act Pattern Matching
+
+`PhotonPattern`/`ActPattern` 对 kind 与 schema 做精确或通配匹配，避免扫描自然语言或解析 `CALL_TOOL:` 文本。当前 C++ 接口在匹配后从 canonical CBOR parameters 显式读取字段：
 
 ```cpp
-struct CalculateArgs {
-    std::string expression;
-};
+inline const ActPattern calculate_pattern{
+    "tool.calculate", "tokmon.math.calculate.v1"};
 
-inline constexpr auto calculate_pattern =
-    act_pattern<CalculateArgs>("tool.calculate", "tokmon.math.calculate.v1");
-
-auto match = calculate_pattern.match(act);
-if (!match) {
-    co_return RefractionResult::pass();
+if (!calculate_pattern.matches(act)) {
+    return RefractionResult{RefractionStatus::passed};
 }
 
-const CalculateArgs& args = match->value();
+const auto* expression = cbor::find(act.parameters, "expression");
+if (expression == nullptr || expression->as_string().empty()) {
+    return tl::unexpected(make_error(
+        ErrorCode::schema_mismatch, "expression is required"));
+}
 ```
 
-生成器从 JSON Schema/CBOR schema 生成：字段校验、最大长度、枚举、数值范围、unknown-field 策略和 C++ codec。任何校验失败都在执行前产生 `act.denied` Photon。
+`ActPipeline` 先要求 envelope 字段完整、parameters 为 map、epoch/assembly hash 未过期，并保证 Act 只解析到一个 active target；每个目标 Lens 再校验自己的参数字段、长度、数值范围和 unknown-field 策略。校验失败在现实执行前产生结构化拒绝结果。后续若加入 schema codec 生成器，也只能生成这一显式校验层，不能引入第二套调用协议。
 
-### 7.4 SurfaceBuilder
+### 7.4 IncidentWave、WavefrontBuilder 与 provenance
 
-`view` 不能直接改另一个 Lens 的对象。它只向声明过的 channel 追加不可变 contribution：
+`IncidentWave` 是按输入端口分组的只读场单元集合。只有连接到当前 Lens 的单元可见；required 端口未就绪时 Lens 不运行，`per_key_join` 只在同一 key 的各必需端口齐备后触发。
 
 ```cpp
-class SurfaceBuilder {
-public:
-    ModelSurfaceWriter& model();
-    UiSurfaceWriter& ui();
-    CliSurfaceWriter& cli();
-    ActSurfaceWriter& acts();
-    DiagnosticSurfaceWriter& diagnostics();
-};
+const auto* request = input.incident().one("request");
+if (request == nullptr) {
+    return {};
+}
+
+return outgoing.emit(
+    "answer",
+    request->key,
+    calculate(request->value),
+    std::array{request->id});
 ```
 
-Writer 自动附上 `origin_lens`、generation、source seq 和 precedence。冲突由 channel 的确定性折叠规则处理，不由调用顺序之外的隐藏状态处理。
+`WavefrontBuilder` 只允许向 manifest 声明过的输出端口写入：
+
+- `emit(output, key, value, caused_by, priority)` 产生一般 `FieldCell`；
+- `add(channel, key, value, priority)` 是 surface contribution 的便捷入口；
+- `propose(act, caused_by)` 产生与入射单元和镜组哈希绑定的 Act proposal。
+
+宿主自动写入 producer、generation、epoch、path index、output port、input cell、input photon 和 assembly hash。Lens 不能伪造不可见来源。最终 cell id、排序和波前哈希使用 canonical encoding，因此同一 BeatKey 可重放。
 
 ### 7.5 C ABI
 
-C++ façade 只用于同一构建工具链。动态二进制边界使用版本化 C ABI：
+C++ façade 只用于同一构建工具链。动态二进制边界使用 canonical CBOR 和稳定 C 布局；类型与入口名称不编码 ABI 版本：
 
 ```c
-typedef struct TokmonBytesV1 {
-    const unsigned char* data;
-    size_t size;
-} TokmonBytesV1;
+#define TOKMON_LENS_ABI_MAJOR 2u
+#define TOKMON_LENS_ABI_MINOR 0u
 
-typedef struct TokmonOwnedBytesV1 {
-    unsigned char* data;
+typedef struct TokmonBytes {
+    const uint8_t* data;
     size_t size;
-    void (*release)(unsigned char*, size_t, void*);
+} TokmonBytes;
+
+typedef struct TokmonOwnedBytes {
+    uint8_t* data;
+    size_t size;
+    void (*release)(uint8_t*, size_t, void*);
     void* user;
-} TokmonOwnedBytesV1;
+} TokmonOwnedBytes;
 
-typedef struct TokmonLensApiV1 {
-    uint32_t abi_version;
-    TokmonBytesV1 (*manifest)(void* instance);
-    int32_t (*view)(void* instance,
-                    TokmonBytesV1 photon_window,
-                    TokmonOwnedBytesV1* surface_delta);
-    int32_t (*refract)(void* instance,
-                       TokmonBytesV1 photon_window,
-                       TokmonBytesV1 act,
-                       const TokmonHostApiV1* host,
-                       TokmonOwnedBytesV1* result);
-    void (*request_stop)(void* instance);
-    void (*destroy)(void* instance);
-} TokmonLensApiV1;
+typedef struct TokmonLensApi {
+    uint32_t abi_major;
+    uint32_t abi_minor;
+    TokmonBytes manifest_cbor;
+    void* (*create)(void);
+    int32_t (*view)(void*, TokmonBytes optical_input,
+                    TokmonOwnedBytes* wavefront_delta,
+                    TokmonOwnedBytes* error_frame);
+    int32_t (*refract)(void*, TokmonBytes photon_window,
+                       TokmonBytes act,
+                       TokmonOwnedBytes* result,
+                       TokmonOwnedBytes* emitted_drafts,
+                       TokmonOwnedBytes* error_frame);
+    void (*request_stop)(void*);
+    void (*destroy)(void*);
+} TokmonLensApi;
 
-TOKMON_LENS_EXPORT TokmonLensApiV1 tokmon_lens_entry_v1(void);
+TOKMON_LENS_EXPORT TokmonLensApi tokmon_lens_entry(void);
 ```
 
-边界传 canonical CBOR frame；`tl::expected` 在 adapter 中编码成返回码和结构化错误 frame。C++ 异常、STL 容器、allocator 所有权、coroutine frame 和 RTTI 不跨 ABI。
+`TokmonOwnedBytes.release` 明确 allocator 所有权。所有失败通过返回码与 `error_frame` 表达；C++ 异常、STL、RTTI 和 coroutine frame 不跨 ABI。
 
 ### 7.6 支持的 Lens 运行形态
 
@@ -754,24 +831,20 @@ TOKMON_LENS_EXPORT TokmonLensApiV1 tokmon_lens_entry_v1(void);
 | --- | --- | --- | --- |
 | in-process C++ | 官方且签名的热路径 Lens | 高 | R1 generation swap |
 | worker C ABI | 第三方 native Lens | 中/低 | 进程 handoff |
-| Node.js worker | JavaScript Lens、编译后的 TypeScript Lens、npm 生态 | 中/低 | 进程 handoff |
-| CPython worker | Python Lens、PyPI 生态、数据/RAG/自动化 | 中/低 | 进程 handoff |
+| Node.js worker | JavaScript Lens、编译后的 TypeScript Lens | 中/低 | 进程 handoff |
+| CPython worker | Python Lens、数据/RAG/自动化 | 中/低 | 进程 handoff |
 | WASM | 纯计算、转换、策略 Lens | 低 | instance swap |
 | desktop process | Termon/Slint | UI trust | launcher handoff |
 
-来源未知的 native code 不能因“实现了 ILens”就进入 daemon 地址空间。Node.js 与 CPython 永远不嵌入或链接进 `tokmond`；它们只存在于受 Styx 限制、按需启动的独立 worker 进程。
+来源未知的 native code 不进入 daemon 地址空间。Node.js 与 CPython 不嵌入 `tokmond`，只存在于 Styx 限制的 worker process tree。TypeScript 构建为确定性 ESM JavaScript；生产 runtime 从 `.tokmon/runtimes/` 选择 exact、hash 已验证的版本，不依赖系统 `PATH` 上的偶然安装。
 
-TypeScript 是开发语言，不是生产解释路径：构建阶段必须编译为 Node.js 可执行的 ESM JavaScript，artifact 只执行 `.mjs/.js`。JavaScript 可直接提供 ESM。Python artifact 使用锁定的 CPython 版本和 module entry。
+### 7.7 Lens Worker Protocol
 
-生产模式不解析系统 `PATH` 上碰巧安装的 `node`/`python`，而从 `.tokmon/runtimes/` 选择 hash 已验证的 exact runtime。开发模式可以显式选择本机 runtime 做快速迭代，但该结果标为 non-reproducible，不能直接进入已签名 active LightPath。
-
-### 7.7 Lens Worker Protocol v1
-
-`tokmond` 中的 `WorkerLensProxy` 实现 C++ `ILens`，把 `view/refract` 映射到 worker RPC。Node.js、CPython 和低信任 native worker 共享同一协议：
+`WorkerLensProxy` 将同一 C++ `ILens` 语义映射到 native、Node.js 和 CPython worker：
 
 ```text
 tokmond / WorkerLensProxy
-        │ canonical CBOR frames
+        │ length-prefixed canonical CBOR
         ▼
 tokmon-lens-worker --runtime {native|node|cpython}
         │ language SDK
@@ -779,78 +852,31 @@ tokmon-lens-worker --runtime {native|node|cpython}
 user Lens.view / Lens.refract
 ```
 
-`tokmon-lens-worker` 是 C++20 sandbox supervisor。对 Node.js/CPython，它先建立 OS 限制、专用 IPC 与私有临时目录，再在同一受控 process tree 中启动 exact runtime 和语言 adapter；supervisor 持有 deadline、heartbeat、stdout/stderr 配额与整棵进程树的最终终止权。
-
-传输使用专用 named pipe/Unix domain socket 或 launcher 创建的匿名 pipe。协议与 stdout/stderr 分离，避免用户输出破坏 frame。
-
 核心 frame：
 
-| 方向 | Frame | 含义 |
+| 方向 | Frame | 主要 payload |
 | --- | --- | --- |
-| host → worker | `worker.hello` | protocol、generation、runtime、limits、nonce |
+| host → worker | `worker.hello` | protocol major/minor、generation、runtime、limits、nonce |
 | worker → host | `worker.ready` | manifest/schema hash、SDK/runtime version |
-| host → worker | `lens.view.request` | request id、epoch、PhotonWindow、允许 channel |
-| worker → host | `lens.view.result` | `SurfaceDelta` 或 `ErrorFrame` |
-| host → worker | `lens.refract.request` | BeamTicket、Act、PhotonWindow、deadline |
-| worker → host | `lens.refract.result` | `RefractionResult` 或 `ErrorFrame` |
-| worker → host | `host.call` | emit PhotonDraft、blob、artifact、secret、I/O 请求 |
-| host → worker | `host.result` | 受控 host 调用结果 |
+| host → worker | `lens.view.request` | request id 与 `optical_input` |
+| worker → host | `lens.view.result` | `wavefront_delta` 或 `ErrorFrame` |
+| host → worker | `lens.refract.request` | Act、PhotonWindow、deadline |
+| worker → host | `lens.refract.result` | `RefractionResult`、emitted drafts 或 `ErrorFrame` |
 | host → worker | `beam.cancel` | stop 指令 |
-| host → worker | `worker.shutdown` | afterglow 结束，准备退出 |
-| worker → host | `worker.stopped` | 已停止接收新调用并释放语言运行时资源 |
+| host → worker | `worker.shutdown` | afterglow 结束 |
+| worker → host | `worker.stopped` | runtime 已释放 |
 
-协议不传整个历史数据库，只传预算后的 PhotonWindow、cursor 和 blob reference。每个 frame 有：长度上限、嵌套深度、request id、generation、epoch、deadline 和 canonical encoding 校验。
+协议帧与 stdout/stderr 分离，且具有长度、嵌套深度、request id、deadline 和 canonical encoding 校验。协议数值主版本为 2，但 Frame、类型和函数名不带版本后缀。
 
-#### 错误映射
+Node.js `view(input, outgoing)` 与 Python `view(input_value, outgoing)` 都接收语言 SDK 的 `OpticalInput`/`WavefrontBuilder`。refract 可按语言习惯使用 Promise/`async def`；adapter 在边界等待结果并转换为同一 `RefractionResult`。
 
-C++ 端继续使用 `tl::expected<T, Error>`。其他语言在 SDK 内使用自己的显式 Result：
+### 7.8 错误、取消与 Host API
 
-```typescript
-export type Result<T> =
-  | { ok: true; value: T }
-  | { ok: false; error: LensError };
-```
+C++ 使用 `Result<T>`；JavaScript/Python SDK 使用显式 Result。rejected Promise、未捕获 Python exception、malformed frame 和 worker crash 都在 supervisor 最外层转成结构化错误及 `lens.crashed` Photon，不能穿过进程边界。
 
-```python
-@dataclass(frozen=True)
-class Result(Generic[T]):
-    value: T | None = None
-    error: LensError | None = None
-```
+`RefractionBeam` 只暴露与 manifest 权限相交后的 host 能力：Photon draft、blob/artifact、secret reference、受控网络、文件、进程和日志。每次调用绑定 BeamTicket、Act、generation、assembly hash、deadline 和 stop token。worker 收到 cancel 后应协作停止；afterglow 超时由 supervisor 终止整棵进程树。
 
-跨 worker 边界统一编码为 `ErrorFrame`；JavaScript rejected Promise、CPython 未捕获异常和进程崩溃都由 worker 最外层转换为 `lens.crashed`，不能穿过协议边界。
-
-#### Host API
-
-Node.js/CPython Lens 不能直接访问 daemon 对象，只能请求：
-
-```text
-photon.emit
-blob.read
-artifact.write
-act.request
-secret.bind
-io.http
-io.process
-io.workspace
-log.write
-```
-
-`lens.yaml` 没有声明的调用在 host 侧拒绝。需要触碰现实的请求仍进入 Techor → Fallen → Cista → Styx 固定管线，语言 worker 不能自行绕开。
-
-### 7.8 错误与取消
-
-- C++ 宿主与 native Lens 的可预期失败统一返回 `tl::expected<T, Error>`；项目别名为 `Result<T>`；
-- `view` 错误产生诊断 contribution；关键 Surface 无法建立时该拍失败；
-- `refract` 返回 `Result<RefractionResult>`，错误必须映射为结构化 Photon；
-- stop 通过 `BeamTicket.stop` 传递；
-- deadline、输出大小、CPU 和子进程限制由 RefractionBeam 强制；
-- C++ 核心路径和 C++ Lens 业务代码不用异常表达校验、I/O、解析或拒绝；
-- 第三方库若抛出异常，只能在最外层 adapter 捕获并转换为 `Error`；越过 C ABI 的异常视为 `lens.crashed`，worker 随后隔离退出。
-- Node.js worker 使用 `AbortSignal` 映射 `beam.cancel`；CPython worker 使用 SDK cancellation event/`asyncio` task cancellation；
-- 两种运行时的内存、CPU、进程树、文件、网络、输出和 deadline 由 Styx/OS 边界强制，语言运行时参数只能作为附加限制；
-- cooperative cancel 到期后由宿主终止整个 worker 进程树；
-- worker 心跳只用于故障检测，不是 Photon；worker exit/crash 的观察结果必须追加结构化 Photon。
+错误不会回滚 committed Photon。若现实动作已经发生但结果提交前崩溃，恢复为 `outcome_unknown`，由 idempotency key、目标系统查询或人工确认解决，不能伪造成功或自动重做不可逆动作。
 
 ---
 
@@ -874,24 +900,33 @@ calculator-lens/
 ### 8.2 `lens.yaml`
 
 ```yaml
+api: tokmon.lens/wavefront
 id: org.tokmon.lens.calculator
+display_name: Calculator / 动态透镜参考实现
 version: 1.0.0
-abi: 1
-optical_order: 720
-view_channels:
-  - model.tools
-act_patterns:
-  - tool.calculate@tokmon.math.calculate.v1
-light_permissions:
-  - photon.emit:tool.result
-  - photon.emit:tool.error
-isolation: worker
+abi: { major: 2, minor: 0 }
+runtime: { kind: native_worker }
+trust: t1
+stateless: true
+observes:
+  - { kind: user.input, schema: "*" }
+inputs: []
+outputs:
+  - { port: model.tools, band: model.tools,
+      schema: tokmon.surface.contribution.v1,
+      merge: stable_concat, surface: true }
+trigger: once_when_ready
+monotone: false
+refracts:
+  - { kind: tool.calculate, schema: tokmon.math.calculate.v1 }
+light_permissions: [photon.emit, log.write]
+replacement: R2
 ```
 
 ### 8.3 完整 Lens
 
 ```cpp
-#include <tokmon/lens/sdk.hpp>
+#include <tokmon/tokmon.hpp>
 #include <tl/expected.hpp>
 
 #include <charconv>
@@ -900,10 +935,6 @@ isolation: worker
 #include <utility>
 
 namespace calculator {
-
-struct CalculateArgs {
-    std::string expression;
-};
 
 enum class ParseErrorCode {
     NumberExpected,
@@ -1026,56 +1057,74 @@ private:
 
 class CalculatorLens final : public tokmon::ILens {
 public:
+    explicit CalculatorLens(tokmon::LensManifest manifest)
+        : manifest_(std::move(manifest)) {}
+
     const tokmon::LensManifest& manifest() const noexcept override {
         return manifest_;
     }
 
     tokmon::Result<void> view(
-        const tokmon::PhotonWindow&,
-        tokmon::SurfaceBuilder& surface) const override {
-        surface.model().add_tool(tokmon::ToolSchema{
-            .name = "calculate",
-            .description = "计算包含括号及 + - * / 的数学表达式",
-            .arguments_schema = "tokmon.math.calculate.v1",
-            .origin_lens = manifest_.id
-        });
-        return {};
+        const tokmon::OpticalInput&,
+        tokmon::WavefrontBuilder& outgoing) override {
+        return outgoing.add("model.tools", "calculate", tokmon::cbor::object({
+            {"name", "calculate"},
+            {"description", "计算包含括号及 + - * / 的数学表达式"},
+            {"arguments_schema", "tokmon.math.calculate.v1"},
+            {"target", manifest_.id}
+        }));
     }
 
-    tokmon::Task<tokmon::Result<tokmon::RefractionResult>> refract(
+    tokmon::Result<tokmon::RefractionResult> refract(
         const tokmon::PhotonWindow&,
         const tokmon::Act& act,
         tokmon::RefractionBeam& beam) override {
-        auto matched = calculate_.match(act);
-        if (!matched) {
-            co_return tokmon::RefractionResult::pass();
+        if (!calculate_.matches(act)) {
+            return tokmon::RefractionResult{
+                .status = tokmon::RefractionStatus::passed};
         }
 
-        auto parsed = Parser{matched->expression}.parse();
+        const auto* expression = tokmon::cbor::find(
+            act.parameters, "expression");
+        if (expression == nullptr || expression->as_string().empty()) {
+            return tl::unexpected(tokmon::make_error(
+                tokmon::ErrorCode::schema_mismatch,
+                "calculator expression is required"));
+        }
+
+        auto parsed = Parser{expression->as_string()}.parse();
         if (!parsed) {
-            co_await beam.emitter().emit(tokmon::PhotonDraft::tool_error(
-                act, "calculate", parsed.error().message));
-            co_return tokmon::RefractionResult::failed("invalid_expression");
+            return tl::unexpected(tokmon::make_error(
+                tokmon::ErrorCode::invalid_argument,
+                parsed.error().message));
         }
 
-        co_await beam.emitter().emit(tokmon::PhotonDraft::tool_result(
-            act, "calculate", tokmon::encode_number(*parsed)));
-        co_return tokmon::RefractionResult::completed();
+        auto emitted = beam.emit(
+            "tool.result",
+            "tokmon.math.result.v1",
+            tokmon::cbor::object({{"tool", "calculate"}, {"result", *parsed}}));
+        if (!emitted) return tl::unexpected(emitted.error());
+        return tokmon::RefractionResult{
+            .status = tokmon::RefractionStatus::completed,
+            .emitted = {emitted->id},
+            .detail = "completed"};
     }
 
+    void request_stop() noexcept override {}
+
 private:
-    inline static const tokmon::ActPattern<CalculateArgs> calculate_{
+    inline static const tokmon::ActPattern calculate_{
         "tool.calculate", "tokmon.math.calculate.v1"};
-    inline static const tokmon::LensManifest manifest_ =
-        tokmon::load_embedded_manifest();
+    tokmon::LensManifest manifest_;
 };
 
 } // namespace calculator
 
-TOKMON_EXPORT_LENS(calculator::CalculatorLens)
+// C ABI adapter 的 tokmon_lens_entry() 解码已验证 manifest，
+// 再创建 calculator::CalculatorLens；公共入口名称不带版本后缀。
 ```
 
-示例是真实表达式求值，不使用 `eval`，也不返回写死结果。生产 codec 由 schema generator 生成；上面省略生成文件的 include。
+示例是真实表达式求值，不使用 `eval`，也不返回写死结果。当前实现先由 `ActPipeline` 验证 envelope，再由 Lens 显式验证 `expression`；schema 文件与 manifest 一起进入 artifact 和 dark-lane contract test。
 
 ### 8.4 CMake
 
@@ -1083,17 +1132,28 @@ TOKMON_EXPORT_LENS(calculator::CalculatorLens)
 cmake_minimum_required(VERSION 3.25)
 project(calculator_lens LANGUAGES CXX)
 
-find_package(tokmon-lens-sdk CONFIG REQUIRED)
-find_package(tl-expected CONFIG REQUIRED)
+set(TOKMON_SOURCE_DIR "" CACHE PATH "Path to the tokmon-n source tree")
+if(NOT TARGET tokmon_core)
+  add_subdirectory(${TOKMON_SOURCE_DIR} tokmon-runtime EXCLUDE_FROM_ALL)
+endif()
 
-add_library(calculator_lens SHARED src/calculator_lens.cpp)
+add_library(calculator_lens SHARED
+  src/calculator_lens.cpp
+  src/tokmon_c_abi_entry.cpp)
 target_compile_features(calculator_lens PRIVATE cxx_std_20)
-target_link_libraries(calculator_lens PRIVATE Tokmon::LensSDK tl::expected)
+target_include_directories(calculator_lens PRIVATE
+  ${TOKMON_SOURCE_DIR}
+  ${TOKMON_SOURCE_DIR}/sdk/cpp/include
+  ${TOKMON_SOURCE_DIR}/sdk/c)
+target_link_libraries(calculator_lens PRIVATE tokmon_core)
 
-tokmon_embed_lens_manifest(calculator_lens lens.yaml)
-tokmon_generate_lens_codecs(calculator_lens schemas)
-tokmon_sign_lens_artifact(calculator_lens)
+add_custom_command(TARGET calculator_lens POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          ${CMAKE_CURRENT_SOURCE_DIR}/lens.yaml
+          $<TARGET_FILE_DIR:calculator_lens>/lens.yaml)
 ```
+
+当前源码分发通过 `-DTOKMON_SOURCE_DIR=<tokmon-n>` 引入 `tokmon_core`；在 Tokmon 源码树内部构建时该 target 已存在，不会重复加入。`tokmon_c_abi_entry.cpp` 实现第 7.5 节的无后缀 `tokmon_lens_entry()`。发布流水线在构建后生成 checksum、SBOM 和 signature，而不是依赖未实现的 CMake 魔法函数。
 
 ### 8.5 安装与验证
 
@@ -1109,7 +1169,7 @@ tokmon lens activate org.tokmon.lens.calculator@1.0.0
 
 ```text
 定义 schema
-→ view 暴露 tool surface
+→ view 向 model.tools 输出端口发射 FieldCell
 → pattern 自动萃取强类型参数
 → refract 真实计算
 → emitter 追加结果 Photon
@@ -1120,14 +1180,14 @@ tokmon lens activate org.tokmon.lens.calculator@1.0.0
 
 CalculatorLens 不知道 Rhea、Techor、Chora 或 Termon 的 C++ 类型：
 
-- Rhea 只消费 `ModelSurface`；
+- Rhea 只消费与其输入端口连接的 `model.*` band；
 - Techor 从模型 Photon 生成 `tool.calculate` Act；
 - Nyxia 根据 ActPattern 寻址 CalculatorLens；
 - CalculatorLens 通过 emitter 追加结果；
 - Chora 执行真实提交；
-- Termon 下一次 `view` 折叠显示结果。
+- Termon 下一拍从终端 surface cell 显示结果。
 
-这条路径是线性的，复杂度随镜片数量增长，不形成两两连接。
+这条业务因果路径不包含横向调用；镜组可以串联、并联或分束，但连接只来自已编译的 `OpticalAssemblySnapshot`，不会形成两两对象依赖。
 
 ### 8.7 TypeScript / JavaScript Lens
 
@@ -1139,10 +1199,11 @@ import {
   defineLens,
   ok,
   type Act,
+  type OpticalInput,
   type PhotonWindow,
   type RefractionBeam,
   type Result,
-  type SurfaceBuilder,
+  type WavefrontBuilder,
 } from "@tokmon/lens-sdk";
 
 type AddArgs = {
@@ -1159,15 +1220,14 @@ export default defineLens({
   id: "org.tokmon.lens.adder-ts",
 
   view(
-    _photons: PhotonWindow,
-    surface: SurfaceBuilder,
+    _input: OpticalInput,
+    outgoing: WavefrontBuilder,
   ): Result<void> {
-    surface.model.addTool({
+    return outgoing.model.addTool({
       name: "add",
       description: "计算两个数字之和",
       argumentsSchema: "tokmon.math.add.v1",
     });
-    return ok(undefined);
   },
 
   async refract(
@@ -1176,7 +1236,7 @@ export default defineLens({
     beam: RefractionBeam,
   ) {
     const matched = add.match(act);
-    if (!matched.ok) return ok({ status: "pass" });
+    if (!matched.ok) return ok({ status: "passed" });
 
     const result = matched.value.left + matched.value.right;
     const emitted = await beam.emitter.toolResult(act, "add", { result });
@@ -1189,21 +1249,30 @@ export default defineLens({
 JavaScript 版本使用相同 API，只移除 TypeScript 类型标注。生产 artifact 不执行 `.ts`，也不在用户机器上启动 TypeScript 编译器。
 
 ```yaml
+api: tokmon.lens/wavefront
 id: org.tokmon.lens.adder-ts
+display_name: TypeScript Adder
 version: 1.0.0
-abi: 1
+abi: { major: 2, minor: 0 }
 runtime:
   kind: node
   version: "<exact-version-from-lens-lock>"
   entry: dist/index.mjs
   module: esm
-view_channels:
-  - model.tools
-act_patterns:
-  - tool.add@tokmon.math.add.v1
-light_permissions:
-  - photon.emit:tool.result
-isolation: worker
+trust: t1
+stateless: true
+observes: []
+inputs: []
+outputs:
+  - { port: model.tools, band: model.tools,
+      schema: tokmon.surface.contribution.v1,
+      merge: stable_concat, surface: true }
+trigger: once_when_ready
+monotone: false
+refracts:
+  - { kind: tool.add, schema: tokmon.math.add.v1 }
+light_permissions: [photon.emit, log.write]
+replacement: R2
 ```
 
 ```text
@@ -1238,10 +1307,11 @@ from tokmon_lens_sdk import (
     Act,
     ActPattern,
     Lens,
+    OpticalInput,
     PhotonWindow,
     RefractionBeam,
     Result,
-    SurfaceBuilder,
+    WavefrontBuilder,
     completed,
     ok,
     passed,
@@ -1260,15 +1330,14 @@ class AdderLens(Lens):
 
     def view(
         self,
-        _photons: PhotonWindow,
-        surface: SurfaceBuilder,
+        _input: OpticalInput,
+        outgoing: WavefrontBuilder,
     ) -> Result[None]:
-        surface.model.add_tool(
+        return outgoing.add_tool(
             name="add",
             description="计算两个数字之和",
             arguments_schema="tokmon.math.add.v1",
         )
-        return ok(None)
 
     async def refract(
         self,
@@ -1292,20 +1361,29 @@ class AdderLens(Lens):
 ```
 
 ```yaml
+api: tokmon.lens/wavefront
 id: org.tokmon.lens.adder-python
+display_name: Python Adder
 version: 1.0.0
-abi: 1
+abi: { major: 2, minor: 0 }
 runtime:
   kind: cpython
   version: "<exact-version-from-lens-lock>"
   entry: tokmon_adder:AdderLens
-view_channels:
-  - model.tools
-act_patterns:
-  - tool.add@tokmon.math.add.v1
-light_permissions:
-  - photon.emit:tool.result
-isolation: worker
+trust: t1
+stateless: true
+observes: []
+inputs: []
+outputs:
+  - { port: model.tools, band: model.tools,
+      schema: tokmon.surface.contribution.v1,
+      merge: stable_concat, surface: true }
+trigger: once_when_ready
+monotone: false
+refracts:
+  - { kind: tool.add, schema: tokmon.math.add.v1 }
+light_permissions: [photon.emit, log.write]
+replacement: R2
 ```
 
 ```text
@@ -1412,28 +1490,49 @@ Node.js/CPython artifact 必须同时锁定：
 用户级 `~/.tokmon/light-path.yaml` 定义全局默认光路，项目级 `<workspace>/.tokmon/light-path.yaml` 在其上做项目覆盖。文件描述的是 **desired LightPath**，不是当前正在运行的事实。
 
 ```yaml
-api_version: tokmon.dev/v1
-mode: overlay
-
+api: tokmon.light-path/wavefront
 lenses:
-  - lens_id: org.tokmon.lens.calculator
-    state: mounted
-    version: 1.0.0
-    artifact_sha256: 8a6d7c...f21b
-    optical_order: 720
-    isolation: worker
+  - id: org.tokmon.lens.calculator
+    artifact: ./calculator-artifact
+    enabled: true
+    runtime: native_worker
 
-  - lens_id: org.tokmon.lens.legacy-calculator
-    state: absent
+  - id: org.tokmon.lens.legacy-calculator
+    artifact: builtin:legacy-calculator
+    enabled: false
+
+assembly:
+  id: org.tokmon.assembly.project-agent
+  autowire_unique: false
+  connections:
+    - from: { lens: org.tokmon.lens.calculator, port: model.tools }
+      to:   { lens: org.tokmon.lens.rhea, port: tools }
+  resonators:
+    - id: org.tokmon.resonator.context
+      lenses: [org.tokmon.lens.enso, org.tokmon.lens.textus]
+      budget:
+        max_cells: 2048
+        max_bytes: 2097152
+        max_cell_bytes: 262144
+        max_lens_executions: 64
+        max_rounds: 4
+        deadline_ms: 1000
+  budget:
+    max_cells: 16384
+    max_bytes: 16777216
+    max_cell_bytes: 1048576
+    max_lens_executions: 4096
+    max_rounds: 8
+    deadline_ms: 5000
 ```
 
 规则：
 
-- `state: mounted` 表示希望装入或保持该精确 generation；
-- `state: absent` 表示希望从后续 LightPath 拔出；
+- `enabled: true` 表示希望装入 artifact，`enabled: false` 表示从后续 LightPath 拔出；
 - active generation 必须解析到 `lens-lock.yaml` 中的精确 artifact hash，运行时不跟随浮动版本；
-- 项目级条目按 `lens_id` 覆盖用户级条目；
-- `optical_order` 冲突按 `(optical_order, lens_id)` 稳定排序，但 ActPattern 冲突必须拒绝；
+- 项目级 Lens 条目按 `id` 覆盖用户级条目；项目级 `assembly` 出现时替换用户级镜组声明；
+- Lens 数组只提供稳定 path index；协作关系由 `connections`、端口和 `resonators` 表达，ActPattern 冲突必须拒绝；
+- `autowire_unique: true` 只补充唯一兼容连接，不能掩盖多候选歧义；
 - 修改 YAML 只产生候选，不能直接修改 active LightPath。
 
 对应命令：
@@ -1461,6 +1560,7 @@ user/project .tokmon/light-path.yaml changes
 → Ignis.refract proposes lens.reconcile Act
 → Fallen checks trust/permission/isolation differences
 → candidate artifacts enter dark lane
+→ compile and hash OpticalAssemblySnapshot
 → append lens.candidate-validated or lens.rejected
 → append mount.epoch-committed
 → Nyxia atomically publishes new LightPathSnapshot
@@ -1487,7 +1587,7 @@ verify artifact and signature
 → start selected runtime worker and protocol handshake
 → verify Node.js/CPython runtime and dependency tree hash
 → replay selected PhotonWindow through view
-→ compare SurfaceDelta against policy/golden
+→ compare Wavefront delta, Surface and provenance against policy/golden
 → run synthetic Act patterns in sandbox
 → test stop/deadline/output bounds
 → append lens.candidate-validated
@@ -1499,8 +1599,8 @@ Dark lane 的输出不能进入用户主光流，只有验证报告摘要能作�
 ### 9.6 原子换镜
 
 ```text
-old path epoch E
-→ build complete candidate path E+1
+old path epoch E + assembly hash H
+→ build complete candidate path E+1 and compile assembly hash H+1
 → append lens.replaced + mount.epoch-committed photons
 → atomic_store(shared_ptr<const LightPathSnapshot E+1>)
 → new steps acquire E+1
@@ -1529,7 +1629,7 @@ private:
 };
 ```
 
-每个 engine step 在开始时 `load()` 一次并持有 shared pointer；每个 BeamTicket 再固定目标 generation。因此交换期间：
+每个 engine step 在开始时 `load()` 一次并持有 shared pointer；该快照同时固定 mounted generations、`OpticalAssemblySpec`、compiled assembly 和 hash。每个 BeamTicket 再固定目标 generation。因此交换期间：
 
 - 新 step 只看到完整 E+1；
 - 已开始 step 继续看到完整 E；
@@ -1589,194 +1689,188 @@ Ignis 的候选由当前 Ignis 准备，但最终 LightPath CAS 由 Nyxia 执行
 
 ## 10. RayTracingEngine：光流发动机
 
-### 10.1 与解释文档 6.5 的对应
+### 10.1 时序闭环与空间传播
 
-正式发动机保持原模型的六个核心步骤：
-
-1. 从 Chora 读取当前 PhotonWindow；
-2. 沿 LightPath 对所有 Lens 执行单向 `view` 折叠；
-3. Rhea 根据 `ModelSurface` 进行真实模型调用并追加响应 Photon；
-4. Techor 从结构化模型响应中萃取 Act；
-5. Act 沿固定安全光路进入目标 Lens 的 `refract`；
-6. 真实结果作为新 Photon 追加，驱动下一拍；没有新 Act 时自然停机。
-
-正式实现不在发动机里写死模型响应、不解析 `CALL_TOOL:` 文本标记，而是使用 provider 原生 structured tool call 和 schema codec。
-
-### 10.2 Engine 状态
-
-```cpp
-enum class RayPhase : std::uint8_t {
-    NeedView,
-    NeedModel,
-    ExtractActs,
-    RefractActs,
-    AwaitReality,
-    Darkened,
-    Cancelled,
-    Failed
-};
-
-struct RayState {
-    RayId id;
-    StreamId stream;
-    std::uint64_t observed_seq{};
-    std::uint32_t step{};
-    RayPhase phase{RayPhase::NeedView};
-    MountEpoch epoch{};
-    RayBudget remaining;
-    std::vector<Act> pending_acts;
-    std::vector<BeamId> awaiting_beams;
-};
-```
-
-`RayState` 的规范变化也通过 `ray.*` Photon 表达；内存对象只是当前推进缓存。
-
-### 10.3 一拍算法
+发动机保留唯一的跨拍闭环，同时把一拍内的线性折叠替换为镜组传播：
 
 ```text
-step(ray):
-  1. path    = Nyxia.current_light_path()
-  2. window  = Chora.read(ray.stream, ray.observed_seq + 1 .. tail)
-  3. surface = empty SurfaceBuilder(path.epoch, tail)
-  4. for lens in path.ordered:
-       lens.view(window, surface)              // pull-based linear fold
-  5. seal surface; append ray.surface-built
-
-  6. if surface requests a model turn:
-       propose model.call Act
-       run Rhea.refract through Act pipeline
-       append model response Photons
-
-  7. acts = Techor.extract(new model/tool/input Photons)
-  8. validate and append act.proposed for every Act
-
-  9. if acts.empty and no awaiting_beams:
-       append ray.darkened
-       stop
-
- 10. for act in deterministic order:
-       admission = Fallen/Cista/Styx optical fold
-       if denied: append act.denied
-       else:
-         target = path.match(act.kind, act.schema)
-         ticket = Nyxia.issue_beam(target, ray budget)
-         target.refract(window, act, ticket)
-         PhotonEmitter appends result
-
- 11. advance observed_seq and step
- 12. if new committed Photon can create Act: schedule next step
-      else if no awaiting beam: darken
+committed Photon prefix
+        │
+        ▼
+capture one LightPathSnapshot(epoch + assembly hash)
+        │
+        ▼
+OpticalPropagator: PhotonWindow + IncidentWave
+        │ DAG layers / explicit bounded resonators
+        ▼
+Wavefront + SurfaceSnapshot + optical trace
+        │
+        ├─ no Act proposal ──→ ray.darkened
+        │
+        ▼
+canonical first proposal → ActPipeline → target.refract
+        │
+        ▼
+new committed Photon → next beat
 ```
 
-### 10.4 C++20 主循环骨架
+因此“时间可组合”仍由 Photon/Act/下一拍实现，“空间可组合”由同一拍内的 Wavefront/OpticalAssembly 实现。二者共享 ray、epoch、assembly hash 和 provenance，不存在另一套业务总线。
+
+### 10.2 Engine 状态与公开入口
 
 ```cpp
-Task<Result<RayOutcome>> RayTracingEngine::run(RayId id) {
-    RayState ray = co_await restore_ray(id);
+class RayTracingEngine final : public OpticalHost {
+public:
+    Result<SurfaceSnapshot> view(const RayId& ray);
+    Result<OpticalBeatResult> propagate(const RayId& ray);
+    Result<RefractionResult> refract(Act act);
+    Result<std::size_t> advance(const RayId& ray,
+                                std::size_t max_beats = 32);
+    Result<RayId> begin(std::string input, MountEpoch epoch = 0,
+                        cbor::Value context = cbor::Value::Map{});
+    Result<Photon> continue_ray(const RayId& ray, std::string input,
+                               MountEpoch epoch = 0,
+                               cbor::Value context = cbor::Value::Map{});
+    void cancel_ray(const RayId& ray) noexcept;
+    void request_stop() noexcept;
+};
+```
 
-    while (!ray.remaining.exhausted()) {
-        if (ray_stop_.stop_requested()) {
-            co_await photons_.emit(PhotonDraft::ray_cancelled(ray));
-            co_return RayOutcome::cancelled();
+宿主持有 `PhotonStore`、原子 `LightPath`、`BeamRegistry` 和准入策略。`OpticalPropagator` 自身无规范状态；每拍从不可变快照构造结果。`view()` 只是 `propagate()` 的 Surface 便捷投影，不是另一套执行路径。
+
+### 10.3 镜组编译
+
+LightPath candidate 只有通过 `compile_optical_assembly()` 后才可发布。编译器一次性验证：
+
+1. Lens id、端口名和镜组输入/输出 binding 唯一且存在；
+2. 连接两端 band/schema/cardinality 兼容；
+3. trust、sensitivity、allowed audience、exportable 和 process-boundary 约束不被降级；
+4. 每个 Act pattern 在 active path 中只有一个目标；
+5. required 输入可达，unique autowire 不含歧义；
+6. 输出与镜组总 cell/byte/execution/deadline 预算可满足；
+7. 普通强连通分量被拒绝；声明为 Resonator 的分量必须完整覆盖 SCC、所有成员 `monotone=true`，且 runtime 与预算满足收敛要求；
+8. 编译出稳定 layers、path index、connection 和 assembly hash。
+
+候选编译失败不会改变 active snapshot。发布使用原子 CAS；已开始的拍持有旧快照直到结束，新拍只看见完整的新 epoch。
+
+### 10.4 一拍传播算法
+
+```text
+propagate(ray, photons, lenses, assembly):
+  1. key = (ray, assembly.epoch, photon-prefix-hash, assembly.hash)
+  2. wavefront = empty Wavefront(key)
+  3. bind optional assembly IncidentWave
+  4. for layer in assembly.layers:
+       for ordinary step:
+         collect connected upstream cells for every input port
+         apply that input port's MergeLaw and limits
+         evaluate trigger readiness
+         call lens.view(OpticalInput, WavefrontBuilder)
+         validate every emitted FieldCell and merge into wavefront
+       for resonator step:
+         repeat members in stable order
+         stop when the resonator's canonical cell set no longer changes
+         fail on max_rounds/cells/bytes/executions/deadline
+  5. project surface=true cells into SurfaceSnapshot
+  6. collect act.proposal cells and bind Act to proposal/input/assembly hashes
+  7. return Wavefront + SurfaceSnapshot + OpticalTraceEntry[]
+```
+
+普通层中的独立 Lens 可并行化，但提交到 Wavefront 的顺序仍由 `(band, merge law, priority, path index, producer, key, id)` 规范化。当前实现以稳定顺序执行，语义上不依赖线程调度，未来并行化不改变 hash。
+
+### 10.5 Trigger 与确定性合并
+
+| TriggerPolicy | 运行条件 |
+| --- | --- |
+| `once_when_ready` | 所有 required 输入齐备后本拍运行一次 |
+| `on_delta` | 可见输入集合的 canonical hash 改变时运行 |
+| `on_seal` | 输入端口封口后运行 |
+| `per_key_join` | 各 required 输入存在同一 key 后分别运行 |
+
+MergeLaw 属于目标输入端口，而不是来源输出端口；这让消费方明确决定如何解释多路光：
+
+- `set_union` 按 cell id 去重并规范排序；
+- `map_union_unique` 拒绝重复 key；
+- `priority_then_path` 先 priority、再 path index；
+- `top_k` 保留有界高优先级集合；
+- `product` 产生受预算限制的组合；
+- `optional_single` 接受零或一个，多个即错误；
+- `stable_concat` 按稳定来源顺序拼接。
+
+所有合并都先执行信息流与资源检查。跨 worker/WASM 边界的 `transient_handle`、不可导出 secret 或不在 audience 中的 cell 在调用 Lens 前被拒绝或按声明策略脱敏。
+
+### 10.6 Act 萃取与现实折射
+
+`SurfaceSnapshot.proposals` 只来自 `act.proposal` 输出端口。宿主以规范顺序取下一项，并重新绑定 ray、epoch、generation、assembly hash、proposal cell 和 optical input cells：
+
+```text
+Act proposal
+→ append act.proposed
+→ ActPipeline validates epoch/hash/schema/target/risk/approval
+→ append act.admitted or act.rejected
+→ acquire BeamTicket(target generation, deadline)
+→ target.refract(PhotonWindow, Act, RefractionBeam)
+→ append emitted result Photons
+→ append act.completed / act.rejected / act.failed
+```
+
+目标 Lens 不能从旧 generation 或不同 assembly 偷渡执行。已发生但未能确认结果的现实动作必须记录为失败或 outcome unknown，并依赖 idempotency key 恢复。
+
+### 10.7 主循环骨架
+
+```cpp
+Result<std::size_t> RayTracingEngine::advance(
+    const RayId& ray, std::size_t max_beats) {
+    std::size_t beats = 0;
+    while (beats < max_beats && !stopping_) {
+        if (ray_is_cancelled(ray)) {
+            emit(PhotonDraft::ray_cancelled(ray));
+            return unexpected(cancelled_error());
         }
 
-        const auto path = nyxia_.light_path();
-        const auto window = co_await photons_.read_after(
-            ray.stream, ray.observed_seq, limits_.max_window_photons);
+        auto beat = propagate(ray);
+        if (!beat) return unexpected(beat.error());
 
-        SurfaceBuilder builder{path->epoch, window.tail_seq()};
-        for (const auto& mount : path->ordered) {
-            auto viewed = mount->lens->view(window, builder);
-            if (!viewed) {
-                co_await emit_view_error(ray, *mount, viewed.error());
-                if (mount->manifest.view_determinism == Determinism::Critical) {
-                    co_return RayOutcome::failed("critical_view_failed");
-                }
-            }
+        if (beat->surface.proposals.empty()) {
+            emit(PhotonDraft::ray_darkened(ray, beats));
+            return beats;
         }
 
-        const SealedSurfaces surfaces = builder.seal();
-        co_await maybe_call_model(ray, surfaces.model(), *path);
-
-        auto acts = techor_.extract(
-            co_await photons_.read_after(ray.stream, window.tail_seq(),
-                                         limits_.max_step_photons));
-
-        if (acts.empty() && ray.awaiting_beams.empty()) {
-            co_await photons_.emit(PhotonDraft::ray_darkened(ray));
-            co_return RayOutcome::darkened();
-        }
-
-        for (Act& act : acts) {
-            co_await refract_one(ray, act, *path);
-        }
-
-        ray.observed_seq = co_await photons_.tail_seq(ray.stream);
-        ++ray.step;
-        ray.remaining.consume_step();
+        Act act = beat->surface.proposals.front();
+        act.ray = ray;
+        auto result = refract(std::move(act));
+        if (!result) return unexpected(result.error());
+        ++beats;
     }
 
-    co_await photons_.emit(PhotonDraft::ray_failed(ray, "budget_exhausted"));
-    co_return RayOutcome::failed("budget_exhausted");
+    emit(PhotonDraft::ray_budget_exhausted(ray, max_beats));
+    return unexpected(budget_error());
 }
 ```
 
-`maybe_call_model` 调用真实 Rhea Lens；`refract_one` 调用真实准入与目标 Lens。测试可以注入确定性 Lens artifact，但生产代码不含模拟模型响应或写死工具结果。
+代码片段省略错误构造和锁，但保持真实实现的同步 `Result` 形状。生产引擎不解析 `CALL_TOOL:` 文本，也不写死模型或工具结果；Rhea 和 Techor 通过相同端口、Act 与 Photon 契约参与镜组。
 
-### 10.5 动态萃取
+### 10.8 自然停机、取消与背压
 
-Techor 只处理结构化响应：
+当一拍没有 Act proposal 且没有在途 Beam 时追加 `ray.darkened`。自然停机不是超时：镜组预算、最大 beat 数、Act deadline、重复调用防护和 worker kill 仍是独立保护。
 
-```text
-model.tool-call Photon
-→ lookup (tool name, arguments schema) in current LightPath patterns
-→ generated codec validates and decodes
-→ construct typed Act envelope
-→ append act.proposed
-→ fixed admission pipeline
-→ matched Lens.refract
-```
+- 同一 ray 的 committed beat 串行，不同 ray 可并行；
+- 同一拍固定一个 LightPath/Assembly snapshot；
+- `max_cells`、`max_bytes`、`max_cell_bytes`、`max_lens_executions`、`max_rounds` 和 deadline 同时生效；
+- cancel 先停止该 ray 的 BeamTicket，再追加 `ray.cancelled`，不会删除历史；
+- worker stdout/stderr、PTY、模型流和 Photon batch 都有界；
+- 慢消费者按 cursor 从 Chora 追赶，不迫使生产者保留无限内存。
 
-找不到目标、schema 不匹配、参数越界或调用来自旧 epoch 时，产生相应 `act.denied` Photon，不猜测、不降级成 shell 字符串。
-
-### 10.6 自然停机
-
-一拍结束时同时满足以下条件，才追加 `ray.darkened`：
-
-- Techor 没有萃取出新 Act；
-- 没有 waiting approval；
-- 没有在途 model/tool Beam；
-- 没有已提交但未处理的新输入 Photon；
-- 没有显式 workflow 下一步。
-
-自然停机不是超时。预算、deadline、重复 Act 检测和最大步数仍是第二道保护：
-
-```text
-same (kind, args_hash, causal_parent) repeated N times
-→ append ray.oscillation-detected
-→ request approval or darken according to policy
-```
-
-### 10.7 并发与背压
-
-- 同一 ray 的 committed step 串行；
-- 不同 ray 可并行；
-- 同一 Act 的多个独立只读 Beam 可按 manifest 并行；
-- 写工作区的 Act 默认按 workspace 串行；
-- model concurrency、worker count、PTY bytes 和 Photon batch 都有上限；
-- Lemon 只传 cursor 和有界 frame，不复制整个 CausalRay；
-- 慢消费者从 Chora 按 cursor 追赶，不迫使生产者持有无限内存。
-
-### 10.8 回放
+### 10.9 回放与可观测性
 
 | 等级 | 含义 | 是否触碰现实 |
 | --- | --- | --- |
 | R0 Transcript | 从 Photon 重建对话、工具、Diff、状态 | 否 |
-| R1 Surface | 用指定 LightPath 重建 Prompt/UI/CLI | 否 |
-| R2 Control | 使用记录的模型和工具结果重演 engine step | 否 |
+| R1 Surface | 用指定 Photon prefix + Assembly hash 重建 Wavefront/Surface | 否 |
+| R2 Control | 使用记录的模型和工具结果重演 beat | 否 |
 | R3 Live | 在新 fork 上重新调用模型和工具 | 是 |
 
-R3 必须创建新 stream；它不能向旧 stream 插入或替换 Photon。
+每拍 trace 记录 lens、generation、path index、round、输入/输出 cell 数、字节、cache hit、耗时、状态与错误；diagnostic surface 展示 assembly hash、layers、resonator 轮次和预算消耗。R3 必须创建新 stream，不能向旧 stream 插入或替换 Photon。
 
 ---
 
@@ -1805,7 +1899,7 @@ R3 必须创建新 stream；它不能向旧 stream 插入或替换 Photon。
 | 19 | Snow | 纯白投影幕 | CLI、本地协议、headless 画面 | CLI/RPC 输入折射 | R1 listener handoff |
 | 20 | Termon | 全息显像屏 | Slint Workbench 画面 | 人类输入与审批折射 | R2 desktop handoff |
 
-二十个 Lens 使用同一个 `view/refract` 契约，但它们观察的 PhotonPattern、贡献的 SurfaceChannel 和接受的 ActPattern 不同。Nyxia 的实现静态内建，其他十九个都由 artifact generation 承载。
+二十个 Lens 使用同一个 `view/refract` 契约，但它们观察的 PhotonPattern、声明的类型端口/终端 Surface band 和接受的 ActPattern 不同。Nyxia 的实现静态内建，其他十九个都由 artifact generation 承载。
 
 ---
 
@@ -2087,20 +2181,20 @@ R3 必须创建新 stream；它不能向旧 stream 插入或替换 Photon。
 9. model.chunk/message/usage Photons append
 10. Techor finds no tool Act
 11. ray.darkened appends
-12. Termon view fold displays final response
+12. Termon displays the terminal ui.* fields from the next propagated Surface
 ```
 
 ### 13.2 工具调用
 
 ```text
 model.tool-call(name=calculate, schema=v1, args={expression:"128*4"})
-→ Techor generated codec decodes CalculateArgs
+→ Techor validates structured tool call and constructs canonical Act parameters
 → append act.proposed
 → Fallen admission
 → current LightPath matches CalculatorLens generation G
 → Nyxia issues BeamTicket(G)
 → CalculatorLens.refract performs real parser calculation
-→ PhotonEmitter appends tool.result(512)
+→ RefractionBeam appends tool.result(512) through the host gate
 → next engine step rebuilds ModelSurface
 → Rhea produces natural-language answer
 → no new Act, ray darkens
@@ -2273,32 +2367,54 @@ built-in defaults
 合并规则：
 
 - map 递归合并，scalar 由后一级覆盖；
-- LightPath 条目按 `lens_id` 合并，不按数组位置猜测身份；
+- LightPath 条目按 `id` 合并，不按数组位置猜测身份；
 - 项目级配置可以收紧风险、网络、文件和 SecretRef 使用范围，不能扩大用户级信任边界；
 - 用户级 `trust.yaml` 是信任根来源，项目目录不能新增根签名者；
 - `<workspace>/.tokmon/local.yaml` 只保存本机覆盖并必须加入 `.gitignore`；
 - YAML 未知字段、重复 key、类型不匹配和非法路径全部返回 `tl::expected` 错误，不静默采用默认值。
 
 ```yaml
-runtime:
-  max_active_rays: 8
-  max_steps_per_ray: 64
-  max_parallel_beams: 16
-  afterglow_deadline_ms: 5000
+logging:
+  level: info
 
-photons:
-  max_inline_payload_bytes: 65536
-  view_window_photons: 10000
-  verify_hash_tail: 4096
+engine:
+  photon_window: 4096
+  max_beats: 32
 
-lenses:
+security:
   require_signatures: true
-  unknown_native_mode: worker
+  trusted_signers:
+    tokmon-release: signing/tokmon-release
+
+models:
+  default: deepseek
+  providers:
+    local:
+      protocol: local
+      endpoint: builtin://rhea
+      model: local-deterministic
+      auth: none
+    deepseek:
+      protocol: openai-compatible
+      endpoint: https://api.deepseek.com/chat/completions
+      model: deepseek-chat
+      secret_ref: model-provider/deepseek
+      auth: bearer
+      enabled: true
+      thinking: false
+      reasoning_effort: medium
+      max_output_tokens: 4096
+      max_attempts: 6
+      retry_backoff_ms: 5000
 
 ui:
   stream_batch_ms: 16
   max_terminal_buffer_bytes: 8388608
 ```
+
+`models.default` 必须指向存在且启用的 provider。provider 协议可为 `local`、`openai-compatible`、`anthropic` 或 `gemini`；远端 endpoint 必须使用 HTTPS（loopback 可用 HTTP），凭据只通过严格匹配 `model-provider/<id>` 的 `SecretRef` 进入 Cista/系统凭据库。`secret_env` 只允许首次引导凭据库，环境变量值不会进入 YAML、Photon、Act、日志或进程参数。
+
+CLI 与 Desktop 使用同一个已折叠 `RuntimeConfig`，没有独立的硬编码模型选择。`tokmon-desktop` 通过 Snow RPC 读取 `model.providers` 和 `models.default`；设置页的“保存平台配置”和“设为默认”分别调用 `model.provider.configure`、`model.provider.use`，由 daemon 原子更新项目级 `.tokmon/config.yaml`、重新加载配置，再把选定 provider/model 绑定到 Rhea 的 `model.call` Act。因而用户既可直接编辑 `config.yaml`，也可从 Desktop 选择模型，两条入口收敛为同一配置事实。
 
 ### 15.3 用户级 `.tokmon` 目录
 
@@ -2613,7 +2729,7 @@ CI 开启 warnings-as-errors、ASan/UBSan、TSan 专项、clang-tidy、format、
 | async/network | Asio | C++20 coroutine、socket、timer |
 | storage | SQLite | Photon、索引、checkpoint |
 | crypto | libsodium/平台 API | hash、signature、secure memory |
-| serialization | canonical CBOR + generated codec | Photon/Act/ABI/protocol |
+| serialization | canonical CBOR + explicit schema validation | Photon/Act/ABI/protocol |
 | C++ error result | tl::expected | 宿主/native Lens 显式错误返回和 `Result<T>` |
 | config | chYAML | YAML 配置与 Lens manifest |
 | C++ logging | chLog | 宿主进程的唯一结构化日志实现 |
@@ -2783,7 +2899,7 @@ platform installers
 3. manifest/schema/binary 一致性；
 4. C ABI 或 Worker Protocol major/minor；
 5. platform/arch/toolchain、Node.js/CPython exact runtime 与扩展 ABI；
-6. surface channel、ActPattern 与 permission 差异；
+6. 类型端口、sensitivity/audience/export policy、ActPattern 与 permission 差异；
 7. SBOM、许可证和已知漏洞；
 8. dark-lane contract test；
 9. runtime、SDK、lockfile、离线依赖树与其 hash 是否完全一致；
@@ -2795,7 +2911,7 @@ platform installers
 ### 18.4 Secret 数据流
 
 ```text
-config/Photon/Surface: SecretRef only
+config/Photon/FieldCell/Surface: SecretRef only
 → Act admitted
 → Cista obtains secret from OS keyring
 → binds to exact target + purpose + deadline
@@ -2806,7 +2922,18 @@ config/Photon/Surface: SecretRef only
 
 禁止把完整环境变量、HTTP Authorization、cookie、private key、token 或 shell history 写入 Photon 和普通日志。
 
-### 18.5 平台隔离
+### 18.5 折射场信息流
+
+`FieldCell` 的 sensitivity 只能保持或提高，不能在普通连接中隐式降低。Assembly 编译器与传播器共同执行：producer trust、consumer maximum trust tier、allowed audiences、redaction policy、exportable 和 transient handle 约束。
+
+- secret 明文不能成为 FieldCell；只允许 `secret_reference`，且必须保留受众；
+- 不可导出的 cell 不能穿过 native worker、Node.js、CPython 或 WASM 边界；
+- transient handle 只在声明的同进程镜组范围有效，不能序列化；
+- merge 不得丢失最严格的敏感度与受众约束；
+- Surface projection 和 optical trace 默认只显示 hash、类型和计数，诊断不得旁路脱敏；
+- Act 必须绑定 proposal cell、所有 optical input cell 和 assembly hash，准入后任何一项改变都使批准失效。
+
+### 18.6 平台隔离
 
 - Windows：Job Object、restricted token/AppContainer（适用时）、ACL、named pipe identity；
 - macOS：sandbox profile、hardened runtime、code signing、Keychain；
@@ -2815,7 +2942,7 @@ config/Photon/Surface: SecretRef only
 - Node.js/CPython：独立进程、只读 artifact/environment、私有临时目录、清洗后的环境变量和专用 IPC；
 - 所有平台都必须把实际 `SandboxStrength` 显示给 Fallen 和 UI。
 
-### 18.6 供应链
+### 18.7 供应链
 
 - 所有依赖固定版本与校验值；
 - 构建生成 SPDX/CycloneDX SBOM；
@@ -2859,9 +2986,11 @@ struct Error {
 
 `tokmon doctor --light-path` 和 Termon inspector 至少展示：
 
-- 当前 epoch、path hash 和镜片顺序；
+- 当前 epoch、path hash、assembly hash、镜片 path index 与拓扑 layers；
 - Lens id/version/generation/artifact/signature；
-- view channel、PhotonPattern、ActPattern；
+- 输入/输出端口、连接、MergeLaw、TriggerPolicy、PhotonPattern、ActPattern；
+- Resonator 成员、轮次、收敛状态和预算消耗；
+- Wavefront cell/byte 数、provenance 与被拒绝的信息流边；
 - active Beam、afterglow deadline 和 stop 状态；
 - guard 托管的 thread/timer/socket/process 数量；
 - Lemon queue capacity/lag/drop policy；
@@ -2874,7 +3003,7 @@ struct Error {
 ### 19.3 性能原则
 
 - Photon append 使用批事务，但不改变逐 Photon seq；
-- view 按 `(tail_seq, epoch, config_hash)` 做增量折叠；
+- view 按 `(ray, photon-prefix-hash, epoch, assembly-hash)` 缓存确定性传播结果；
 - `PhotonWindow` 使用 span/arena/blob view，避免复制完整历史；
 - Lemon 高频路径传 cursor 和小 frame；
 - tool schema 编译后缓存，epoch 变化才重建；
@@ -2888,7 +3017,7 @@ struct Error {
 | 指标 | 分位 | 场景 |
 | --- | --- | --- |
 | Photon append latency | p50/p95/p99 | 1、16、128 batch |
-| 20 Lens view fold | p50/p95/p99 | 1k/10k/100k history + checkpoint |
+| 20 Lens wavefront propagation | p50/p95/p99 | 1k/10k/100k history + checkpoint，DAG/branch/merge |
 | engine step overhead | p50/p95/p99 | 不含模型/工具现实时间 |
 | tool Act dispatch | p50/p95/p99 | schema decode + admission + match |
 | Lens R1 swap | p50/p95/p99 | idle/in-flight/failure |
@@ -2917,20 +3046,24 @@ struct Error {
 每个动态 Lens artifact 必须通过同一套测试：
 
 1. manifest/schema/signature/ABI；
-2. `view` 对相同输入确定；
-3. `view` 不调用外部写 API；
-4. `view` 只写声明过的 SurfaceChannel；
-5. `refract` 只匹配声明过的 ActPattern；
-6. schema invalid/oversized/unknown field 正确拒绝；
-7. `refract` 只能经 PhotonEmitter 输出；
-8. deadline/stop/output bound；
-9. guard 停止后没有后台活动；
-10. 拔镜后新 view 和新 Act 零贡献；
-11. candidate dark-lane 失败不影响 active path；
-12. crash 转换为结构化 Photon；
-13. 用户级与项目级 `light-path.yaml` 合并结果确定；
-14. 项目级配置不能扩大用户级信任边界；
-15. YAML parse/schema 失败保持当前 LightPath。
+2. 端口 band/schema/cardinality/requirement/merge/信息流声明合法；
+3. `view` 对相同 PhotonWindow、IncidentWave、BeatKey 确定；
+4. `view` 不调用外部写 API；
+5. `view` 只写声明过的输出端口，且 provenance 只引用可见输入；
+6. `refract` 只匹配声明过的 ActPattern；
+7. schema invalid/oversized/unknown field 正确拒绝；
+8. `refract` 只能经 RefractionBeam 输出；
+9. deadline/stop/output bound；
+10. guard 停止后没有后台活动；
+11. 拔镜后新 view 和新 Act 零贡献；
+12. candidate dark-lane 失败不影响 active path；
+13. crash 转换为结构化 Photon；
+14. C++/Node.js/CPython 对相同 optical input 产生等价 wavefront delta；
+15. 用户级与项目级 `light-path.yaml` 合并结果确定；
+16. 项目级配置不能扩大用户级信任边界；
+17. YAML parse/schema/assembly compile 失败保持当前 LightPath。
+
+镜组 Contract Suite 另行覆盖：显式连接、unique autowire、串联、并联、split、prism、merge、aperture、嵌套 assembly、`per_key_join`、`CausalDelay`、SCC 拒绝、Resonator 收敛/不收敛和所有预算边界。
 
 ### 20.2 属性测试
 
@@ -2940,15 +3073,22 @@ struct Error {
 committed photons never change
 seq strictly increases per stream
 hash chain verifies
-view(Facts, Path) is deterministic
+propagate(PhotonPrefix, IncidentWave, AssemblyHash) is deterministic
+every FieldCell provenance references only visible cells/photons
+merge order is independent of thread scheduling
+ordinary OpticalAssembly components form a DAG
+every feedback SCC is an explicit bounded Resonator or CausalDelay
+composite(Assembly) remains substitutable as one Lens
 unmount(L) removes every future contribution from L
 one Act pattern resolves to at most one active target
 new step uses one immutable path epoch
+one beat uses one immutable assembly hash
 denied Act never reaches target refract
 no new Act + no pending Beam implies darkened
 fork/replay never mutates source stream
 project .tokmon cannot add a trust root
 atomic path swap exposes either E or E+1, never a mixture
+spatial fields never become a second durable fact source
 old code unload waits for every Beam and path reference
 ```
 
@@ -2961,8 +3101,9 @@ old code unload waits for every Beam and path reference
 ```text
 user.input("128 * 4")
 → CalculatorLens.view exposes calculate schema
+→ OpticalAssembly routes model.tools FieldCell with provenance
 → deterministic test Rhea emits structured tool call
-→ Techor decodes CalculateArgs
+→ Techor validates the structured arguments and constructs canonical Act parameters
 → CalculatorLens.refract performs parser calculation
 → tool.result(512) appended
 → next step observes result
@@ -2980,8 +3121,9 @@ Fixture 包含：
 
 - input Photon；
 - exact LightPath manifest/hash；
+- exact OpticalAssembly spec/hash；
 - deterministic Lens artifact versions；
-- expected Surface contributions；
+- expected Wavefront cells、provenance、merge order 与 Surface projection；
 - expected Act sequence；
 - expected terminal Photon family 和因果边；
 - redaction expectations。
@@ -3112,7 +3254,8 @@ old tokmon remains runnable
 
 交付：
 
-- C++20 `PhotonEnvelope/CausalRay/ILens/Act/SurfaceBuilder`；
+- C++20 `PhotonEnvelope/CausalRay/ILens/Act/OpticalInput/WavefrontBuilder`；
+- 类型端口、`FieldCell` provenance、`OpticalAssemblySnapshot` 与编译器；
 - CalculatorLens 完整示例；
 - 单进程 RayTracingEngine；
 - 真实 parser 计算闭环；
@@ -3123,7 +3266,7 @@ old tokmon remains runnable
 
 ### Phase 1：Durable photons
 
-交付：Chora SQLite/blob、Tracket schema/hash、PhotonEmitter、fork、checkpoint、crash injection。
+交付：Chora SQLite/blob、Tracket schema/hash、`RefractionBeam`/`OpticalHost` append gate、fork、checkpoint、crash injection。
 
 退出：update/delete 被物理拒绝；崩溃恢复通过；导出/回放一致。
 
@@ -3174,7 +3317,7 @@ old tokmon remains runnable
 - Lens 之间没有直接调用或横向消息网；
 - Prompt/UI/CLI 可从 Photon + LightPath 重建；
 - 5 分钟 CalculatorLens 真实计算并追加结果；
-- engine 实现线性 pull fold、动态萃取、真实折射和自然停机。
+- engine 实现 DAG/分束/合束/嵌套镜组/有界 Resonator 波前传播、动态萃取、真实折射和自然停机。
 
 ### 因果光子流
 
@@ -3273,7 +3416,7 @@ old tokmon remains runnable
 | --- | --- | --- |
 | Lens 偷藏规范状态 | 换代/恢复不一致 | stateless review、replay test、worker kill test |
 | `view` 偷做 I/O | 折叠卡顿、结果不确定 | restricted host、thread check、contract test |
-| 直线光路演变成隐藏横向调用 | O(N²) 耦合 | SDK 无 Lens lookup API、link audit |
+| 镜组拓扑演变成隐藏横向调用 | O(N²) 耦合、绕过 provenance | SDK 无 Lens lookup API、只允许显式类型连接、link audit |
 | ActPattern 冲突 | 错目标执行 | mount-time uniqueness validation |
 | Photon 无限增长 | 磁盘与读取压力 | immutable segment、blob、checkpoint、retention access policy |
 | afterglow 卡住 | 代码无法卸载 | deadline、stop、worker termination、diagnostic |
@@ -3294,13 +3437,14 @@ old tokmon remains runnable
 任何跨 Lens 的新能力必须回答：
 
 1. 它观察哪些 PhotonPattern？
-2. 它向哪个 SurfaceChannel 做 `view` contribution？
+2. 它声明哪些输入/输出端口、band、schema、MergeLaw、TriggerPolicy 和信息流限制？
 3. 它接受哪个 ActPattern？
 4. `refract` 产生哪些新 Photon？
 5. 现实动作经过哪条固定 Act 管线？
 6. 拔镜后如何保证后续零新贡献？
 7. 如何回放、崩溃恢复和测试？
-8. 如何在 C++20、C ABI、Node.js/CPython Worker Protocol 或 WASM 中实现？
+8. 它如何连接或封装成 `OpticalAssembly`，普通 DAG、CausalDelay 或 Resonator 中哪一种语义适用？
+9. 如何在 C++20、C ABI、Node.js/CPython Worker Protocol 或 WASM 中实现？
 
 如果答案需要可变全局对象、横向调用、历史改写或第二事实源，该设计直接拒绝。
 
@@ -3310,6 +3454,7 @@ old tokmon remains runnable
 
 项目内规范资料：
 
+- [`tokmon-n-wavefront-optical-assembly-and-refractive-field-calculus.zh.md`](tokmon-n-wavefront-optical-assembly-and-refractive-field-calculus.zh.md)
 - [`tokmon-lens-architecture-explained.zh.md`](tokmon-lens-architecture-explained.zh.md)
 - [架构论文中文版](everything-is-a-lens-paper.zh.md)
 - [架构论文英文版](everything-is-a-lens-paper.en.md)
@@ -3322,6 +3467,7 @@ old tokmon remains runnable
 
 非规范历史背景：
 
+- [`tokmon-n-bounded-synchronous-and-causal-asynchronous-lens-collaboration.zh.md`](tokmon-n-bounded-synchronous-and-causal-asynchronous-lens-collaboration.zh.md)——未实现的旧设计，只用于对照，不定义兼容接口。
 - [《A Programming Paradigm for Spatiotemporal Composability》](../../A%20Programming%20Paradigm%20for%20Spatiotemporal%20Composability.pdf)——仅用于追溯架构演进，不从中导入概念。
 
 Slint 官方资料：
@@ -3336,6 +3482,6 @@ Slint 官方资料：
 
 最终系统只有一个闭环：
 
-> **Fact 是不可更改的来路，Lens 以 view 显出当前视界，以 refract 承接受控 Act；现实结果只能化成新的 Photon，沿同一束因果光继续向前。**
+> **Fact 是不可更改的来路，Lens 以 view 把入射波折射进可组合镜组，以 refract 承接受控 Act；现实结果只能化成新的 Photon，沿同一束因果光继续向前。**
 
-Nyxia 守住光学定律，RayTracingEngine 推进每一拍，十九个动态透镜决定光如何被看见与折射，Chora 和 Tracket 守住不可改写的光痕，Termon 用 Slint 把当下的视界显像给人。镜片可以更换，视界可以改变，历史永不重写。
+Nyxia 守住光学定律，OpticalAssembly 让镜片在一拍内串联、并联、分束、汇合、嵌套或有界谐振，RayTracingEngine 推进跨拍因果闭环；Chora 和 Tracket 守住不可改写的光痕，Termon 用 Slint 把当下的视界显像给人。镜片可以组合和更换，视界可以改变，历史永不重写。

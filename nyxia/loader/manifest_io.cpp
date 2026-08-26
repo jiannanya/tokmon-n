@@ -119,6 +119,100 @@ Result<std::vector<LensDependency>> dependencies(
   return result;
 }
 
+bool integer(const cbor::Value* value);
+
+Result<std::vector<OpticalPortSpec>> optical_ports(
+    const cbor::Value* sequence, const std::filesystem::path& source,
+    const bool output) {
+  if (!sequence || !sequence->as_array())
+    return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+        source.string() + (output ? ": outputs must be a sequence"
+                                  : ": inputs must be a sequence")));
+  std::vector<OpticalPortSpec> result;
+  std::set<std::string> names;
+  for (const auto& item : *sequence->as_array()) {
+    if (auto checked = reject_unknown(item,
+        {"port", "band", "schema", "cardinality", "required", "merge",
+         "sensitivity", "maximum_trust_tier", "allowed_audiences",
+         "redaction_policy", "exportable", "transient_handle",
+         "max_cells", "max_cell_bytes", "surface"},
+        source); !checked)
+      return tl::unexpected(checked.error());
+    const auto* port = cbor::find(item, "port");
+    const auto* band = cbor::find(item, "band");
+    const auto* schema = cbor::find(item, "schema");
+    if (!port || !band || !schema)
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                       "optical port requires port, band, and schema"));
+    OpticalPortSpec spec;
+    spec.name = std::string(port->as_string());
+    spec.band = std::string(band->as_string());
+    spec.schema = std::string(schema->as_string());
+    if (const auto* field = cbor::find(item, "cardinality")) {
+      auto parsed = port_cardinality_from_string(field->as_string());
+      if (!parsed) return tl::unexpected(parsed.error());
+      spec.cardinality = *parsed;
+    }
+    if (const auto* field = cbor::find(item, "required")) {
+      if (!std::holds_alternative<bool>(field->data))
+        return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                         "optical port required must be boolean"));
+      spec.requirement = field->as_bool() ? PortRequirement::required
+                                         : PortRequirement::optional;
+    }
+    if (const auto* field = cbor::find(item, "merge")) {
+      auto parsed = merge_law_from_string(field->as_string());
+      if (!parsed) return tl::unexpected(parsed.error());
+      spec.merge = *parsed;
+    }
+    if (const auto* field = cbor::find(item, "sensitivity")) {
+      auto parsed = field_sensitivity_from_string(field->as_string());
+      if (!parsed) return tl::unexpected(parsed.error());
+      spec.sensitivity = *parsed;
+    }
+    if (const auto* field = cbor::find(item, "maximum_trust_tier")) {
+      if (!integer(field) || field->as_integer() < 0 || field->as_integer() > 3)
+        return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                         "maximum_trust_tier must be between 0 and 3"));
+      spec.maximum_trust_tier = static_cast<std::uint8_t>(field->as_integer());
+    }
+    if (auto audiences = strings(cbor::find(item, "allowed_audiences"),
+                                 "allowed_audiences", source); audiences)
+      spec.allowed_audiences = std::move(*audiences);
+    else return tl::unexpected(audiences.error());
+    if (const auto* field = cbor::find(item, "redaction_policy"))
+      spec.redaction_policy = std::string(field->as_string());
+    if (const auto* field = cbor::find(item, "exportable"))
+      spec.exportable = field->as_bool(true);
+    if (const auto* field = cbor::find(item, "transient_handle"))
+      spec.transient_handle = field->as_bool();
+    if (const auto* field = cbor::find(item, "max_cells")) {
+      if (!integer(field) || field->as_integer() <= 0)
+        return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                         "max_cells must be positive"));
+      spec.max_cells = static_cast<std::size_t>(field->as_integer());
+    }
+    if (const auto* field = cbor::find(item, "max_cell_bytes")) {
+      if (!integer(field) || field->as_integer() <= 0)
+        return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                         "max_cell_bytes must be positive"));
+      spec.max_cell_bytes = static_cast<std::size_t>(field->as_integer());
+    }
+    if (const auto* field = cbor::find(item, "surface")) {
+      if (!output || !std::holds_alternative<bool>(field->data))
+        return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                         "surface is valid only as an output boolean"));
+      spec.surface = field->as_bool();
+    }
+    if (spec.name.empty() || spec.band.empty() || spec.schema.empty() ||
+        !names.insert(spec.name).second)
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                       "optical port names must be unique and non-empty"));
+    result.push_back(std::move(spec));
+  }
+  return result;
+}
+
 bool integer(const cbor::Value* value) {
   return value && std::holds_alternative<std::int64_t>(value->data);
 }
@@ -131,7 +225,8 @@ Result<LensManifest> load_lens_manifest(const std::filesystem::path& path) {
   const auto& root = *loaded;
   if (auto checked = reject_unknown(root,
       {"api", "id", "display_name", "version", "abi", "runtime", "trust", "stateless",
-       "observes", "view_channels", "refracts", "light_permissions", "dependencies",
+       "observes", "inputs", "outputs", "trigger", "monotone", "refracts",
+       "light_permissions", "dependencies",
        "conflicts", "optical_order", "resources", "replacement", "schema_bundle", "sbom"}, path);
       !checked) return tl::unexpected(checked.error());
 
@@ -141,11 +236,12 @@ Result<LensManifest> load_lens_manifest(const std::filesystem::path& path) {
   const auto* abi = cbor::find(root, "abi");
   const auto* runtime = cbor::find(root, "runtime");
   const auto* observes_field = cbor::find(root, "observes");
-  const auto* channels = cbor::find(root, "view_channels");
+  const auto* inputs_field = cbor::find(root, "inputs");
+  const auto* outputs_field = cbor::find(root, "outputs");
   const auto* refracts_field = cbor::find(root, "refracts");
   const auto* permissions = cbor::find(root, "light_permissions");
   if (!id || !display_name || !version || !abi || !runtime || !observes_field ||
-      !channels || !refracts_field || !permissions)
+      !inputs_field || !outputs_field || !refracts_field || !permissions)
     return tl::unexpected(make_error(ErrorCode::schema_mismatch,
                                      path.string() + ": required manifest field is missing"));
 
@@ -200,7 +296,7 @@ Result<LensManifest> load_lens_manifest(const std::filesystem::path& path) {
                                      "manifest stateless must be a boolean"));
   manifest.stateless = !stateless || stateless->as_bool();
   if (const auto* api = cbor::find(root, "api");
-      api && api->as_string() != "tokmon.lens/v1")
+      api && api->as_string() != "tokmon.lens/wavefront")
     return tl::unexpected(make_error(ErrorCode::schema_mismatch,
                                      "unsupported Lens manifest api"));
 
@@ -210,11 +306,25 @@ Result<LensManifest> load_lens_manifest(const std::filesystem::path& path) {
   if (!refracts) return tl::unexpected(refracts.error());
   manifest.observes = std::move(*observes);
   manifest.refracts = std::move(*refracts);
-  auto view_channels = strings(channels, "view_channels", path);
+  auto inputs = optical_ports(inputs_field, path, false);
+  auto outputs = optical_ports(outputs_field, path, true);
   auto light_permissions = strings(permissions, "light_permissions", path);
-  if (!view_channels) return tl::unexpected(view_channels.error());
+  if (!inputs) return tl::unexpected(inputs.error());
+  if (!outputs) return tl::unexpected(outputs.error());
   if (!light_permissions) return tl::unexpected(light_permissions.error());
-  manifest.view_channels = std::move(*view_channels);
+  manifest.inputs = std::move(*inputs);
+  manifest.outputs = std::move(*outputs);
+  if (const auto* trigger = cbor::find(root, "trigger")) {
+    auto parsed = trigger_policy_from_string(trigger->as_string());
+    if (!parsed) return tl::unexpected(parsed.error());
+    manifest.trigger = *parsed;
+  }
+  if (const auto* monotone = cbor::find(root, "monotone")) {
+    if (!std::holds_alternative<bool>(monotone->data))
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                       "manifest monotone must be boolean"));
+    manifest.monotone = monotone->as_bool();
+  }
   manifest.light_permissions = std::move(*light_permissions);
   auto required_lenses = dependencies(cbor::find(root, "dependencies"), path);
   if (!required_lenses) return tl::unexpected(required_lenses.error());
@@ -267,8 +377,8 @@ Result<LensManifest> load_lens_manifest(const std::filesystem::path& path) {
     manifest.schema_bundle = std::string(bundle->as_string());
   if (const auto* sbom = cbor::find(root, "sbom"))
     manifest.sbom = std::string(sbom->as_string());
-  if (manifest.id.empty() || manifest.display_name.empty() || manifest.abi_major != 1u ||
-      manifest.view_channels.empty() || manifest.refracts.empty())
+  if (manifest.id.empty() || manifest.display_name.empty() || manifest.abi_major != 2u ||
+      manifest.outputs.empty())
     return tl::unexpected(make_error(ErrorCode::schema_mismatch,
                                      "Lens manifest identity or contract is invalid"));
   return manifest;

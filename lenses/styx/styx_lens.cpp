@@ -101,7 +101,7 @@ StyxLens::~StyxLens() {
     (void)terminal->close(std::chrono::milliseconds(100));
 }
 
-Result<void> StyxLens::view(const PhotonWindow& photons, SurfaceBuilder& surface) {
+Result<void> StyxLens::view(const OpticalInput& photons, WavefrontBuilder& surface) {
   if (auto status = ready(); !status) return status;
 #if defined(_WIN32)
   constexpr auto backend = "windows-job-object";

@@ -1,7 +1,8 @@
+api: tokmon.lens/wavefront
 id: org.tokmon.lens.adder-python
 display_name: CPython Adder Lens
 version: 0.1.0
-abi: { major: 1, minor: 0 }
+abi: { major: 2, minor: 0 }
 runtime:
   kind: cpython
   version: 3.10.7
@@ -10,7 +11,9 @@ trust: t2
 stateless: true
 observes:
   - { kind: user.input, schema: "*" }
-view_channels: [model.tools]
+inputs: []
+outputs:
+  - { port: model.tools, band: model.tools, schema: tokmon.surface.contribution.v1, merge: stable_concat, surface: true }
 refracts:
   - { kind: tool.add, schema: tokmon.math.add.v1 }
 light_permissions: [photon.emit, log.write]

@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "tests/support/test_framework.hpp"
+#include "tests/support/optical_harness.hpp"
 
 #include "tokmon/tokmon.hpp"
 #include "lenses/common/http_client.hpp"
@@ -100,8 +101,7 @@ TEST_CASE("all twenty built Lens libraries expose their independent C ABI identi
       auto loaded = tokmon::CAbiLens::load(path);
       REQUIRE(loaded);
       REQUIRE((*loaded)->manifest().id == "org.tokmon.lens." + id);
-      tokmon::SurfaceBuilder surface((*loaded)->manifest().id);
-      REQUIRE((*loaded)->view(tokmon::PhotonWindow{}, surface));
+      REQUIRE(tokmon::tests::view_lens_once(*loaded));
     }
   }
 }
@@ -213,10 +213,11 @@ TEST_CASE("Janus forwards a platform-neutral protocol envelope to Rhea") {
           {"auth", "bearer"}, {"thinking", true}, {"max_output_tokens", 8192},
           {"max_attempts", 6}, {"retry_backoff_ms", 5'000}}),
       .epoch = 7, .hash = std::string(64, 'a')};
-  tokmon::SurfaceBuilder surface(lens->manifest().id);
-  REQUIRE(lens->view(tokmon::PhotonWindow({input}), surface));
-  REQUIRE(surface.proposals().size() == 1);
-  const auto& parameters = surface.proposals().front().parameters;
+  auto viewed = tokmon::tests::view_lens_once(lens, tokmon::PhotonWindow({input}));
+  REQUIRE(viewed);
+  const auto& surface = viewed->surface;
+  REQUIRE(surface.proposals.size() == 1);
+  const auto& parameters = surface.proposals.front().parameters;
   REQUIRE(tokmon::cbor::find(parameters, "provider")->as_string() == "private-cloud");
   REQUIRE(tokmon::cbor::find(parameters, "protocol")->as_string() ==
           "openai-compatible");
@@ -226,7 +227,7 @@ TEST_CASE("Janus forwards a platform-neutral protocol envelope to Rhea") {
   REQUIRE(tokmon::cbor::find(parameters, "api_key") == nullptr);
   // Six HTTP attempts plus 5/10/20/40/60 second waits must fit inside the
   // enclosing Act. This guards against the old fixed 30-second cutoff.
-  REQUIRE(surface.proposals().front().timeout == std::chrono::milliseconds(510'000));
+  REQUIRE(surface.proposals.front().timeout == std::chrono::milliseconds(510'000));
 }
 
 TEST_CASE("Janus carries the verified Agent action ledger into the next model turn") {
@@ -249,11 +250,12 @@ TEST_CASE("Janus carries the verified Agent action ledger into the next model tu
           tokmon::cbor::object({{"path", "result.txt"}})}}));
   auto read = make(5, "read", "fs.read-completed",
       tokmon::cbor::object({{"path", "result.txt"}, {"content", "ok"}}));
-  tokmon::SurfaceBuilder surface(lens->manifest().id);
-  REQUIRE(lens->view(tokmon::PhotonWindow({input, write_call, written, read_call, read}),
-                     surface));
-  REQUIRE(surface.proposals().size() == 1);
-  const auto* messages = tokmon::cbor::find(surface.proposals().front().parameters,
+  auto viewed = tokmon::tests::view_lens_once(lens,
+      tokmon::PhotonWindow({input, write_call, written, read_call, read}));
+  REQUIRE(viewed);
+  const auto& surface = viewed->surface;
+  REQUIRE(surface.proposals.size() == 1);
+  const auto* messages = tokmon::cbor::find(surface.proposals.front().parameters,
                                             "messages");
   REQUIRE(messages != nullptr);
   const auto diagnostic = tokmon::cbor::diagnostic(*messages);
@@ -546,8 +548,7 @@ TEST_CASE("native C ABI Lens runs in a supervised replaceable worker") {
       .manifest = std::move(manifest), .supervisor = TOKMON_WORKER_EXECUTABLE,
       .entry = TOKMON_TEST_LENS_PATH});
   REQUIRE(lens);
-  tokmon::SurfaceBuilder surface((*lens)->manifest().id);
-  REQUIRE((*lens)->view(tokmon::PhotonWindow{}, surface));
+  REQUIRE(tokmon::tests::view_lens_once(*lens));
   RecordingHost host;
   auto result = refract(*lens, "tool.calculate", "tokmon.math.calculate.v1",
       tokmon::cbor::object({{"expression", "6 * 7"}}), host);
@@ -772,10 +773,10 @@ TEST_CASE("Iris catalog composes with Techor and calls the discovered MCP tool")
       .epoch = 7, .hash = std::string(64, 'c')};
   const tokmon::PhotonWindow composed_window(
       {connection_photon, catalog_photon, call_photon});
-  tokmon::SurfaceBuilder surface(techor->manifest().id);
-  REQUIRE(techor->view(composed_window, surface));
-  REQUIRE(surface.proposals().size() == 1);
-  auto act = surface.proposals().front();
+  auto viewed = tokmon::tests::view_lens_once(techor, composed_window);
+  REQUIRE(viewed);
+  REQUIRE(viewed->surface.proposals.size() == 1);
+  auto act = viewed->surface.proposals.front();
   REQUIRE(act.kind == "external.call");
   REQUIRE(act.target == iris->manifest().id);
   REQUIRE(tokmon::cbor::find(act.parameters, "connection_ref")->as_string() == reference);
@@ -1104,10 +1105,10 @@ TEST_CASE("Clotho validates a DAG and proposes the first ready node deterministi
       .kind = "workflow.defined", .schema = "tokmon.workflow.definition.v1",
       .payload = tokmon::cbor::object({{"nodes", std::move(nodes)}}), .epoch = 3,
       .hash = std::string(64, 'b')};
-  tokmon::SurfaceBuilder surface(lens->manifest().id);
-  REQUIRE(lens->view(tokmon::PhotonWindow({definition}), surface));
-  REQUIRE(surface.proposals().size() == 1);
-  REQUIRE(tokmon::cbor::find(surface.proposals().front().parameters, "node_id")->as_string() ==
+  auto viewed = tokmon::tests::view_lens_once(lens, tokmon::PhotonWindow({definition}));
+  REQUIRE(viewed);
+  REQUIRE(viewed->surface.proposals.size() == 1);
+  REQUIRE(tokmon::cbor::find(viewed->surface.proposals.front().parameters, "node_id")->as_string() ==
           "prepare");
 }
 
@@ -1144,14 +1145,15 @@ nodes:
       .ray = "ray-workflow", .kind = "workflow.defined",
       .schema = "tokmon.workflow.definition.v1", .payload = host.drafts.back().payload,
       .epoch = 3, .hash = std::string(64, '2')};
-  tokmon::SurfaceBuilder surface(lens->manifest().id);
-  REQUIRE(lens->view(tokmon::PhotonWindow({definition}), surface));
-  REQUIRE(surface.proposals().size() == 1);
-  REQUIRE(tokmon::cbor::find(surface.proposals().front().parameters, "node_id")->as_string() ==
+  auto viewed = tokmon::tests::view_lens_once(lens, tokmon::PhotonWindow({definition}));
+  REQUIRE(viewed);
+  REQUIRE(viewed->surface.proposals.size() == 1);
+  REQUIRE(tokmon::cbor::find(viewed->surface.proposals.front().parameters, "node_id")->as_string() ==
           "shards[0000]");
   host.drafts.clear();
   auto dispatched = refract(lens, "workflow.step", "tokmon.workflow.step.v1",
-      surface.proposals().front().parameters, host, tokmon::PhotonWindow({definition}));
+      viewed->surface.proposals.front().parameters, host,
+      tokmon::PhotonWindow({definition}));
   REQUIRE(dispatched);
   REQUIRE(host.drafts.back().kind == "workflow.step-dispatched");
   const auto* encoded = tokmon::cbor::find(host.drafts.back().payload, "act");
@@ -1184,13 +1186,15 @@ TEST_CASE("Clotho proposes an explicit compensation Act after terminal failure")
       .kind = "workflow.step-failed", .schema = "tokmon.workflow.result.v1",
       .payload = tokmon::cbor::object({{"node_id", "publish"}}), .epoch = 3,
       .hash = std::string(64, '5')};
-  tokmon::SurfaceBuilder surface(lens->manifest().id);
-  REQUIRE(lens->view(tokmon::PhotonWindow({definition, dispatched, failed}), surface));
-  REQUIRE(surface.proposals().size() == 1);
-  REQUIRE(surface.proposals().front().kind == "workflow.compensate");
+  auto viewed = tokmon::tests::view_lens_once(lens,
+      tokmon::PhotonWindow({definition, dispatched, failed}));
+  REQUIRE(viewed);
+  const auto& surface = viewed->surface;
+  REQUIRE(surface.proposals.size() == 1);
+  REQUIRE(surface.proposals.front().kind == "workflow.compensate");
   RecordingHost host;
   auto result = refract(lens, "workflow.compensate", "tokmon.workflow.compensate.v1",
-      surface.proposals().front().parameters, host,
+      surface.proposals.front().parameters, host,
       tokmon::PhotonWindow({definition, dispatched, failed}));
   REQUIRE(result);
   REQUIRE(host.drafts.back().kind == "workflow.compensation-dispatched");
@@ -1414,10 +1418,11 @@ TEST_CASE("Termon projects every workbench page from committed Photons") {
         .payload = tokmon::cbor::object({{"text", "visible"}}),
         .epoch = 1, .hash = std::string(64, 'e')});
   }
-  tokmon::SurfaceBuilder surface(lens->manifest().id);
-  REQUIRE(lens->view(tokmon::PhotonWindow(std::move(photons)), surface));
+  auto viewed = tokmon::tests::view_lens_once(
+      lens, tokmon::PhotonWindow(std::move(photons)));
+  REQUIRE(viewed);
   std::set<std::string> channels;
-  for (const auto& contribution : surface.contributions())
+  for (const auto& contribution : viewed->surface.contributions)
     channels.insert(contribution.channel);
   for (const auto* required : {"ui.conversation", "ui.trajectory", "ui.code",
       "ui.terminal", "ui.approval", "ui.context", "ui.models", "ui.tools",
@@ -1432,10 +1437,10 @@ TEST_CASE("Techor Code Mode compiles declarative lines into bounded structured A
       .payload = tokmon::cbor::object({{"mode", "tokmon-act-v1"},
                                       {"source", "calculate {\"expression\":\"6 * 7\"}"}}),
       .epoch = 4, .hash = std::string(64, 'a')};
-  tokmon::SurfaceBuilder surface(lens->manifest().id);
-  REQUIRE(lens->view(tokmon::PhotonWindow({frame}), surface));
-  REQUIRE(surface.proposals().size() == 1);
-  const auto& act = surface.proposals().front();
+  auto viewed = tokmon::tests::view_lens_once(lens, tokmon::PhotonWindow({frame}));
+  REQUIRE(viewed);
+  REQUIRE(viewed->surface.proposals.size() == 1);
+  const auto& act = viewed->surface.proposals.front();
   REQUIRE(act.kind == "tool.calculate");
   REQUIRE(act.target == "org.tokmon.lens.calculator");
   REQUIRE(tokmon::cbor::find(act.parameters, "_code_frame")->as_string() == "code-frame-one");
@@ -1520,11 +1525,12 @@ TEST_CASE("Aya folds child progress heartbeat usage and join evidence from Photo
           {"payload", tokmon::cbor::object({{"tokens", 17}, {"cost_microunits", 9},
                                              {"elapsed_ms", 50}, {"tool_calls", 2}})}}), host));
   auto history = photon_window_from(host.drafts);
-  tokmon::SurfaceBuilder surface(lens->manifest().id);
-  REQUIRE(lens->view(history, surface));
-  const auto state = std::find_if(surface.contributions().begin(),
-      surface.contributions().end(), [](const auto& item) { return item.channel == "child.runs"; });
-  REQUIRE(state != surface.contributions().end());
+  auto viewed = tokmon::tests::view_lens_once(lens, history);
+  REQUIRE(viewed);
+  const auto& surface = viewed->surface;
+  const auto state = std::find_if(surface.contributions.begin(),
+      surface.contributions.end(), [](const auto& item) { return item.channel == "child.runs"; });
+  REQUIRE(state != surface.contributions.end());
   const auto* items = tokmon::cbor::find(state->value, "items");
   REQUIRE(items != nullptr);
   REQUIRE(items->as_array() != nullptr);
@@ -1541,7 +1547,10 @@ TEST_CASE("Node.js Lens runs through WorkerLensProxy and emits through host Beam
   tokmon::LensManifest manifest{.id = "org.tokmon.lens.adder-node",
       .display_name = "Node adder", .runtime = tokmon::RuntimeKind::node,
       .runtime_version = TOKMON_NODE_VERSION,
-      .observes = {{"user.input", "*"}}, .view_channels = {"model.tools"},
+      .observes = {{"user.input", "*"}},
+      .outputs = {{.name = "model.tools", .band = "model.tools",
+          .schema = "tokmon.surface.contribution.v1",
+          .merge = tokmon::MergeLaw::stable_concat, .surface = true}},
       .refracts = {{"tool.add", "tokmon.math.add.v1"}},
       .light_permissions = {"photon.emit", "log.write"}};
   auto lens = tokmon::WorkerLensProxy::launch(tokmon::WorkerLensOptions{
@@ -1550,9 +1559,9 @@ TEST_CASE("Node.js Lens runs through WorkerLensProxy and emits through host Beam
       .adapter = std::filesystem::path(TOKMON_SOURCE_DIR) / "sdk/typescript/worker.mjs",
       .entry = std::filesystem::path(TOKMON_SOURCE_DIR) / "sdk/typescript/examples/adder.mjs"});
   REQUIRE(lens);
-  tokmon::SurfaceBuilder surface((*lens)->manifest().id);
-  REQUIRE((*lens)->view(tokmon::PhotonWindow{}, surface));
-  REQUIRE(surface.contributions().size() == 1);
+  auto viewed = tokmon::tests::view_lens_once(*lens);
+  REQUIRE(viewed);
+  REQUIRE(viewed->surface.contributions.size() == 1);
   RecordingHost host;
   auto result = refract(*lens, "tool.add", "tokmon.math.add.v1",
       tokmon::cbor::object({{"left", 19}, {"right", 23}}), host);
@@ -1568,7 +1577,10 @@ TEST_CASE("CPython Lens runs through WorkerLensProxy and emits through host Beam
   tokmon::LensManifest manifest{.id = "org.tokmon.lens.adder-python",
       .display_name = "Python adder", .runtime = tokmon::RuntimeKind::cpython,
       .runtime_version = TOKMON_PYTHON_VERSION,
-      .observes = {{"user.input", "*"}}, .view_channels = {"model.tools"},
+      .observes = {{"user.input", "*"}},
+      .outputs = {{.name = "model.tools", .band = "model.tools",
+          .schema = "tokmon.surface.contribution.v1",
+          .merge = tokmon::MergeLaw::stable_concat, .surface = true}},
       .refracts = {{"tool.add", "tokmon.math.add.v1"}},
       .light_permissions = {"photon.emit", "log.write"}};
   auto lens = tokmon::WorkerLensProxy::launch(tokmon::WorkerLensOptions{
@@ -1578,9 +1590,9 @@ TEST_CASE("CPython Lens runs through WorkerLensProxy and emits through host Beam
           "sdk/python/tokmon_lens_sdk/worker.py",
       .entry = std::filesystem::path(TOKMON_SOURCE_DIR) / "sdk/python/examples/adder.py"});
   REQUIRE(lens);
-  tokmon::SurfaceBuilder surface((*lens)->manifest().id);
-  REQUIRE((*lens)->view(tokmon::PhotonWindow{}, surface));
-  REQUIRE(surface.contributions().size() == 1);
+  auto viewed = tokmon::tests::view_lens_once(*lens);
+  REQUIRE(viewed);
+  REQUIRE(viewed->surface.contributions.size() == 1);
   RecordingHost host;
   auto result = refract(*lens, "tool.add", "tokmon.math.add.v1",
       tokmon::cbor::object({{"left", 20}, {"right", 22}}), host);

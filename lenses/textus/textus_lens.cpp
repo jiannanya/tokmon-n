@@ -101,7 +101,7 @@ TextusLens::TextusLens() : LensBase(make_manifest("textus", "Textus / ModelSurfa
     {{"text.compact", "tokmon.text.compact.v1"},
      {"text.summarize", "tokmon.text.summarize.v1"}})) {}
 
-Result<void> TextusLens::view(const PhotonWindow& photons, SurfaceBuilder& surface) {
+Result<void> TextusLens::view(const OpticalInput& photons, WavefrontBuilder& surface) {
   if (auto status = ready(); !status) return status;
   std::int64_t budget = 32'768;
   std::int64_t reserve = 4'096;

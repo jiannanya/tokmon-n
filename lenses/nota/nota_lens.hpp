@@ -9,7 +9,7 @@ class NotaLens final : public LensBase {
  public:
   NotaLens();
   ~NotaLens() override;
-  Result<void> view(const PhotonWindow&, SurfaceBuilder&) override;
+  Result<void> view(const OpticalInput&, WavefrontBuilder&) override;
   Result<RefractionResult> refract(const PhotonWindow&, const Act&, RefractionBeam&) override;
   void request_stop() noexcept override;
 

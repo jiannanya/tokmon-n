@@ -18,6 +18,13 @@ Result<Act> ActPipeline::admit(Act act, const LightPathSnapshot& path) const {
   if (act.epoch != path.epoch)
     return tl::unexpected(make_error(ErrorCode::invalid_state,
                                      "Act mount epoch is stale"));
+  if (!act.assembly_hash.empty() &&
+      (!path.assembly || act.assembly_hash != path.assembly->hash))
+    return tl::unexpected(make_error(ErrorCode::invalid_state,
+                                     "Act OpticalAssembly snapshot is stale"));
+  if (!act.assembly_hash.empty() && act.proposal_cell.empty())
+    return tl::unexpected(make_error(ErrorCode::integrity_error,
+                                     "optically proposed Act has no proposal cell"));
 
   const MountedLens* target = nullptr;
   for (const auto& mounted : path.lenses) {

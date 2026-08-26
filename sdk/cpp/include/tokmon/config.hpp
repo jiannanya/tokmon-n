@@ -9,6 +9,7 @@
 #include "tokmon/act.hpp"
 #include "tokmon/error.hpp"
 #include "tokmon/lens.hpp"
+#include "tokmon/optical_assembly.hpp"
 
 namespace tokmon {
 
@@ -79,6 +80,7 @@ struct ModelProviderConfig {
 struct RuntimeConfig {
   TokmonPaths paths;
   std::vector<DesiredLens> light_path;
+  OpticalAssemblySpec optical_assembly;
   std::string log_level{"info"};
   std::size_t photon_window{4096};
   std::size_t max_beats{32};

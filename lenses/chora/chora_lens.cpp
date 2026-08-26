@@ -143,7 +143,7 @@ ChoraLens::ChoraLens() : LensBase(make_manifest("chora", "Chora / 不可改写�
      {"backup.restore", "tokmon.backup.restore.v1"}},
     {"photon.emit", "blob.write", "artifact.write", "backup.io", "log.write"})) {}
 
-Result<void> ChoraLens::view(const PhotonWindow& photons, SurfaceBuilder& surface) {
+Result<void> ChoraLens::view(const OpticalInput& photons, WavefrontBuilder& surface) {
   if (auto status = ready(); !status) return status;
   const auto* tail = photons.latest();
   cbor::Value::Map current_kv;
