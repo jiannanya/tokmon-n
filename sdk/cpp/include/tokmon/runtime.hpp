@@ -18,6 +18,7 @@ class TokmonRuntime {
 
   Result<void> open(const std::optional<std::filesystem::path>& workspace = std::nullopt,
                     std::string_view process_name = "tokmon");
+  Result<void> reload_configuration();
   Result<void> reconcile();
   Result<RayId> submit(std::string input);
   Result<RayId> submit(std::string input, cbor::Value context);

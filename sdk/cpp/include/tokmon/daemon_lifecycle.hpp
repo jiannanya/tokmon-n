@@ -15,7 +15,9 @@ struct DaemonLaunchOptions {
   std::filesystem::path endpoint;
   std::filesystem::path workspace;
   std::filesystem::path executable;
-  std::chrono::milliseconds startup_timeout{std::chrono::seconds(8)};
+  // A lens-heavy workspace can legitimately spend several seconds validating
+  // and mounting its active light path before Snow becomes reachable.
+  std::chrono::milliseconds startup_timeout{std::chrono::seconds(30)};
 };
 
 struct DaemonConnection {

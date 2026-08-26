@@ -420,37 +420,7 @@ tokmon::cbor::Value provider_value(const tokmon::ModelProviderConfig& provider,
 
 tokmon::Result<tokmon::cbor::Value> resolved_model_context(
     const tokmon::RuntimeConfig& config, const tokmon::cbor::Value& payload) {
-  const auto* requested = tokmon::cbor::find(payload, "provider");
-  const auto id = requested && !requested->as_string().empty()
-      ? std::string(requested->as_string()) : config.default_model_provider;
-  const auto found = config.model_providers.find(id);
-  if (found == config.model_providers.end() || !found->second.enabled)
-    return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::not_found,
-        "requested model provider is not configured or is disabled"));
-  const auto& provider = found->second;
-  const auto requested_effort = tokmon::cbor::find(payload, "effort")
-      ? std::string(tokmon::cbor::find(payload, "effort")->as_string()) : std::string{};
-  const auto normalized_effort = requested_effort == "较低" || requested_effort == "低"
-      ? std::string("low") : requested_effort == "中等" || requested_effort == "标准"
-      ? std::string("medium") : requested_effort == "高" ? std::string("high") :
-        requested_effort == "最高" ? std::string("max") : provider.reasoning_effort;
-  auto context = tokmon::cbor::object({
-      {"provider", provider.id}, {"protocol", provider.protocol},
-      {"endpoint", provider.endpoint}, {"model", provider.model},
-      {"auth", provider.auth}, {"allow_anonymous", provider.allow_anonymous},
-      {"thinking", provider.thinking}, {"reasoning_effort", normalized_effort},
-      {"max_output_tokens", provider.max_output_tokens},
-      {"max_attempts", provider.max_attempts},
-      {"retry_backoff_ms", provider.retry_backoff_ms},
-      {"workspace_root", config.paths.project.parent_path().generic_string()},
-      {"access_mode", tokmon::cbor::find(payload, "access_mode")
-          ? std::string(tokmon::cbor::find(payload, "access_mode")->as_string())
-          : std::string("完全访问")},
-      {"effort", tokmon::cbor::find(payload, "effort")
-          ? std::string(tokmon::cbor::find(payload, "effort")->as_string())
-          : std::string("标准")}});
-  if (!provider.secret_ref.empty()) (*context.as_map())["secret_ref"] = provider.secret_ref;
-  return context;
+  return tokmon::resolve_model_provider_context(config, payload);
 }
 
 std::string photon_text(const tokmon::Photon& photon) {
@@ -1114,6 +1084,13 @@ int tokmon::app::daemon_main(int argc, char** argv) {
                                                     "unsupported Snow request"));
     const auto* action_field = tokmon::cbor::find(request.payload, "action");
     const auto action = action_field ? action_field->as_string() : std::string_view{};
+    if (action == "chat" || action == "command.execute" ||
+        action.starts_with("model.")) {
+      if (auto reloaded = runtime.reload_configuration(); !reloaded)
+        return snow_error(request, reloaded.error());
+      if (auto credentials = bootstrap_environment_credentials(runtime.config()); !credentials)
+        return snow_error(request, credentials.error());
+    }
     if (action == "daemon.shutdown") {
       running.store(false, std::memory_order_release);
       return remember(tokmon::SnowMessage{.kind = tokmon::SnowMessageKind::intent_result,

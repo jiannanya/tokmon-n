@@ -207,9 +207,16 @@ export component MainWindow inherits Window {
     callback open-change-workspace();
     callback confirm-change-workspace(string);
     callback refresh-workspace();
+    callback select-model(string, string);
     pure callback identify-project(string) -> string;
     pure callback project-in-group(string, string) -> bool;
     callback filter-preview(string);
+
+    select-model(provider, model) => {
+        root.setting-provider = provider;
+        root.setting-main-model = model;
+        root.model-name = model;
+    }
 
     pure function startup-selected() -> int {
         root.setting-startup == "首页" ? 0 : 1
@@ -353,6 +360,7 @@ export component MainWindow inherits Window {
                 trace-search <=> root.trace-search;
                 selected-attachment <=> root.selected-attachment;
                 setting-command-approval: root.setting-command-approval;
+                setting-provider: root.setting-provider;
                 setting-main-model <=> root.setting-main-model;
                 setting-workspace: root.setting-workspace;
                 workspace-group: root.workspace-group;
@@ -414,6 +422,7 @@ export component MainWindow inherits Window {
                     root.settings-page = 3;
                     root.settings-open = true;
                 }
+                select-model(provider, model) => { root.select-model(provider, model); }
                 return-focus => { hs.focus(); }
             }
             CodePanelSlot {

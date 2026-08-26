@@ -1052,6 +1052,46 @@ TEST_CASE("model platforms merge by id while credentials remain SecretRefs") {
   REQUIRE(provider.thinking);
 }
 
+TEST_CASE("model context keeps provider and configured model inseparable") {
+  tokmon::RuntimeConfig config;
+  config.paths.project = "E:/workspace/.tokmon";
+  config.default_model_provider = "opencode";
+  config.model_providers.emplace("opencode", tokmon::ModelProviderConfig{
+      .id = "opencode", .protocol = "openai-compatible",
+      .endpoint = "https://opencode.example/v1/chat/completions",
+      .model = "x-preview-f-free", .secret_ref = "model-provider/opencode",
+      .auth = "bearer"});
+  config.model_providers.emplace("deepseek", tokmon::ModelProviderConfig{
+      .id = "deepseek", .protocol = "openai-compatible",
+      .endpoint = "https://api.deepseek.com/chat/completions",
+      .model = "deepseek-v4-flash", .secret_ref = "model-provider/deepseek",
+      .auth = "bearer", .thinking = true, .reasoning_effort = "high"});
+
+  auto selected = tokmon::resolve_model_provider_context(config,
+      tokmon::cbor::object({{"provider", "deepseek"},
+                            {"model", "deepseek-v4-flash"},
+                            {"effort", "高"}}));
+  REQUIRE(selected);
+  REQUIRE(tokmon::cbor::find(*selected, "provider")->as_string() == "deepseek");
+  REQUIRE(tokmon::cbor::find(*selected, "model")->as_string() ==
+          "deepseek-v4-flash");
+  REQUIRE(tokmon::cbor::find(*selected, "endpoint")->as_string() ==
+          "https://api.deepseek.com/chat/completions");
+
+  auto mismatch = tokmon::resolve_model_provider_context(config,
+      tokmon::cbor::object({{"provider", "opencode"},
+                            {"model", "deepseek-v4-flash"}}));
+  REQUIRE_FALSE(mismatch);
+  REQUIRE(mismatch.error().code == tokmon::ErrorCode::schema_mismatch);
+
+  auto fallback = tokmon::resolve_model_provider_context(
+      config, tokmon::cbor::Value::Map{});
+  REQUIRE(fallback);
+  REQUIRE(tokmon::cbor::find(*fallback, "provider")->as_string() == "opencode");
+  REQUIRE(tokmon::cbor::find(*fallback, "model")->as_string() ==
+          "x-preview-f-free");
+}
+
 TEST_CASE("model configuration rejects plaintext keys and insecure remote endpoints") {
   const auto root = temporary_directory("model-config-reject");
   UserProfileGuard profile(root / "home");

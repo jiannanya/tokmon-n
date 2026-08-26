@@ -35,6 +35,7 @@ export component WorkspacePanel inherits Rectangle {
     in-out property <string> trace-search;
     in-out property <string> selected-attachment;
     in property <string> setting-command-approval;
+    in property <string> setting-provider;
     in-out property <string> setting-main-model;
     in property <string> setting-workspace;
     in property <string> workspace-group;
@@ -102,6 +103,7 @@ export component WorkspacePanel inherits Rectangle {
     callback copy-text(string);
     callback refresh-workspace();
     callback open-workspace-settings();
+    callback select-model(string, string);
     callback return-focus();
 
     pure function page-range-label() -> string {
@@ -784,7 +786,7 @@ export component WorkspacePanel inherits Rectangle {
                                                             padding-right: 8px;
                                                             spacing: 6px;
                                                             Text {
-                                                                text: root.model-name;
+                                                                text: root.setting-provider + " · " + root.model-name;
                                                                 font-family: "Consolas";
                                                                 font-size: 12px;
                                                                 font-weight: 500;
@@ -970,10 +972,9 @@ export component WorkspacePanel inherits Rectangle {
                                                 }
                                                 for choice in root.model-choices : MenuOption {
                                                     label: choice.label;
-                                                    active: choice.model == root.model-name;
+                                                    active: choice.provider == root.setting-provider && choice.model == root.model-name;
                                                     chosen => {
-                                                        root.model-name = choice.model;
-                                                        root.setting-main-model = choice.model;
+                                                        root.select-model(choice.provider, choice.model);
                                                         root.model-menu-open = false;
                                                         root.return-focus();
                                                     }

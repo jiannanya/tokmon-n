@@ -302,6 +302,7 @@ export component SettingsOverlay inherits Rectangle {
                                             box-width: 237px;
                                             mono: true;
                                             selected(i, o) => {
+                                                root.setting-provider = root.setting-provider-at(i);
                                                 root.setting-main-model = root.setting-model-at(i);
                                                 root.model-name = root.setting-model-at(i);
                                             }

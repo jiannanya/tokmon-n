@@ -598,10 +598,18 @@ Result<void> TokmonRuntime::open(const std::optional<std::filesystem::path>& wor
   return {};
 }
 
-Result<void> TokmonRuntime::reconcile() {
+Result<void> TokmonRuntime::reload_configuration() {
+  if (!open_)
+    return tl::unexpected(make_error(ErrorCode::invalid_state,
+                                     "TokmonRuntime is not open"));
   auto refreshed = load_config(workspace_);
   if (!refreshed) return tl::unexpected(refreshed.error());
   config_ = std::move(*refreshed);
+  return {};
+}
+
+Result<void> TokmonRuntime::reconcile() {
+  if (auto refreshed = reload_configuration(); !refreshed) return refreshed;
   const auto current = path_.snapshot();
   auto candidate = std::make_shared<LightPathSnapshot>();
   candidate->epoch = current->epoch + 1u;

@@ -8,11 +8,17 @@ export component TitleEditHarness inherits MainWindow {
 
     in-out property <string> test-session-title <=> root.session-title;
     in-out property <bool> test-title-editing <=> root.title-editing;
+    in-out property <string> test-setting-provider <=> root.setting-provider;
+    in-out property <string> test-setting-main-model <=> root.setting-main-model;
+    in-out property <string> test-model-name <=> root.model-name;
     out property <bool> test-title-confirm-hovered: root.title-confirm-hovered;
     out property <int> rename-count;
     out property <string> last-renamed-title;
     out property <int> new-session-count;
     out property <int> drag-count;
+
+    callback test-select-model(string, string);
+    test-select-model(provider, model) => { root.select-model(provider, model); }
 
     rename-session(title) => {
         root.rename-count += 1;

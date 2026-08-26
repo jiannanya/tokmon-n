@@ -88,6 +88,13 @@ int main()
     slint::platform::update_timers_and_animations();
     advance_time(10);
 
+    ui->invoke_test_select_model("deepseek", "deepseek-v4-flash");
+    expect(as_string(ui->get_test_setting_provider()) == "deepseek",
+           "model selection must switch the provider and model as one pair");
+    expect(as_string(ui->get_test_setting_main_model()) == "deepseek-v4-flash" &&
+                   as_string(ui->get_test_model_name()) == "deepseek-v4-flash",
+           "model selection must keep settings and composer labels synchronized");
+
     send_key_combo(ui.operator->(), { "\x11", "n" });
     expect(ui->get_new_session_count() == 1,
            "the zero-size shortcut scope must retain Ctrl+N handling");

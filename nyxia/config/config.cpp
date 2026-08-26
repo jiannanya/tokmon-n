@@ -713,4 +713,50 @@ Result<RuntimeConfig> load_config(const std::optional<std::filesystem::path>& wo
   return config;
 }
 
+Result<cbor::Value> resolve_model_provider_context(
+    const RuntimeConfig& config, const cbor::Value& request) {
+  const auto* requested_provider = cbor::find(request, "provider");
+  const auto provider_id = requested_provider && !requested_provider->as_string().empty()
+      ? std::string(requested_provider->as_string())
+      : config.default_model_provider;
+  const auto found = config.model_providers.find(provider_id);
+  if (found == config.model_providers.end() || !found->second.enabled)
+    return tl::unexpected(make_error(ErrorCode::not_found,
+        "requested model provider is not configured or is disabled: " + provider_id));
+
+  const auto& provider = found->second;
+  const auto* requested_model = cbor::find(request, "model");
+  if (requested_model && !requested_model->as_string().empty() &&
+      requested_model->as_string() != provider.model)
+    return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+        "requested model " + std::string(requested_model->as_string()) +
+        " does not belong to provider " + provider.id +
+        "; configured model is " + provider.model));
+
+  const auto requested_effort = cbor::find(request, "effort")
+      ? std::string(cbor::find(request, "effort")->as_string()) : std::string{};
+  const auto normalized_effort = requested_effort == "较低" || requested_effort == "低"
+      ? std::string("low") : requested_effort == "中等" || requested_effort == "标准"
+      ? std::string("medium") : requested_effort == "高" ? std::string("high") :
+        requested_effort == "最高" ? std::string("max") : provider.reasoning_effort;
+  auto context = cbor::object({
+      {"provider", provider.id}, {"protocol", provider.protocol},
+      {"endpoint", provider.endpoint}, {"model", provider.model},
+      {"auth", provider.auth}, {"allow_anonymous", provider.allow_anonymous},
+      {"thinking", provider.thinking}, {"reasoning_effort", normalized_effort},
+      {"max_output_tokens", provider.max_output_tokens},
+      {"max_attempts", provider.max_attempts},
+      {"retry_backoff_ms", provider.retry_backoff_ms},
+      {"workspace_root", config.paths.project.parent_path().generic_string()},
+      {"access_mode", cbor::find(request, "access_mode")
+          ? std::string(cbor::find(request, "access_mode")->as_string())
+          : std::string("完全访问")},
+      {"effort", cbor::find(request, "effort")
+          ? std::string(cbor::find(request, "effort")->as_string())
+          : std::string("标准")}});
+  if (!provider.secret_ref.empty())
+    (*context.as_map())["secret_ref"] = provider.secret_ref;
+  return context;
+}
+
 }  // namespace tokmon

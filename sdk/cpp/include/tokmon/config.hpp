@@ -101,6 +101,8 @@ struct RuntimeConfig {
     const std::optional<std::filesystem::path>& workspace = std::nullopt);
 [[nodiscard]] Result<RuntimeConfig> load_config(
     const std::optional<std::filesystem::path>& workspace = std::nullopt);
+[[nodiscard]] Result<cbor::Value> resolve_model_provider_context(
+    const RuntimeConfig& config, const cbor::Value& request);
 Result<void> ensure_directory_layout(const TokmonPaths& paths);
 
 }  // namespace tokmon
