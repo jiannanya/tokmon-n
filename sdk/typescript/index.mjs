@@ -76,6 +76,22 @@ export class RefractionBeam {
   }
 }
 
+export class OpticalContext {
+  #exchange;
+  constructor(exchange) { this.#exchange = exchange; }
+  get(channel, key) { return this.#exchange({ operation: "get", channel, key }); }
+  getAll(channel) { return this.#exchange({ operation: "get_all", channel }); }
+  query(capability, parameters, options = {}) {
+    return this.#exchange({
+      operation: "query", capability, parameters,
+      request_schema: options.requestSchema ?? "",
+      response_schema: options.responseSchema ?? "",
+      timeout_ms: options.timeoutMs ?? 0,
+      max_response_bytes: options.maxResponseBytes ?? 0,
+    });
+  }
+}
+
 export const passed = () => ({ status: "passed" });
 export const completed = (detail = "completed") => ({ status: "completed", detail });
 export const rejected = (detail) => ({ status: "rejected", detail });

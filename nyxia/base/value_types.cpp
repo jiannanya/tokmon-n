@@ -126,7 +126,8 @@ cbor::Value to_cbor(const Act& act) {
       {"generation", static_cast<std::int64_t>(act.generation)},
       {"risk", std::string(to_string(act.risk))}, {"approved", act.approved},
       {"idempotency_key", act.idempotency_key},
-      {"timeout_ms", static_cast<std::int64_t>(act.timeout.count())}});
+      {"timeout_ms", static_cast<std::int64_t>(act.timeout.count())},
+      {"provenance", act.provenance}});
 }
 
 Result<Act> act_from_cbor(const cbor::Value& value) {
@@ -146,6 +147,8 @@ Result<Act> act_from_cbor(const cbor::Value& value) {
   if (const auto* approved = cbor::find(value, "approved")) act.approved = approved->as_bool();
   act.idempotency_key = required_string(value, "idempotency_key");
   act.timeout = std::chrono::milliseconds(required_integer(value, "timeout_ms"));
+  if (const auto* provenance = cbor::find(value, "provenance"))
+    act.provenance = *provenance;
   if (act.id.empty() || act.ray.empty() || act.kind.empty())
     return tl::unexpected(make_error(ErrorCode::schema_mismatch,
                                      "Act id, ray and kind are required"));
@@ -153,14 +156,17 @@ Result<Act> act_from_cbor(const cbor::Value& value) {
 }
 
 std::string act_binding_hash(const Act& act) {
-  return sha256_hex(cbor::encode(cbor::object({
+  auto binding = cbor::object({
       {"id", act.id}, {"ray", act.ray}, {"kind", act.kind}, {"schema", act.schema},
       {"parameters", act.parameters}, {"target", act.target},
       {"epoch", static_cast<std::int64_t>(act.epoch)},
       {"generation", static_cast<std::int64_t>(act.generation)},
       {"risk", std::string(to_string(act.risk))},
       {"idempotency_key", act.idempotency_key},
-      {"timeout_ms", static_cast<std::int64_t>(act.timeout.count())}})));
+      {"timeout_ms", static_cast<std::int64_t>(act.timeout.count())}});
+  if (!act.provenance.as_map() || !act.provenance.as_map()->empty())
+    (*binding.as_map())["provenance"] = act.provenance;
+  return sha256_hex(cbor::encode(binding));
 }
 
 std::string act_secret_scope_hash(const Act& act) {
@@ -180,14 +186,17 @@ std::string act_secret_scope_hash(const Act& act) {
       }
     }
   }
-  return sha256_hex(cbor::encode(cbor::object({
+  auto binding = cbor::object({
       {"id", act.id}, {"ray", act.ray}, {"kind", act.kind}, {"schema", act.schema},
       {"parameters", std::move(parameters)}, {"target", act.target},
       {"epoch", static_cast<std::int64_t>(act.epoch)},
       {"generation", static_cast<std::int64_t>(act.generation)},
       {"risk", std::string(to_string(act.risk))},
       {"idempotency_key", act.idempotency_key},
-      {"timeout_ms", static_cast<std::int64_t>(act.timeout.count())}})));
+      {"timeout_ms", static_cast<std::int64_t>(act.timeout.count())}});
+  if (!act.provenance.as_map() || !act.provenance.as_map()->empty())
+    (*binding.as_map())["provenance"] = act.provenance;
+  return sha256_hex(cbor::encode(binding));
 }
 
 SurfaceBuilder::SurfaceBuilder(LensId source) : source_(std::move(source)) {}
@@ -221,9 +230,14 @@ cbor::Value to_cbor(const SurfaceSnapshot& surface) {
   }
   cbor::Value::Array proposals;
   for (const auto& act : surface.proposals) proposals.push_back(to_cbor(act));
+  cbor::Value::Array traces;
+  for (const auto& trace : surface.query_traces) traces.push_back(to_cbor(trace));
   return cbor::object({{"epoch", static_cast<std::int64_t>(surface.epoch)},
+                       {"beat", surface.beat}, {"path_hash", surface.path_hash},
+                       {"input_prefix_hash", surface.input_prefix_hash},
                        {"contributions", std::move(contributions)},
-                       {"proposals", std::move(proposals)}});
+                       {"proposals", std::move(proposals)},
+                       {"query_traces", std::move(traces)}});
 }
 
 Result<SurfaceSnapshot> surface_from_cbor(const cbor::Value& value) {
@@ -232,6 +246,9 @@ Result<SurfaceSnapshot> surface_from_cbor(const cbor::Value& value) {
                                      "SurfaceSnapshot must be a map"));
   SurfaceSnapshot surface;
   surface.epoch = static_cast<MountEpoch>(required_integer(value, "epoch"));
+  surface.beat = required_string(value, "beat");
+  surface.path_hash = required_string(value, "path_hash");
+  surface.input_prefix_hash = required_string(value, "input_prefix_hash");
   if (const auto* items = cbor::find(value, "contributions"); items && items->as_array()) {
     for (const auto& item : *items->as_array()) {
       SurfaceContribution contribution;
@@ -248,6 +265,29 @@ Result<SurfaceSnapshot> surface_from_cbor(const cbor::Value& value) {
       auto act = act_from_cbor(item);
       if (!act) return tl::unexpected(act.error());
       surface.proposals.push_back(std::move(*act));
+    }
+  }
+  if (const auto* items = cbor::find(value, "query_traces"); items && items->as_array()) {
+    for (const auto& item : *items->as_array()) {
+      QueryTrace trace;
+      trace.beat = required_string(item, "beat");
+      trace.ray = required_string(item, "ray");
+      trace.consumer = required_string(item, "consumer");
+      trace.consumer_generation = static_cast<GenerationId>(
+          required_integer(item, "consumer_generation"));
+      trace.provider = required_string(item, "provider");
+      trace.provider_generation = static_cast<GenerationId>(
+          required_integer(item, "provider_generation"));
+      trace.capability = required_string(item, "capability");
+      trace.request_schema = required_string(item, "request_schema");
+      trace.response_schema = required_string(item, "response_schema");
+      trace.request_hash = required_string(item, "request_hash");
+      trace.response_hash = required_string(item, "response_hash");
+      if (const auto* field = cbor::find(item, "cache_hit"))
+        trace.cache_hit = field->as_bool();
+      trace.duration_us = required_integer(item, "duration_us");
+      trace.status = required_string(item, "status");
+      surface.query_traces.push_back(std::move(trace));
     }
   }
   return surface;

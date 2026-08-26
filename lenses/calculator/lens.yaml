@@ -8,6 +8,19 @@ stateless: true
 observes:
   - { kind: user.input, schema: "*" }
 view_channels: [model.tools]
+provides_queries:
+  - capability: math.evaluate
+    request_schema: tokmon.math.calculate.v1
+    response_schema: tokmon.math.result.v1
+    deterministic: true
+    priority: 50
+    default_timeout_ms: 10
+    max_timeout_ms: 100
+    max_request_bytes: 4096
+    max_response_bytes: 4096
+    max_concurrent_queries: 4
+    max_queries_per_beat: 1024
+    cache: per_beat
 refracts:
   - { kind: tool.calculate, schema: tokmon.math.calculate.v1 }
 light_permissions: [photon.emit, log.write]

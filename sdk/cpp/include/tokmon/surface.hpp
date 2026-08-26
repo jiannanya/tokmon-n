@@ -6,6 +6,7 @@
 #include "tokmon/act.hpp"
 #include "tokmon/cbor.hpp"
 #include "tokmon/ids.hpp"
+#include "tokmon/optical.hpp"
 
 namespace tokmon {
 
@@ -35,8 +36,12 @@ class SurfaceBuilder {
 
 struct SurfaceSnapshot {
   MountEpoch epoch{0};
+  BeatId beat;
+  std::string path_hash;
+  std::string input_prefix_hash;
   std::vector<SurfaceContribution> contributions;
   std::vector<Act> proposals;
+  std::vector<QueryTrace> query_traces;
 };
 
 [[nodiscard]] cbor::Value to_cbor(const SurfaceSnapshot& surface);

@@ -24,6 +24,14 @@ enum class ErrorCode : std::uint16_t {
   sandbox_rejected,
   approval_required,
   outcome_unknown,
+  provider_not_found,
+  ambiguous_provider,
+  deadline_exceeded,
+  budget_exceeded,
+  provider_failed,
+  stale_generation,
+  recursive_query_denied,
+  nondeterministic_result,
   unsupported,
   internal_error,
 };
@@ -46,6 +54,9 @@ using Result = tl::expected<T, Error>;
 [[nodiscard]] Error make_error(ErrorCode code, std::string message,
                                bool retryable = false);
 [[nodiscard]] std::string_view to_string(ErrorCode code) noexcept;
+[[nodiscard]] ErrorCode error_code_from_string(
+    std::string_view value,
+    ErrorCode fallback = ErrorCode::internal_error) noexcept;
 
 }  // namespace tokmon
 

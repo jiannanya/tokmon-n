@@ -2,7 +2,9 @@
 
 #include "tokmon_lens_api.h"
 
+#include <algorithm>
 #include <cstring>
+#include <cstdlib>
 #include <span>
 
 #if defined(_WIN32)
@@ -19,13 +21,80 @@ void release(TokmonOwnedBytesV1& bytes) {
   bytes = {};
 }
 
+TokmonOwnedBytesV1 owned_bytes(std::vector<std::uint8_t> bytes) {
+  TokmonOwnedBytesV1 result{};
+  if (bytes.empty()) return result;
+  result.data = static_cast<std::uint8_t*>(std::malloc(bytes.size()));
+  if (!result.data) return result;
+  std::memcpy(result.data, bytes.data(), bytes.size());
+  result.size = bytes.size();
+  result.release = [](std::uint8_t* data, std::size_t, void*) { std::free(data); };
+  return result;
+}
+
+cbor::Value error_frame(const Error& error) {
+  return cbor::object({{"code", std::string(to_string(error.code))},
+                       {"message", error.message}, {"retryable", error.retryable}});
+}
+
+int32_t optical_get(void* user, const TokmonBytesV1 request,
+                    TokmonOwnedBytesV1* output, TokmonOwnedBytesV1* error) {
+  if (!user || !output || !error) return -1;
+  auto value = cbor::decode(std::span(request.data, request.size));
+  if (!value) { *error = owned_bytes(cbor::encode(error_frame(value.error()))); return 1; }
+  const auto* channel = cbor::find(*value, "channel");
+  const auto* key = cbor::find(*value, "key");
+  if (!channel || !key) return -1;
+  auto result = static_cast<const OpticalContext*>(user)->get(channel->as_string(), key->as_string());
+  if (!result) { *error = owned_bytes(cbor::encode(error_frame(result.error()))); return 1; }
+  *output = owned_bytes(cbor::encode(*result));
+  return 0;
+}
+
+int32_t optical_get_all(void* user, const TokmonBytesV1 request,
+                        TokmonOwnedBytesV1* output, TokmonOwnedBytesV1* error) {
+  if (!user || !output || !error) return -1;
+  auto value = cbor::decode(std::span(request.data, request.size));
+  if (!value) { *error = owned_bytes(cbor::encode(error_frame(value.error()))); return 1; }
+  const auto* channel = cbor::find(*value, "channel");
+  if (!channel) return -1;
+  auto result = static_cast<const OpticalContext*>(user)->get_all(channel->as_string());
+  if (!result) { *error = owned_bytes(cbor::encode(error_frame(result.error()))); return 1; }
+  cbor::Value::Array items;
+  for (auto& item : *result) items.push_back(std::move(item));
+  *output = owned_bytes(cbor::encode(cbor::Value(std::move(items))));
+  return 0;
+}
+
+int32_t optical_query_callback(void* user, const TokmonBytesV1 request,
+                               TokmonOwnedBytesV1* output, TokmonOwnedBytesV1* error) {
+  if (!user || !output || !error) return -1;
+  auto value = cbor::decode(std::span(request.data, request.size));
+  if (!value) { *error = owned_bytes(cbor::encode(error_frame(value.error()))); return 1; }
+  OpticalQueryRequest query;
+  if (const auto* part = cbor::find(*value, "capability")) query.capability = part->as_string();
+  if (const auto* part = cbor::find(*value, "parameters")) query.parameters = *part;
+  if (const auto* part = cbor::find(*value, "request_schema")) query.request_schema = part->as_string();
+  if (const auto* part = cbor::find(*value, "response_schema")) query.response_schema = part->as_string();
+  if (const auto* part = cbor::find(*value, "timeout_ms")) query.timeout = std::chrono::milliseconds(part->as_integer());
+  if (const auto* part = cbor::find(*value, "max_response_bytes")) query.max_response_bytes = static_cast<std::size_t>(part->as_integer());
+  auto result = static_cast<const OpticalContext*>(user)->query(std::move(query));
+  if (!result) { *error = owned_bytes(cbor::encode(error_frame(result.error()))); return 1; }
+  *output = owned_bytes(cbor::encode(*result));
+  return 0;
+}
+
 Error decode_error(const TokmonOwnedBytesV1& bytes, const Error fallback) {
   if (!bytes.data || bytes.size == 0) return fallback;
   auto value = cbor::decode(std::span(bytes.data, bytes.size));
   if (!value) return fallback;
   const auto* message = cbor::find(*value, "message");
   auto error = fallback;
+  if (const auto* code = cbor::find(*value, "code"))
+    error.code = error_code_from_string(code->as_string(), fallback.code);
   if (message) error.message = std::string(message->as_string(error.message));
+  if (const auto* retryable = cbor::find(*value, "retryable"))
+    error.retryable = retryable->as_bool(error.retryable);
   return error;
 }
 
@@ -56,6 +125,38 @@ Result<LensManifest> parse_manifest(const TokmonBytesV1 bytes) {
   if (const auto* field = cbor::find(*value, "stateless")) manifest.stateless = field->as_bool(true);
   if (const auto* field = cbor::find(*value, "view_channels"); field && field->as_array())
     for (const auto& item : *field->as_array()) manifest.view_channels.emplace_back(item.as_string());
+  if (const auto* field = cbor::find(*value, "provides_queries"); field && field->as_array())
+    for (const auto& item : *field->as_array()) {
+      OpticalQueryCapability capability;
+      if (const auto* part = cbor::find(item, "capability")) capability.capability = part->as_string();
+      if (const auto* part = cbor::find(item, "request_schema")) capability.request_schema = part->as_string();
+      if (const auto* part = cbor::find(item, "response_schema")) capability.response_schema = part->as_string();
+      if (const auto* part = cbor::find(item, "deterministic")) capability.deterministic = part->as_bool(true);
+      if (const auto* part = cbor::find(item, "priority")) capability.priority = static_cast<std::int32_t>(part->as_integer());
+      if (const auto* part = cbor::find(item, "default_timeout_ms")) capability.default_timeout = std::chrono::milliseconds(part->as_integer(10));
+      if (const auto* part = cbor::find(item, "max_timeout_ms")) capability.max_timeout = std::chrono::milliseconds(part->as_integer(100));
+      if (const auto* part = cbor::find(item, "max_request_bytes")) capability.max_request_bytes = static_cast<std::size_t>(part->as_integer(256 * 1024));
+      if (const auto* part = cbor::find(item, "max_response_bytes")) capability.max_response_bytes = static_cast<std::size_t>(part->as_integer(1024 * 1024));
+      if (const auto* part = cbor::find(item, "max_concurrent_queries")) capability.max_concurrent_queries = static_cast<std::size_t>(part->as_integer(4));
+      if (const auto* part = cbor::find(item, "max_queries_per_beat")) capability.max_queries_per_beat = static_cast<std::size_t>(part->as_integer(1024));
+      if (const auto* part = cbor::find(item, "cache"); part && part->as_string() == "none") capability.cache = OpticalQueryCache::none;
+      manifest.provides_queries.push_back(std::move(capability));
+    }
+  if (const auto* field = cbor::find(*value, "consumes_queries"); field && field->as_array())
+    for (const auto& item : *field->as_array()) {
+      OpticalQueryConsumption consumption;
+      if (const auto* part = cbor::find(item, "capability")) consumption.capability = part->as_string();
+      if (const auto* part = cbor::find(item, "cardinality")) {
+        if (part->as_string() == "single") consumption.cardinality = OpticalQueryCardinality::single;
+        else if (part->as_string() == "many") consumption.cardinality = OpticalQueryCardinality::many;
+      }
+      if (const auto* part = cbor::find(item, "required")) consumption.required = part->as_bool();
+      if (const auto* part = cbor::find(item, "merge")) {
+        if (part->as_string() == "all") consumption.merge = OpticalQueryMerge::all;
+        else if (part->as_string() == "priority_then_path") consumption.merge = OpticalQueryMerge::priority_then_path;
+      }
+      manifest.consumes_queries.push_back(std::move(consumption));
+    }
   if (const auto* field = cbor::find(*value, "permissions"); field && field->as_array())
     for (const auto& item : *field->as_array()) manifest.light_permissions.emplace_back(item.as_string());
   if (const auto* field = cbor::find(*value, "dependencies"); field && field->as_array())
@@ -111,6 +212,8 @@ struct CAbiLens::Impl {
   void* library{nullptr};
 #endif
   TokmonLensApiV1 api{};
+  TokmonOpticalQueryExtensionV1 optical{};
+  bool has_optical{false};
   void* instance{nullptr};
   LensManifest manifest;
 };
@@ -148,6 +251,23 @@ Result<std::shared_ptr<CAbiLens>> CAbiLens::load(const std::filesystem::path& pa
     return tl::unexpected(make_error(ErrorCode::abi_mismatch,
                                      "tokmon_lens_entry_v1 is missing"));
   lens->impl_->api = entry();
+  TokmonLensGetExtensionV1 get_extension = nullptr;
+#if defined(_WIN32)
+  get_extension = reinterpret_cast<TokmonLensGetExtensionV1>(
+      GetProcAddress(lens->impl_->library, "tokmon_lens_get_extension_v1"));
+#else
+  get_extension = reinterpret_cast<TokmonLensGetExtensionV1>(
+      dlsym(lens->impl_->library, "tokmon_lens_get_extension_v1"));
+#endif
+  if (get_extension) {
+    const auto* extension = static_cast<const TokmonOpticalQueryExtensionV1*>(
+        get_extension(TOKMON_OPTICAL_QUERY_EXTENSION_V1));
+    if (extension && extension->struct_size >= sizeof(TokmonOpticalQueryExtensionV1) &&
+        extension->version == 1u) {
+      lens->impl_->optical = *extension;
+      lens->impl_->has_optical = true;
+    }
+  }
   if (lens->impl_->api.abi_major != TOKMON_LENS_ABI_MAJOR ||
       lens->impl_->api.abi_minor > TOKMON_LENS_ABI_MINOR)
     return tl::unexpected(make_error(ErrorCode::abi_mismatch,
@@ -228,6 +348,104 @@ Result<RefractionResult> CAbiLens::refract(const PhotonWindow& photons, const Ac
 
 void CAbiLens::request_stop() noexcept {
   if (impl_->instance && impl_->api.request_stop) impl_->api.request_stop(impl_->instance);
+}
+
+bool CAbiLens::supports_derive() const noexcept {
+  return impl_->has_optical && impl_->optical.derive;
+}
+
+bool CAbiLens::supports_coordinate() const noexcept {
+  return impl_->has_optical && impl_->optical.coordinate;
+}
+
+bool CAbiLens::supports_query() const noexcept {
+  return impl_->has_optical && impl_->optical.query;
+}
+
+Result<cbor::Value> CAbiLens::derive(const PhotonWindow& photons) {
+  if (!supports_derive()) return cbor::Value{};
+  const auto window = cbor::encode(to_cbor(photons));
+  TokmonOwnedBytesV1 output{}; TokmonOwnedBytesV1 error{};
+  const auto status = impl_->optical.derive(impl_->instance,
+      TokmonBytesV1{window.data(), window.size()}, &output, &error);
+  if (status != 0) {
+    const auto failure = decode_error(error, make_error(ErrorCode::provider_failed,
+                                                        "C ABI Lens derive failed"));
+    release(output); release(error); return tl::unexpected(failure);
+  }
+  auto value = cbor::decode(std::span(output.data, output.size));
+  release(output); release(error);
+  if (!value) return tl::unexpected(value.error());
+  return value;
+}
+
+Result<void> CAbiLens::coordinate(const PhotonWindow& photons,
+                                  const OpticalContext& optical,
+                                  SurfaceBuilder& surface) {
+  if (!supports_coordinate()) return {};
+  const auto window = cbor::encode(to_cbor(photons));
+  const TokmonOpticalHostV1 host{sizeof(TokmonOpticalHostV1),
+      const_cast<OpticalContext*>(&optical), &optical_get, &optical_get_all,
+      &optical_query_callback};
+  TokmonOwnedBytesV1 output{}; TokmonOwnedBytesV1 error{};
+  const auto status = impl_->optical.coordinate(impl_->instance,
+      TokmonBytesV1{window.data(), window.size()}, &host, &output, &error);
+  if (status != 0) {
+    const auto failure = decode_error(error, make_error(ErrorCode::provider_failed,
+                                                        "C ABI Lens coordinate failed"));
+    release(output); release(error); return tl::unexpected(failure);
+  }
+  auto value = cbor::decode(std::span(output.data, output.size));
+  release(output); release(error);
+  if (!value) return tl::unexpected(value.error());
+  auto snapshot = surface_from_cbor(*value);
+  if (!snapshot) return tl::unexpected(snapshot.error());
+  for (auto& item : snapshot->contributions) {
+    auto added = surface.add(std::move(item.channel), std::move(item.key),
+                             std::move(item.value), item.priority);
+    if (!added) return added;
+  }
+  for (auto& proposal : snapshot->proposals) {
+    auto added = surface.propose(std::move(proposal));
+    if (!added) return added;
+  }
+  return {};
+}
+
+Result<cbor::Value> CAbiLens::optical_query(
+    const FrozenLensState& state, const std::string_view capability,
+    const cbor::Value& parameters, const QueryBudget& budget) const {
+  if (!supports_query())
+    return tl::unexpected(make_error(ErrorCode::unsupported,
+                                     "C ABI Lens has no optical query extension"));
+  const auto state_value = cbor::encode(cbor::object({
+      {"lens", state.lens}, {"artifact_hash", state.artifact_hash},
+      {"epoch", static_cast<std::int64_t>(state.epoch)},
+      {"generation", static_cast<std::int64_t>(state.generation)},
+      {"path_index", static_cast<std::int64_t>(state.path_index)},
+      {"value", state.data()}}));
+  const auto remaining = std::max<std::int64_t>(0,
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          budget.deadline - std::chrono::steady_clock::now()).count());
+  const auto request = cbor::encode(cbor::object({
+      {"capability", std::string(capability)}, {"parameters", parameters},
+      {"timeout_ms", remaining},
+      {"max_request_bytes", static_cast<std::int64_t>(budget.max_request_bytes)},
+      {"max_response_bytes", static_cast<std::int64_t>(budget.max_response_bytes)},
+      {"call_index", static_cast<std::int64_t>(budget.call_index)}}));
+  TokmonOwnedBytesV1 output{}; TokmonOwnedBytesV1 error{};
+  const auto status = impl_->optical.query(impl_->instance,
+      TokmonBytesV1{state_value.data(), state_value.size()},
+      TokmonBytesV1{request.data(), request.size()}, &output, &error);
+  if (status != 0) {
+    const auto failure = decode_error(error, make_error(ErrorCode::provider_failed,
+                                                        "C ABI Lens query failed"));
+    release(output); release(error); return tl::unexpected(failure);
+  }
+  auto value = cbor::decode(std::span(output.data, output.size));
+  release(output); release(error);
+  if (!value) return tl::unexpected(value.error());
+  return value;
 }
 
 }  // namespace tokmon

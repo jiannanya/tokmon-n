@@ -1,4 +1,5 @@
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -54,6 +55,140 @@ class ManifestLens final : public tokmon::ILens {
 
  private:
   tokmon::LensManifest manifest_;
+};
+
+class OpticalTestLens final : public tokmon::ILens,
+                              public tokmon::IOpticalLensExtension {
+ public:
+  enum class Role { consumer, provider };
+
+  explicit OpticalTestLens(const Role role) : role_(role) {
+    manifest_.id = role == Role::consumer ? "test.optical.consumer" :
+                                           "test.optical.provider";
+    manifest_.display_name = manifest_.id;
+    if (role == Role::consumer) {
+      manifest_.consumes_queries.push_back(tokmon::OpticalQueryConsumption{
+          .capability = "test.lookup",
+          .cardinality = tokmon::OpticalQueryCardinality::single,
+          .required = true,
+          .merge = tokmon::OpticalQueryMerge::first});
+    } else {
+      manifest_.provides_queries.push_back(tokmon::OpticalQueryCapability{
+          .capability = "test.lookup",
+          .request_schema = "tokmon.test.lookup.request.v1",
+          .response_schema = "tokmon.test.lookup.response.v1",
+          .default_timeout = std::chrono::milliseconds(100),
+          .max_timeout = std::chrono::milliseconds(100),
+          .cache = tokmon::OpticalQueryCache::per_beat});
+    }
+  }
+
+  const tokmon::LensManifest& manifest() const noexcept override { return manifest_; }
+
+  tokmon::Result<void> view(const tokmon::PhotonWindow&,
+                            tokmon::SurfaceBuilder& surface) override {
+    if (role_ == Role::provider)
+      return surface.add("test.late", "published", "visible-after-barrier", 7);
+    return {};
+  }
+
+  tokmon::Result<tokmon::RefractionResult> refract(
+      const tokmon::PhotonWindow&, const tokmon::Act&,
+      tokmon::RefractionBeam&) override {
+    return tokmon::RefractionResult{.status = tokmon::RefractionStatus::passed};
+  }
+
+  void request_stop() noexcept override {}
+
+  bool supports_derive() const noexcept override { return role_ == Role::provider; }
+  bool supports_coordinate() const noexcept override { return role_ == Role::consumer; }
+  bool supports_query() const noexcept override { return role_ == Role::provider; }
+
+  tokmon::Result<tokmon::cbor::Value> derive(
+      const tokmon::PhotonWindow&) override {
+    return tokmon::cbor::object({{"answer", 42}});
+  }
+
+  tokmon::Result<void> coordinate(const tokmon::PhotonWindow&,
+                                  const tokmon::OpticalContext& optical,
+                                  tokmon::SurfaceBuilder& surface) override {
+    auto late = optical.get("test.late", "published");
+    if (!late) return tl::unexpected(late.error());
+    const tokmon::OpticalQueryRequest request{
+        .capability = "test.lookup",
+        .parameters = tokmon::cbor::object({{"key", "answer"}}),
+        .request_schema = "tokmon.test.lookup.request.v1",
+        .response_schema = "tokmon.test.lookup.response.v1"};
+    auto first = optical.query(request);
+    if (!first) return tl::unexpected(first.error());
+    auto second = optical.query(request);
+    if (!second) return tl::unexpected(second.error());
+    return surface.add("test.coordinate", "result",
+        tokmon::cbor::object({{"late", *late}, {"first", *first},
+                              {"second", *second}}), 20);
+  }
+
+  tokmon::Result<tokmon::cbor::Value> optical_query(
+      const tokmon::FrozenLensState& state, std::string_view,
+      const tokmon::cbor::Value&, const tokmon::QueryBudget&) const override {
+    query_calls.fetch_add(1, std::memory_order_relaxed);
+    return state.data();
+  }
+
+  mutable std::atomic_int query_calls{0};
+
+ private:
+  Role role_;
+  tokmon::LensManifest manifest_;
+};
+
+class ReentrantOpticalProvider final : public tokmon::IOpticalLensExtension {
+ public:
+  bool supports_query() const noexcept override { return true; }
+  void bind(const tokmon::OpticalContext& context) noexcept { context_ = &context; }
+  tokmon::Result<tokmon::cbor::Value> optical_query(
+      const tokmon::FrozenLensState&, std::string_view,
+      const tokmon::cbor::Value&, const tokmon::QueryBudget&) const override {
+    return context_->query(tokmon::OpticalQueryRequest{
+        .capability = "test.reentrant", .parameters = tokmon::cbor::Value::Map{}});
+  }
+
+ private:
+  const tokmon::OpticalContext* context_{nullptr};
+};
+
+class SlowOpticalProvider final : public tokmon::IOpticalLensExtension {
+ public:
+  bool supports_query() const noexcept override { return true; }
+  tokmon::Result<tokmon::cbor::Value> optical_query(
+      const tokmon::FrozenLensState&, std::string_view,
+      const tokmon::cbor::Value&, const tokmon::QueryBudget&) const override {
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    return tokmon::cbor::object({{"finished", true}});
+  }
+};
+
+class ChangingOpticalProvider final : public tokmon::IOpticalLensExtension {
+ public:
+  bool supports_query() const noexcept override { return true; }
+  tokmon::Result<tokmon::cbor::Value> optical_query(
+      const tokmon::FrozenLensState&, std::string_view,
+      const tokmon::cbor::Value&, const tokmon::QueryBudget&) const override {
+    return tokmon::cbor::object({
+        {"revision", static_cast<std::int64_t>(revision.fetch_add(1))}});
+  }
+
+  mutable std::atomic_int revision{1};
+};
+
+class FrozenStateOpticalProvider final : public tokmon::IOpticalLensExtension {
+ public:
+  bool supports_query() const noexcept override { return true; }
+  tokmon::Result<tokmon::cbor::Value> optical_query(
+      const tokmon::FrozenLensState& state, std::string_view,
+      const tokmon::cbor::Value&, const tokmon::QueryBudget&) const override {
+    return state.data();
+  }
 };
 
 }  // namespace
@@ -200,6 +335,187 @@ TEST_CASE("LightPath publication only exposes complete immutable epochs") {
   REQUIRE_FALSE(invalid.load());
 }
 
+TEST_CASE("bounded optical collaboration freezes all derives before coordination") {
+  const auto root = temporary_directory("optical-barrier");
+  tokmon::PhotonStore store;
+  REQUIRE(store.open(root / "photons.sqlite3"));
+  const auto ray = tokmon::make_id("ray");
+  REQUIRE(store.append(tokmon::PhotonDraft{.ray = ray, .kind = "test.input",
+      .schema = "tokmon.test.input.v1",
+      .payload = tokmon::cbor::object({{"text", "hello"}}), .epoch = 1}));
+
+  auto consumer = std::make_shared<OpticalTestLens>(OpticalTestLens::Role::consumer);
+  auto provider = std::make_shared<OpticalTestLens>(OpticalTestLens::Role::provider);
+  auto candidate = std::make_shared<tokmon::LightPathSnapshot>();
+  candidate->epoch = 1;
+  candidate->hash = "optical-path-v1";
+  // The consumer deliberately precedes the provider. The phase barrier, not
+  // path order, makes the later Lens visible during coordinate().
+  candidate->lenses.push_back(tokmon::MountedLens{consumer, 11, "consumer-hash"});
+  candidate->lenses.push_back(tokmon::MountedLens{provider, 22, "provider-hash"});
+  tokmon::LightPath path;
+  REQUIRE(path.publish(candidate));
+  tokmon::BeamRegistry beams;
+  tokmon::RayTracingEngine engine(store, path, beams);
+
+  auto surface = engine.view(ray);
+  REQUIRE(surface);
+  REQUIRE_FALSE(surface->beat.empty());
+  REQUIRE(surface->path_hash == candidate->hash);
+  const auto result = std::ranges::find_if(surface->contributions, [](const auto& item) {
+    return item.channel == "test.coordinate" && item.key == "result";
+  });
+  REQUIRE(result != surface->contributions.end());
+  REQUIRE(tokmon::cbor::find(result->value, "late")->as_string() ==
+          "visible-after-barrier");
+  REQUIRE(tokmon::cbor::find(*tokmon::cbor::find(result->value, "first"),
+                             "answer")->as_integer() == 42);
+  REQUIRE(tokmon::cbor::encode(*tokmon::cbor::find(result->value, "first")) ==
+          tokmon::cbor::encode(*tokmon::cbor::find(result->value, "second")));
+  REQUIRE(provider->query_calls.load() == 1);
+  REQUIRE(surface->query_traces.size() == 2);
+  REQUIRE_FALSE(surface->query_traces.front().cache_hit);
+  REQUIRE(surface->query_traces.back().cache_hit);
+  REQUIRE(surface->query_traces.front().request_hash ==
+          surface->query_traces.back().request_hash);
+  REQUIRE(surface->query_traces.front().response_hash ==
+          surface->query_traces.back().response_hash);
+  auto round_trip = tokmon::surface_from_cbor(tokmon::to_cbor(*surface));
+  REQUIRE(round_trip);
+  REQUIRE(round_trip->beat == surface->beat);
+  REQUIRE(round_trip->query_traces.size() == surface->query_traces.size());
+  REQUIRE(round_trip->query_traces.back().cache_hit);
+}
+
+TEST_CASE("optical query denies recursion and enforces hard deadlines") {
+  const tokmon::BeatMetadata metadata{.beat = "beat-test", .ray = "ray-test",
+      .epoch = 7, .path_hash = "path-hash", .input_prefix_hash = "prefix-hash"};
+  const auto consumption = tokmon::OpticalQueryConsumption{
+      .capability = "test.reentrant",
+      .cardinality = tokmon::OpticalQueryCardinality::single,
+      .required = true, .merge = tokmon::OpticalQueryMerge::first};
+  const auto capability = tokmon::OpticalQueryCapability{
+      .capability = "test.reentrant", .request_schema = "test.request.v1",
+      .response_schema = "test.response.v1",
+      .default_timeout = std::chrono::milliseconds(100),
+      .max_timeout = std::chrono::milliseconds(100)};
+  auto recursive = std::make_shared<ReentrantOpticalProvider>();
+  tokmon::BeatBoardBuilder builder(metadata);
+  REQUIRE(builder.publish("test.consumer", "consumer-hash", 1, 0, {}, nullptr,
+                          tokmon::cbor::Value::Map{}));
+  REQUIRE(builder.publish("test.provider", "provider-hash", 2, 1, {capability},
+                          recursive, tokmon::cbor::Value::Map{}));
+  auto board = std::move(builder).freeze(tokmon::SurfaceSnapshot{});
+  REQUIRE(board);
+  tokmon::OpticalContext context(*board, "test.consumer", 1, {consumption});
+  recursive->bind(context);
+  auto nested = context.query(tokmon::OpticalQueryRequest{
+      .capability = "test.reentrant", .parameters = tokmon::cbor::Value::Map{},
+      .request_schema = "test.request.v1", .response_schema = "test.response.v1"});
+  REQUIRE_FALSE(nested);
+  REQUIRE(nested.error().code == tokmon::ErrorCode::recursive_query_denied);
+
+  auto slow = std::make_shared<SlowOpticalProvider>();
+  auto slow_capability = capability;
+  slow_capability.capability = "test.slow";
+  slow_capability.default_timeout = std::chrono::milliseconds(5);
+  slow_capability.max_timeout = std::chrono::milliseconds(5);
+  auto slow_consumption = consumption;
+  slow_consumption.capability = "test.slow";
+  tokmon::BeatBoardBuilder slow_builder(metadata);
+  REQUIRE(slow_builder.publish("test.consumer", "consumer-hash", 1, 0, {}, nullptr,
+                               tokmon::cbor::Value::Map{}));
+  REQUIRE(slow_builder.publish("test.slow-provider", "provider-hash", 3, 1,
+                               {slow_capability}, slow,
+                               tokmon::cbor::Value::Map{}));
+  auto slow_board = std::move(slow_builder).freeze(tokmon::SurfaceSnapshot{});
+  REQUIRE(slow_board);
+  tokmon::OpticalContext slow_context(*slow_board, "test.consumer", 1,
+                                      {slow_consumption});
+  const auto started = std::chrono::steady_clock::now();
+  auto timed_out = slow_context.query(tokmon::OpticalQueryRequest{
+      .capability = "test.slow", .parameters = tokmon::cbor::Value::Map{},
+      .request_schema = "test.request.v1", .response_schema = "test.response.v1"});
+  const auto elapsed = std::chrono::steady_clock::now() - started;
+  REQUIRE_FALSE(timed_out);
+  REQUIRE(timed_out.error().code == tokmon::ErrorCode::deadline_exceeded);
+  REQUIRE(elapsed < std::chrono::milliseconds(30));
+
+  auto changing = std::make_shared<ChangingOpticalProvider>();
+  auto changing_capability = capability;
+  changing_capability.capability = "test.changing";
+  changing_capability.cache = tokmon::OpticalQueryCache::none;
+  auto changing_consumption = consumption;
+  changing_consumption.capability = "test.changing";
+  tokmon::BeatBoardBuilder changing_builder(metadata);
+  REQUIRE(changing_builder.publish("test.consumer", "consumer-hash", 1, 0, {}, nullptr,
+                                   tokmon::cbor::Value::Map{}));
+  REQUIRE(changing_builder.publish("test.changing-provider", "provider-hash", 4, 1,
+                                   {changing_capability}, changing,
+                                   tokmon::cbor::Value::Map{}));
+  auto changing_board = std::move(changing_builder).freeze(tokmon::SurfaceSnapshot{});
+  REQUIRE(changing_board);
+  tokmon::OpticalContext changing_context(*changing_board, "test.consumer", 1,
+                                          {changing_consumption});
+  const tokmon::OpticalQueryRequest changing_request{
+      .capability = "test.changing", .parameters = tokmon::cbor::Value::Map{},
+      .request_schema = "test.request.v1", .response_schema = "test.response.v1"};
+  REQUIRE(changing_context.query(changing_request));
+  auto changed = changing_context.query(changing_request);
+  REQUIRE_FALSE(changed);
+  REQUIRE(changed.error().code == tokmon::ErrorCode::nondeterministic_result);
+}
+
+TEST_CASE("optical provider merge rules are deterministic and path aware") {
+  const tokmon::BeatMetadata metadata{.beat = "beat-merge", .ray = "ray-merge",
+      .epoch = 3, .path_hash = "merge-path", .input_prefix_hash = "merge-prefix"};
+  auto extension = std::make_shared<FrozenStateOpticalProvider>();
+  tokmon::OpticalQueryCapability low{
+      .capability = "test.merge", .request_schema = "test.merge.request.v1",
+      .response_schema = "test.merge.response.v1", .priority = 1};
+  auto high = low;
+  high.priority = 99;
+  tokmon::BeatBoardBuilder builder(metadata);
+  REQUIRE(builder.publish("test.consumer", "consumer", 1, 0, {}, nullptr,
+                          tokmon::cbor::Value::Map{}));
+  REQUIRE(builder.publish("test.path-first", "first", 2, 1, {low}, extension,
+                          tokmon::cbor::object({{"provider", "path-first"}})));
+  REQUIRE(builder.publish("test.high-priority", "high", 3, 2, {high}, extension,
+                          tokmon::cbor::object({{"provider", "high-priority"}})));
+  auto board = std::move(builder).freeze(tokmon::SurfaceSnapshot{});
+  REQUIRE(board);
+  const tokmon::OpticalQueryRequest request{
+      .capability = "test.merge", .parameters = tokmon::cbor::Value::Map{},
+      .request_schema = "test.merge.request.v1",
+      .response_schema = "test.merge.response.v1"};
+  auto consume = [](const tokmon::OpticalQueryMerge merge) {
+    return tokmon::OpticalQueryConsumption{
+        .capability = "test.merge", .cardinality = tokmon::OpticalQueryCardinality::many,
+        .required = true, .merge = merge};
+  };
+
+  tokmon::OpticalContext first(*board, "test.consumer", 1,
+                               {consume(tokmon::OpticalQueryMerge::first)});
+  auto first_result = first.query(request);
+  REQUIRE(first_result);
+  REQUIRE(tokmon::cbor::find(*first_result, "provider")->as_string() == "path-first");
+
+  tokmon::OpticalContext all(*board, "test.consumer", 1,
+                             {consume(tokmon::OpticalQueryMerge::all)});
+  auto all_result = all.query(request);
+  REQUIRE(all_result);
+  REQUIRE(all_result->as_array()->size() == 2);
+  REQUIRE(tokmon::cbor::find(all_result->as_array()->front(), "provider")->as_string() ==
+          "path-first");
+
+  tokmon::OpticalContext priority(*board, "test.consumer", 1,
+      {consume(tokmon::OpticalQueryMerge::priority_then_path)});
+  auto priority_result = priority.query(request);
+  REQUIRE(priority_result);
+  REQUIRE(tokmon::cbor::find(priority_result->as_array()->front(), "provider")->as_string() ==
+          "high-priority");
+}
+
 TEST_CASE("C ABI Lens loads and passes a dark-lane view") {
   auto lens = tokmon::CAbiLens::load(TOKMON_TEST_LENS_PATH);
   REQUIRE(lens);
@@ -207,6 +523,25 @@ TEST_CASE("C ABI Lens loads and passes a dark-lane view") {
   tokmon::SurfaceBuilder surface((*lens)->manifest().id);
   REQUIRE((*lens)->view(tokmon::PhotonWindow{}, surface));
   REQUIRE_FALSE(surface.contributions().empty());
+  auto* optical = dynamic_cast<tokmon::IOpticalLensExtension*>((*lens).get());
+  REQUIRE(optical != nullptr);
+  REQUIRE(optical->supports_derive());
+  REQUIRE(optical->supports_query());
+  auto state = optical->derive(tokmon::PhotonWindow{});
+  REQUIRE(state);
+  const tokmon::FrozenLensState frozen{
+      .lens = (*lens)->manifest().id, .artifact_hash = "test", .epoch = 1,
+      .generation = 1, .path_index = 0,
+      .value = std::make_shared<const tokmon::cbor::Value>(*state)};
+  auto response = optical->optical_query(frozen, "math.evaluate",
+      tokmon::cbor::object({{"expression", "6 * 7"}}),
+      tokmon::QueryBudget{.deadline = std::chrono::steady_clock::now() +
+                                           std::chrono::milliseconds(100),
+                          .max_request_bytes = 4096,
+                          .max_response_bytes = 4096,
+                          .call_index = 1});
+  REQUIRE(response);
+  REQUIRE(std::get<double>(tokmon::cbor::find(*response, "result")->data) == 42.0);
 }
 
 TEST_CASE("Snow framing carries canonical requests and responses") {
@@ -422,6 +757,12 @@ TEST_CASE("Lens manifest parses dependency order resources and immutable evidenc
       "runtime: { kind: node, version: 24.0.0, entry: main.mjs }\n"
       "observes: [{ kind: user.input, schema: '*' }]\n"
       "view_channels: [model.tools]\n"
+      "provides_queries:\n"
+      "  - { capability: example.lookup, request_schema: example.request.v1, "
+      "response_schema: example.response.v1, priority: 7, cache: per_beat }\n"
+      "consumes_queries:\n"
+      "  - { capability: model.context, cardinality: many, required: false, "
+      "merge: priority_then_path }\n"
       "refracts: [{ kind: example.run, schema: example.run.v1 }]\n"
       "light_permissions: [photon.emit]\n"
       "dependencies: [{ id: org.tokmon.lens.techor, version: ^0.1.0 }]\n"
@@ -439,6 +780,11 @@ TEST_CASE("Lens manifest parses dependency order resources and immutable evidenc
   REQUIRE(manifest->optical_after.front() == "org.tokmon.lens.techor");
   REQUIRE(manifest->resources.memory_mb == 512);
   REQUIRE(manifest->resources.deadline == std::chrono::milliseconds(45'000));
+  REQUIRE(manifest->provides_queries.size() == 1);
+  REQUIRE(manifest->provides_queries.front().capability == "example.lookup");
+  REQUIRE(manifest->consumes_queries.size() == 1);
+  REQUIRE(manifest->consumes_queries.front().merge ==
+          tokmon::OpticalQueryMerge::priority_then_path);
   REQUIRE(manifest->replacement == "R2");
   REQUIRE(manifest->schema_bundle == "schemas.cbor");
 }
@@ -549,6 +895,12 @@ TEST_CASE("runtime hot swaps a C ABI Lens generation through a higher epoch") {
         "trust: t1\nstateless: true\n"
         "observes:\n  - { kind: user.input, schema: tokmon.user.input.v1 }\n"
         "view_channels: [model.tools]\n"
+        "provides_queries:\n"
+        "  - { capability: math.evaluate, request_schema: tokmon.math.calculate.v1, "
+        "response_schema: tokmon.math.result.v1, deterministic: true, priority: 50, "
+        "default_timeout_ms: 10, max_timeout_ms: 100, max_request_bytes: 4096, "
+        "max_response_bytes: 4096, max_concurrent_queries: 4, "
+        "max_queries_per_beat: 1024, cache: per_beat }\n"
         "refracts:\n  - { kind: tool.calculate, schema: tokmon.math.calculate.v1 }\n"
         "light_permissions: [photon.emit, log.write]\n";
   }

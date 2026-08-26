@@ -11,7 +11,7 @@
 namespace tokmon {
 
 inline constexpr std::uint32_t worker_protocol_major = 1;
-inline constexpr std::uint32_t worker_protocol_minor = 0;
+inline constexpr std::uint32_t worker_protocol_minor = 1;
 inline constexpr std::uint32_t worker_max_frame = 16u * 1024u * 1024u;
 
 struct WorkerFrame {

@@ -1,3 +1,3 @@
 #pragma once
 #include "lenses/common/lens_base.hpp"
-namespace tokmon::builtin { class CalculatorLens final : public LensBase { public: CalculatorLens(); Result<void> view(const PhotonWindow&, SurfaceBuilder&) override; Result<RefractionResult> refract(const PhotonWindow&, const Act&, RefractionBeam&) override; }; }
+namespace tokmon::builtin { class CalculatorLens final : public LensBase, public IOpticalLensExtension { public: CalculatorLens(); Result<void> view(const PhotonWindow&, SurfaceBuilder&) override; Result<RefractionResult> refract(const PhotonWindow&, const Act&, RefractionBeam&) override; [[nodiscard]] bool supports_derive() const noexcept override; [[nodiscard]] bool supports_query() const noexcept override; Result<cbor::Value> derive(const PhotonWindow&) override; Result<cbor::Value> optical_query(const FrozenLensState&, std::string_view, const cbor::Value&, const QueryBudget&) const override; }; }

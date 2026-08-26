@@ -1,6 +1,7 @@
 from .core import (
     ActPattern,
     Lens,
+    OpticalContext,
     RefractionBeam,
     Result,
     SurfaceBuilder,
@@ -12,7 +13,7 @@ from .core import (
 )
 
 __all__ = [
-    "ActPattern", "Lens", "RefractionBeam", "Result", "SurfaceBuilder",
+    "ActPattern", "Lens", "OpticalContext", "RefractionBeam", "Result", "SurfaceBuilder",
     "completed", "err", "ok", "passed", "rejected",
 ]
 

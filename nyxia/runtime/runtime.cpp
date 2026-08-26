@@ -388,6 +388,8 @@ Result<std::shared_ptr<ILens>> stage_lens(const DesiredLens& desired,
     if (embedded.id != manifest->id || embedded.version != manifest->version ||
         embedded.runtime != manifest->runtime ||
         embedded.view_channels != manifest->view_channels ||
+        embedded.provides_queries != manifest->provides_queries ||
+        embedded.consumes_queries != manifest->consumes_queries ||
         embedded.light_permissions != manifest->light_permissions ||
         embedded.refracts.size() != manifest->refracts.size())
       return tl::unexpected(make_error(ErrorCode::integrity_error,

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <exception>
 
+#include "tokmon/hash.hpp"
 #include "tokmon/logging.hpp"
 
 namespace tokmon {
@@ -34,8 +35,20 @@ Result<SurfaceSnapshot> RayTracingEngine::view(const RayId& ray) {
   const auto path = path_.snapshot();
   SurfaceSnapshot snapshot;
   snapshot.epoch = path->epoch;
-  for (const auto& mounted : path->lenses) {
+  snapshot.path_hash = path->hash;
+  snapshot.input_prefix_hash = sha256_hex(cbor::encode(to_cbor(window)));
+  snapshot.beat = "beat-" + sha256_hex(ray + "\n" + std::to_string(path->epoch) +
+      "\n" + path->hash + "\n" + snapshot.input_prefix_hash).substr(0, 32);
+  BeatBoardBuilder board(BeatMetadata{.beat = snapshot.beat, .ray = ray,
+      .epoch = path->epoch, .path_hash = path->hash,
+      .input_prefix_hash = snapshot.input_prefix_hash});
+
+  // Phase 1: every Lens observes one immutable Photon prefix. Legacy view()
+  // remains the compatibility derive operation.
+  for (std::size_t path_index = 0; path_index < path->lenses.size(); ++path_index) {
+    const auto& mounted = path->lenses[path_index];
     SurfaceBuilder builder(mounted.lens->manifest().id);
+    bool view_succeeded = false;
     try {
       auto result = mounted.lens->view(window, builder);
       if (!result) {
@@ -46,22 +59,131 @@ Result<SurfaceSnapshot> RayTracingEngine::view(const RayId& ray) {
             .key = "view.error",
             .value = cbor::object({{"message", result.error().describe()}}),
             .priority = 100});
-        continue;
+      } else {
+        view_succeeded = true;
       }
     } catch (const std::exception& exception) {
       log("error", std::string("view exception: ") + exception.what(),
           mounted.lens->manifest().id);
-      continue;
+      snapshot.contributions.push_back(SurfaceContribution{
+          .lens = mounted.lens->manifest().id, .channel = "diagnostic",
+          .key = "view.exception",
+          .value = cbor::object({{"message", exception.what()}}), .priority = 100});
     } catch (...) {
       log("error", "view unknown exception", mounted.lens->manifest().id);
+      snapshot.contributions.push_back(SurfaceContribution{
+          .lens = mounted.lens->manifest().id, .channel = "diagnostic",
+          .key = "view.exception",
+          .value = cbor::object({{"message", "unknown exception"}}), .priority = 100});
+    }
+    if (view_succeeded) {
+      snapshot.contributions.insert(snapshot.contributions.end(),
+                                    builder.contributions().begin(),
+                                    builder.contributions().end());
+      snapshot.proposals.insert(snapshot.proposals.end(),
+                                builder.proposals().begin(), builder.proposals().end());
+    }
+
+    auto* raw_extension = dynamic_cast<IOpticalLensExtension*>(mounted.lens.get());
+    std::shared_ptr<IOpticalLensExtension> extension;
+    if (raw_extension)
+      extension = std::shared_ptr<IOpticalLensExtension>(mounted.lens, raw_extension);
+    cbor::Value frozen_state;
+    bool derive_succeeded = true;
+    if (extension && extension->supports_derive()) {
+      try {
+        auto derived = extension->derive(window);
+        if (derived) frozen_state = std::move(*derived);
+        else {
+          derive_succeeded = false;
+          log("warn", derived.error().describe(), mounted.lens->manifest().id);
+          snapshot.contributions.push_back(SurfaceContribution{
+              .lens = mounted.lens->manifest().id, .channel = "diagnostic",
+              .key = "derive.error",
+              .value = cbor::object({{"message", derived.error().describe()}}),
+              .priority = 100});
+        }
+      } catch (const std::exception& exception) {
+        derive_succeeded = false;
+        log("error", std::string("derive exception: ") + exception.what(),
+            mounted.lens->manifest().id);
+      } catch (...) {
+        derive_succeeded = false;
+        log("error", "derive unknown exception", mounted.lens->manifest().id);
+      }
+    }
+    auto published = board.publish(mounted.lens->manifest().id, mounted.artifact_hash,
+        mounted.generation, path_index,
+        derive_succeeded ? mounted.lens->manifest().provides_queries :
+                           std::vector<OpticalQueryCapability>{},
+        std::move(extension), std::move(frozen_state));
+    if (!published) {
+      log("warn", published.error().describe(), mounted.lens->manifest().id);
+      snapshot.contributions.push_back(SurfaceContribution{
+          .lens = mounted.lens->manifest().id, .channel = "diagnostic",
+          .key = "beatboard.publish.error",
+          .value = cbor::object({{"message", published.error().describe()}}),
+          .priority = 100});
+    }
+  }
+
+  auto frozen = std::move(board).freeze(snapshot);
+  if (!frozen) return tl::unexpected(frozen.error());
+
+  // Phase 2: only opted-in Lens extensions run. All get/query operations are
+  // served from the frozen board above, including providers later in the path.
+  for (const auto& mounted : path->lenses) {
+    auto* raw_extension = dynamic_cast<IOpticalLensExtension*>(mounted.lens.get());
+    if (!raw_extension || !raw_extension->supports_coordinate()) continue;
+    OpticalContext optical(*frozen, mounted.lens->manifest().id, mounted.generation,
+                           mounted.lens->manifest().consumes_queries);
+    SurfaceBuilder builder(mounted.lens->manifest().id);
+    bool succeeded = false;
+    std::string failure_message = "coordinate phase failed";
+    try {
+      auto result = raw_extension->coordinate(window, optical, builder);
+      if (!result) {
+        failure_message = result.error().describe();
+        log("warn", result.error().describe(), mounted.lens->manifest().id);
+      } else succeeded = true;
+    } catch (const std::exception& exception) {
+      failure_message = std::string("coordinate exception: ") + exception.what();
+      log("error", std::string("coordinate exception: ") + exception.what(),
+          mounted.lens->manifest().id);
+    } catch (...) {
+      failure_message = "coordinate unknown exception";
+      log("error", "coordinate unknown exception", mounted.lens->manifest().id);
+    }
+    if (!succeeded) {
+      snapshot.contributions.push_back(SurfaceContribution{
+          .lens = mounted.lens->manifest().id, .channel = "diagnostic",
+          .key = "coordinate.error",
+          .value = cbor::object({{"message", std::move(failure_message)}}),
+          .priority = 100});
       continue;
     }
     snapshot.contributions.insert(snapshot.contributions.end(),
-                                  builder.contributions().begin(),
-                                  builder.contributions().end());
-    snapshot.proposals.insert(snapshot.proposals.end(),
-                              builder.proposals().begin(), builder.proposals().end());
+        builder.contributions().begin(), builder.contributions().end());
+    const auto traces = optical.query_traces();
+    cbor::Value::Array provenance;
+    for (const auto& trace : traces)
+      provenance.push_back(cbor::object({
+          {"capability", trace.capability}, {"provider", trace.provider},
+          {"provider_generation", static_cast<std::int64_t>(trace.provider_generation)},
+          {"request_schema", trace.request_schema},
+          {"response_schema", trace.response_schema},
+          {"request_hash", trace.request_hash}, {"response_hash", trace.response_hash}}));
+    for (auto proposal : builder.proposals()) {
+      if (!provenance.empty()) {
+        if (!proposal.provenance.as_map()) proposal.provenance = cbor::Value::Map{};
+        (*proposal.provenance.as_map())["optical_queries"] = provenance;
+        (*proposal.provenance.as_map())["beat"] = snapshot.beat;
+        (*proposal.provenance.as_map())["path_hash"] = snapshot.path_hash;
+      }
+      snapshot.proposals.push_back(std::move(proposal));
+    }
   }
+  snapshot.query_traces = (*frozen)->traces();
   std::stable_sort(snapshot.contributions.begin(), snapshot.contributions.end(),
       [](const auto& left, const auto& right) { return left.priority > right.priority; });
   return snapshot;

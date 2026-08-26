@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <map>
+#include <set>
 
 #include "tokmon/hash.hpp"
 
@@ -253,7 +254,60 @@ Result<void> JanusLens::view(const PhotonWindow& photons, SurfaceBuilder& surfac
   auto act = propose(source, "model.call", "tokmon.model.call.v1",
       "org.tokmon.lens.rhea", std::move(parameters), RiskClass::external);
   act.timeout = model_call_deadline(act.parameters);
-  return surface.propose(std::move(act));
+  return surface.add("model.intent", "model.call", to_cbor(act), 60);
+}
+
+bool JanusLens::supports_coordinate() const noexcept { return true; }
+
+Result<void> JanusLens::coordinate(const PhotonWindow&, const OpticalContext& optical,
+                                   SurfaceBuilder& surface) {
+  auto encoded = optical.get("model.intent", "model.call");
+  if (!encoded) {
+    if (encoded.error().code == ErrorCode::not_found) return {};
+    return tl::unexpected(encoded.error());
+  }
+  auto act = act_from_cbor(*encoded);
+  if (!act) return tl::unexpected(act.error());
+  auto messages = optical.get("model.messages", "active-ray");
+  if (messages && messages->as_array() && !messages->as_array()->empty())
+    (*act->parameters.as_map())["messages"] = *messages;
+  auto contexts = optical.get_all("model.context");
+  if (contexts && !contexts->empty()) {
+    cbor::Value::Array values;
+    for (auto& value : *contexts) values.push_back(std::move(value));
+    (*act->parameters.as_map())["contexts"] = cbor::Value(std::move(values));
+  }
+  auto tools = optical.get_all("model.tools");
+  if (tools && !tools->empty()) {
+    auto* existing = cbor::find(act->parameters, "tools");
+    cbor::Value::Array combined = existing && existing->as_array() ?
+        *existing->as_array() : cbor::Value::Array{};
+    std::set<std::string> names;
+    for (const auto& value : combined)
+      if (const auto* name = cbor::find(value, "name")) names.insert(std::string(name->as_string()));
+    for (auto& value : *tools) {
+      if (value.as_array()) {
+        for (const auto& nested : *value.as_array()) {
+          const auto* name = cbor::find(nested, "name");
+          if (!name || names.insert(std::string(name->as_string())).second)
+            combined.push_back(nested);
+        }
+      } else {
+        const auto* name = cbor::find(value, "name");
+        if (!name || names.insert(std::string(name->as_string())).second)
+          combined.push_back(std::move(value));
+      }
+    }
+    (*act->parameters.as_map())["tools"] = cbor::Value(std::move(combined));
+    (*act->parameters.as_map())["tool_schema_hash"] = sha256_hex(
+        cbor::encode((*act->parameters.as_map())["tools"]));
+  }
+  const auto* selected = cbor::find(act->parameters, "model");
+  if (selected) {
+    auto descriptor = optical.get("model.catalog", selected->as_string());
+    if (descriptor) (*act->parameters.as_map())["model_descriptor"] = *descriptor;
+  }
+  return surface.propose(std::move(*act));
 }
 
 Result<RefractionResult> JanusLens::refract(const PhotonWindow&, const Act& act,

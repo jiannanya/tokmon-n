@@ -59,18 +59,51 @@ int serve_lens(std::shared_ptr<tokmon::ILens> lens, const std::string_view runti
 #endif
   if (!lens) return 2;
   std::stop_source stop;
+  const auto host_optical = [](const std::uint64_t request_id,
+                               tokmon::cbor::Value payload)
+      -> tokmon::Result<tokmon::cbor::Value> {
+    if (auto written = tokmon::write_frame(std::cout, tokmon::WorkerFrame{
+        .type = "host.optical.request", .request_id = request_id,
+        .payload = std::move(payload)}); !written)
+      return tl::unexpected(written.error());
+    auto frame = tokmon::read_frame(std::cin);
+    if (!frame) return tl::unexpected(frame.error());
+    if (frame->type != "host.optical.result" || frame->request_id != request_id)
+      return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::protocol_error,
+                                               "unexpected optical host response"));
+    const auto* ok = tokmon::cbor::find(frame->payload, "ok");
+    if (!ok || !ok->as_bool()) {
+      const auto* encoded = tokmon::cbor::find(frame->payload, "error");
+      const auto* message = encoded ? tokmon::cbor::find(*encoded, "message") : nullptr;
+      const auto* code = encoded ? tokmon::cbor::find(*encoded, "code") : nullptr;
+      const auto* retryable = encoded ? tokmon::cbor::find(*encoded, "retryable") : nullptr;
+      return tl::unexpected(tokmon::make_error(
+          code ? tokmon::error_code_from_string(code->as_string(),
+                                                tokmon::ErrorCode::provider_failed) :
+                 tokmon::ErrorCode::provider_failed,
+          message ? std::string(message->as_string()) : "optical host operation failed",
+          retryable && retryable->as_bool()));
+    }
+    const auto* value = tokmon::cbor::find(frame->payload, "value");
+    return value ? *value : tokmon::cbor::Value{};
+  };
   for (;;) {
     auto frame = tokmon::read_frame(std::cin);
     if (!frame) return std::cin.eof() ? 0 : 2;
     tokmon::WorkerFrame response;
     response.request_id = frame->request_id;
     if (frame->type == "worker.hello") {
+      const auto* extension = dynamic_cast<const tokmon::IOpticalLensExtension*>(lens.get());
       response.type = "worker.ready";
       response.payload = tokmon::cbor::object({
           {"protocol_major", static_cast<std::int64_t>(tokmon::worker_protocol_major)},
           {"protocol_minor", static_cast<std::int64_t>(tokmon::worker_protocol_minor)},
           {"lens_id", lens->manifest().id}, {"runtime", std::string(runtime_name)},
-          {"version", lens->manifest().version}});
+          {"version", lens->manifest().version},
+          {"features", tokmon::cbor::object({
+              {"derive", extension && extension->supports_derive()},
+              {"coordinate", extension && extension->supports_coordinate()},
+              {"query", extension && extension->supports_query()}})}});
     } else if (frame->type == "lens.view.request") {
       const auto* value = tokmon::cbor::find(frame->payload, "window");
       auto window = value ? tokmon::photon_window_from_cbor(*value)
@@ -90,6 +123,103 @@ int serve_lens(std::shared_ptr<tokmon::ILens> lens, const std::string_view runti
             {"surface", tokmon::to_cbor(tokmon::SurfaceSnapshot{
                 .contributions = builder.contributions(), .proposals = builder.proposals()})}});
         response.type = "lens.view.result";
+      }
+    } else if (frame->type == "lens.derive.request") {
+      response.type = "lens.derive.result";
+      const auto* value = tokmon::cbor::find(frame->payload, "window");
+      auto window = value ? tokmon::photon_window_from_cbor(*value)
+                          : tokmon::Result<tokmon::PhotonWindow>(tl::unexpected(
+                              tokmon::make_error(tokmon::ErrorCode::protocol_error,
+                                                 "derive request has no window")));
+      auto* extension = dynamic_cast<tokmon::IOpticalLensExtension*>(lens.get());
+      if (!window || !extension || !extension->supports_derive()) {
+        const auto failure = !window ? window.error() : tokmon::make_error(
+            tokmon::ErrorCode::unsupported, "worker Lens has no derive extension");
+        response.payload = tokmon::cbor::object({{"ok", false},
+                                                 {"error", error_payload(failure)}});
+      } else {
+        auto result = extension->derive(*window);
+        response.payload = result ? tokmon::cbor::object({{"ok", true}, {"state", *result}}) :
+            tokmon::cbor::object({{"ok", false}, {"error", error_payload(result.error())}});
+      }
+    } else if (frame->type == "lens.coordinate.request") {
+      response.type = "lens.coordinate.result";
+      const auto* value = tokmon::cbor::find(frame->payload, "window");
+      auto window = value ? tokmon::photon_window_from_cbor(*value)
+                          : tokmon::Result<tokmon::PhotonWindow>(tl::unexpected(
+                              tokmon::make_error(tokmon::ErrorCode::protocol_error,
+                                                 "coordinate request has no window")));
+      auto* extension = dynamic_cast<tokmon::IOpticalLensExtension*>(lens.get());
+      if (!window || !extension || !extension->supports_coordinate()) {
+        const auto failure = !window ? window.error() : tokmon::make_error(
+            tokmon::ErrorCode::unsupported, "worker Lens has no coordinate extension");
+        response.payload = tokmon::cbor::object({{"ok", false},
+                                                 {"error", error_payload(failure)}});
+      } else {
+        auto optical = tokmon::OpticalContext::from_callbacks(
+            [&](const std::string_view channel, const std::string_view key) {
+              return host_optical(frame->request_id, tokmon::cbor::object({
+                  {"operation", "get"}, {"channel", std::string(channel)},
+                  {"key", std::string(key)}}));
+            },
+            [&](const std::string_view channel)
+                -> tokmon::Result<std::vector<tokmon::cbor::Value>> {
+              auto result = host_optical(frame->request_id, tokmon::cbor::object({
+                  {"operation", "get_all"}, {"channel", std::string(channel)}}));
+              if (!result) return tl::unexpected(result.error());
+              if (!result->as_array())
+                return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::protocol_error,
+                    "get_all host result must be an array"));
+              return *result->as_array();
+            },
+            [&](tokmon::OpticalQueryRequest request) {
+              return host_optical(frame->request_id, tokmon::cbor::object({
+                  {"operation", "query"}, {"capability", request.capability},
+                  {"parameters", request.parameters},
+                  {"request_schema", request.request_schema},
+                  {"response_schema", request.response_schema},
+                  {"timeout_ms", static_cast<std::int64_t>(request.timeout.count())},
+                  {"max_response_bytes", static_cast<std::int64_t>(request.max_response_bytes)}}));
+            });
+        tokmon::SurfaceBuilder surface(lens->manifest().id);
+        auto result = extension->coordinate(*window, optical, surface);
+        response.payload = result ? tokmon::cbor::object({{"ok", true},
+            {"surface", tokmon::to_cbor(tokmon::SurfaceSnapshot{
+                .contributions = surface.contributions(), .proposals = surface.proposals()})}}) :
+            tokmon::cbor::object({{"ok", false}, {"error", error_payload(result.error())}});
+      }
+    } else if (frame->type == "lens.query.request") {
+      response.type = "lens.query.result";
+      auto* extension = dynamic_cast<tokmon::IOpticalLensExtension*>(lens.get());
+      const auto* encoded_state = tokmon::cbor::find(frame->payload, "state");
+      const auto* capability = tokmon::cbor::find(frame->payload, "capability");
+      const auto* parameters = tokmon::cbor::find(frame->payload, "parameters");
+      const auto* encoded_budget = tokmon::cbor::find(frame->payload, "budget");
+      if (!extension || !extension->supports_query() || !encoded_state || !capability ||
+          !parameters || !encoded_budget) {
+        response.payload = tokmon::cbor::object({{"ok", false}, {"error", error_payload(
+            tokmon::make_error(tokmon::ErrorCode::unsupported,
+                               "worker query request or extension is incomplete"))}});
+      } else {
+        tokmon::FrozenLensState state;
+        if (const auto* part = tokmon::cbor::find(*encoded_state, "lens")) state.lens = part->as_string();
+        if (const auto* part = tokmon::cbor::find(*encoded_state, "artifact_hash")) state.artifact_hash = part->as_string();
+        if (const auto* part = tokmon::cbor::find(*encoded_state, "epoch")) state.epoch = static_cast<tokmon::MountEpoch>(part->as_integer());
+        if (const auto* part = tokmon::cbor::find(*encoded_state, "generation")) state.generation = static_cast<tokmon::GenerationId>(part->as_integer());
+        if (const auto* part = tokmon::cbor::find(*encoded_state, "path_index")) state.path_index = static_cast<std::size_t>(part->as_integer());
+        state.value = std::make_shared<const tokmon::cbor::Value>(
+            tokmon::cbor::find(*encoded_state, "value") ?
+                *tokmon::cbor::find(*encoded_state, "value") : tokmon::cbor::Value{});
+        const auto timeout = tokmon::cbor::find(*encoded_budget, "timeout_ms") ?
+            tokmon::cbor::find(*encoded_budget, "timeout_ms")->as_integer(1) : 1;
+        tokmon::QueryBudget budget{
+            .deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout),
+            .max_request_bytes = static_cast<std::size_t>(tokmon::cbor::find(*encoded_budget, "max_request_bytes") ? tokmon::cbor::find(*encoded_budget, "max_request_bytes")->as_integer() : 0),
+            .max_response_bytes = static_cast<std::size_t>(tokmon::cbor::find(*encoded_budget, "max_response_bytes") ? tokmon::cbor::find(*encoded_budget, "max_response_bytes")->as_integer() : 0),
+            .call_index = static_cast<std::size_t>(tokmon::cbor::find(*encoded_budget, "call_index") ? tokmon::cbor::find(*encoded_budget, "call_index")->as_integer() : 0)};
+        auto result = extension->optical_query(state, capability->as_string(), *parameters, budget);
+        response.payload = result ? tokmon::cbor::object({{"ok", true}, {"value", *result}}) :
+            tokmon::cbor::object({{"ok", false}, {"error", error_payload(result.error())}});
       }
     } else if (frame->type == "lens.refract.request") {
       const auto* window_value = tokmon::cbor::find(frame->payload, "window");

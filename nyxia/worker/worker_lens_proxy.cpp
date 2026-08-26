@@ -24,25 +24,13 @@
 namespace tokmon {
 namespace {
 
-ErrorCode worker_error_code(const std::string_view value) {
-  if (value == "invalid_argument") return ErrorCode::invalid_argument;
-  if (value == "invalid_state") return ErrorCode::invalid_state;
-  if (value == "not_found") return ErrorCode::not_found;
-  if (value == "permission_denied") return ErrorCode::permission_denied;
-  if (value == "schema_mismatch") return ErrorCode::schema_mismatch;
-  if (value == "timeout") return ErrorCode::timeout;
-  if (value == "cancelled") return ErrorCode::cancelled;
-  if (value == "approval_required") return ErrorCode::approval_required;
-  if (value == "unsupported") return ErrorCode::unsupported;
-  return ErrorCode::lens_crashed;
-}
-
 Error worker_error(const cbor::Value& payload, const std::string& fallback) {
   const auto* encoded = cbor::find(payload, "error");
   if (!encoded) return make_error(ErrorCode::lens_crashed, fallback);
   const auto* code = cbor::find(*encoded, "code");
   const auto* message = cbor::find(*encoded, "message");
-  auto result = make_error(code ? worker_error_code(code->as_string())
+  auto result = make_error(code ? error_code_from_string(code->as_string(),
+                                                         ErrorCode::lens_crashed)
                                 : ErrorCode::lens_crashed,
       message ? std::string(message->as_string()) : fallback);
   if (const auto* retryable = cbor::find(*encoded, "retryable"))
@@ -95,6 +83,9 @@ void close_handle(HANDLE& handle) {
 
 struct WorkerLensProxy::Impl {
   LensManifest manifest;
+  bool supports_derive{false};
+  bool supports_coordinate{false};
+  bool supports_query{false};
   std::atomic_bool stopping{false};
   std::mutex mutex;
   std::uint64_t next_request{1};
@@ -200,7 +191,8 @@ struct WorkerLensProxy::Impl {
 
   Result<WorkerFrame> request(std::string type, cbor::Value payload,
                               const std::chrono::steady_clock::time_point deadline,
-                              const std::stop_token stop = {}) {
+                              const std::stop_token stop = {},
+                              const OpticalContext* optical = nullptr) {
     std::scoped_lock lock(mutex);
     if (stopping.load(std::memory_order_acquire) && type != "worker.shutdown")
       return tl::unexpected(make_error(ErrorCode::cancelled, "worker Lens is stopping"));
@@ -217,26 +209,76 @@ struct WorkerLensProxy::Impl {
         static_cast<std::uint8_t>(encoded.size())};
     if (auto written = write_bytes(header); !written) return tl::unexpected(written.error());
     if (auto written = write_bytes(encoded); !written) return tl::unexpected(written.error());
-    if (auto read = read_bytes(header, deadline, stop); !read)
-      return tl::unexpected(read.error());
-    const auto size = (static_cast<std::uint32_t>(header[0]) << 24u) |
-        (static_cast<std::uint32_t>(header[1]) << 16u) |
-        (static_cast<std::uint32_t>(header[2]) << 8u) |
-        static_cast<std::uint32_t>(header[3]);
-    if (size == 0 || size > worker_max_frame)
-      return tl::unexpected(make_error(ErrorCode::protocol_error,
-                                       "worker response frame has invalid size"));
-    std::vector<std::uint8_t> bytes(size);
-    if (auto read = read_bytes(bytes, deadline, stop); !read)
-      return tl::unexpected(read.error());
-    auto value = cbor::decode(bytes);
-    if (!value) return tl::unexpected(value.error());
-    auto response = worker_frame_from_cbor(*value);
-    if (!response) return tl::unexpected(response.error());
-    if (response->request_id != request_id)
-      return tl::unexpected(make_error(ErrorCode::protocol_error,
-                                       "worker response request id mismatch"));
-    return response;
+    for (;;) {
+      if (auto read = read_bytes(header, deadline, stop); !read)
+        return tl::unexpected(read.error());
+      const auto size = (static_cast<std::uint32_t>(header[0]) << 24u) |
+          (static_cast<std::uint32_t>(header[1]) << 16u) |
+          (static_cast<std::uint32_t>(header[2]) << 8u) |
+          static_cast<std::uint32_t>(header[3]);
+      if (size == 0 || size > worker_max_frame)
+        return tl::unexpected(make_error(ErrorCode::protocol_error,
+                                         "worker response frame has invalid size"));
+      std::vector<std::uint8_t> bytes(size);
+      if (auto read = read_bytes(bytes, deadline, stop); !read)
+        return tl::unexpected(read.error());
+      auto value = cbor::decode(bytes);
+      if (!value) return tl::unexpected(value.error());
+      auto response = worker_frame_from_cbor(*value);
+      if (!response) return tl::unexpected(response.error());
+      if (response->request_id != request_id)
+        return tl::unexpected(make_error(ErrorCode::protocol_error,
+                                         "worker response request id mismatch"));
+      if (response->type != "host.optical.request") return response;
+      WorkerFrame host_response{.type = "host.optical.result",
+          .request_id = request_id, .payload = cbor::object({{"ok", false}})};
+      Result<cbor::Value> host_result = tl::unexpected(
+          make_error(ErrorCode::protocol_error, "coordinate request has no optical host"));
+      if (optical) {
+        const auto* operation = cbor::find(response->payload, "operation");
+        if (operation && operation->as_string() == "get") {
+          const auto* channel = cbor::find(response->payload, "channel");
+          const auto* key = cbor::find(response->payload, "key");
+          if (channel && key) host_result = optical->get(channel->as_string(), key->as_string());
+        } else if (operation && operation->as_string() == "get_all") {
+          const auto* channel = cbor::find(response->payload, "channel");
+          if (channel) {
+            auto values = optical->get_all(channel->as_string());
+            if (!values) host_result = tl::unexpected(values.error());
+            else {
+              cbor::Value::Array items;
+              for (auto& item : *values) items.push_back(std::move(item));
+              host_result = cbor::Value(std::move(items));
+            }
+          }
+        } else if (operation && operation->as_string() == "query") {
+          OpticalQueryRequest query;
+          if (const auto* part = cbor::find(response->payload, "capability")) query.capability = part->as_string();
+          if (const auto* part = cbor::find(response->payload, "parameters")) query.parameters = *part;
+          if (const auto* part = cbor::find(response->payload, "request_schema")) query.request_schema = part->as_string();
+          if (const auto* part = cbor::find(response->payload, "response_schema")) query.response_schema = part->as_string();
+          if (const auto* part = cbor::find(response->payload, "timeout_ms")) query.timeout = std::chrono::milliseconds(part->as_integer());
+          if (const auto* part = cbor::find(response->payload, "max_response_bytes")) query.max_response_bytes = static_cast<std::size_t>(part->as_integer());
+          host_result = optical->query(std::move(query));
+        }
+      }
+      if (host_result) host_response.payload = cbor::object({{"ok", true},
+                                                              {"value", *host_result}});
+      else host_response.payload = cbor::object({{"ok", false}, {"error", cbor::object({
+          {"code", std::string(to_string(host_result.error().code))},
+          {"message", host_result.error().message},
+          {"retryable", host_result.error().retryable}})}});
+      const auto host_encoded = cbor::encode(to_cbor(host_response));
+      if (host_encoded.empty() || host_encoded.size() > worker_max_frame)
+        return tl::unexpected(make_error(ErrorCode::protocol_error,
+                                         "optical host response frame is invalid"));
+      header = {static_cast<std::uint8_t>(host_encoded.size() >> 24u),
+          static_cast<std::uint8_t>(host_encoded.size() >> 16u),
+          static_cast<std::uint8_t>(host_encoded.size() >> 8u),
+          static_cast<std::uint8_t>(host_encoded.size())};
+      if (auto written = write_bytes(header); !written) return tl::unexpected(written.error());
+      if (auto written = write_bytes(host_encoded); !written) return tl::unexpected(written.error());
+    }
   }
 };
 
@@ -260,6 +302,12 @@ Result<std::shared_ptr<WorkerLensProxy>> WorkerLensProxy::launch(WorkerLensOptio
                                        "worker artifact is missing: " + path.string()));
   auto proxy = std::shared_ptr<WorkerLensProxy>(new WorkerLensProxy());
   proxy->impl_->manifest = std::move(options.manifest);
+  // Protocol 1.0 workers did not advertise extension features. These
+  // declaration-based values are only a compatibility fallback and are
+  // replaced by the worker.ready feature table when present.
+  proxy->impl_->supports_derive = !proxy->impl_->manifest.provides_queries.empty();
+  proxy->impl_->supports_coordinate = !proxy->impl_->manifest.consumes_queries.empty();
+  proxy->impl_->supports_query = !proxy->impl_->manifest.provides_queries.empty();
   const auto runtime = std::string(to_string(proxy->impl_->manifest.runtime));
   std::vector<std::string> arguments{options.supervisor.string()};
   arguments.push_back("--tokmon-internal-worker");
@@ -362,6 +410,21 @@ Result<std::shared_ptr<WorkerLensProxy>> WorkerLensProxy::launch(WorkerLensOptio
           "worker runtime version does not match the exact manifest version"));
     }
   }
+  if (const auto* features = cbor::find(ready->payload, "features");
+      features && features->as_map()) {
+    if (const auto* value = cbor::find(*features, "derive"))
+      proxy->impl_->supports_derive = value->as_bool();
+    if (const auto* value = cbor::find(*features, "coordinate"))
+      proxy->impl_->supports_coordinate = value->as_bool();
+    if (const auto* value = cbor::find(*features, "query"))
+      proxy->impl_->supports_query = value->as_bool();
+  }
+  if (!proxy->impl_->manifest.provides_queries.empty() &&
+      !proxy->impl_->supports_query) {
+    proxy->impl_->terminate();
+    return tl::unexpected(make_error(ErrorCode::integrity_error,
+        "worker manifest declares queries but the worker has no query extension"));
+  }
   return proxy;
 }
 
@@ -451,6 +514,115 @@ Result<RefractionResult> WorkerLensProxy::refract(const PhotonWindow& photons,
       if (level && message) beam.log(level->as_string(), message->as_string());
     }
   return result;
+}
+
+bool WorkerLensProxy::supports_derive() const noexcept {
+  return impl_->supports_derive;
+}
+
+bool WorkerLensProxy::supports_coordinate() const noexcept {
+  return impl_->supports_coordinate;
+}
+
+bool WorkerLensProxy::supports_query() const noexcept {
+  return impl_->supports_query;
+}
+
+Result<cbor::Value> WorkerLensProxy::derive(const PhotonWindow& photons) {
+  if (!supports_derive()) return cbor::Value{};
+  auto response = impl_->request("lens.derive.request",
+      cbor::object({{"window", to_cbor(photons)}}),
+      std::chrono::steady_clock::now() + std::chrono::seconds(5));
+  if (!response) return tl::unexpected(response.error());
+  if (response->type != "lens.derive.result")
+    return tl::unexpected(make_error(ErrorCode::protocol_error,
+                                     "unexpected worker derive response"));
+  const auto* ok = cbor::find(response->payload, "ok");
+  if (!ok || !ok->as_bool())
+    return tl::unexpected(worker_error(response->payload, "worker Lens derive failed"));
+  const auto* state = cbor::find(response->payload, "state");
+  return state ? *state : cbor::Value{};
+}
+
+Result<void> WorkerLensProxy::coordinate(const PhotonWindow& photons,
+                                         const OpticalContext& optical,
+                                         SurfaceBuilder& surface) {
+  if (!supports_coordinate()) return {};
+  auto response = impl_->request("lens.coordinate.request",
+      cbor::object({{"window", to_cbor(photons)}}),
+      std::chrono::steady_clock::now() + std::chrono::seconds(5), {}, &optical);
+  if (!response) return tl::unexpected(response.error());
+  if (response->type != "lens.coordinate.result")
+    return tl::unexpected(make_error(ErrorCode::protocol_error,
+                                     "unexpected worker coordinate response"));
+  const auto* ok = cbor::find(response->payload, "ok");
+  if (!ok || !ok->as_bool())
+    return tl::unexpected(worker_error(response->payload, "worker Lens coordinate failed"));
+  const auto* encoded_surface = cbor::find(response->payload, "surface");
+  if (!encoded_surface)
+    return tl::unexpected(make_error(ErrorCode::protocol_error,
+                                     "worker coordinate result has no Surface"));
+  auto snapshot = surface_from_cbor(*encoded_surface);
+  if (!snapshot) return tl::unexpected(snapshot.error());
+  for (auto& contribution : snapshot->contributions) {
+    if (std::find(impl_->manifest.view_channels.begin(), impl_->manifest.view_channels.end(),
+                  contribution.channel) == impl_->manifest.view_channels.end())
+      return tl::unexpected(make_error(ErrorCode::permission_denied,
+          "worker Lens coordinated an undeclared Surface channel"));
+    auto added = surface.add(std::move(contribution.channel), std::move(contribution.key),
+                             std::move(contribution.value), contribution.priority);
+    if (!added) return added;
+  }
+  for (auto& proposal : snapshot->proposals) {
+    if (std::find(impl_->manifest.light_permissions.begin(),
+                  impl_->manifest.light_permissions.end(), "act.request") ==
+        impl_->manifest.light_permissions.end())
+      return tl::unexpected(make_error(ErrorCode::permission_denied,
+                                       "worker coordinate proposed without act.request"));
+    auto proposed = surface.propose(std::move(proposal));
+    if (!proposed) return proposed;
+  }
+  return {};
+}
+
+Result<cbor::Value> WorkerLensProxy::optical_query(
+    const FrozenLensState& state, const std::string_view capability,
+    const cbor::Value& parameters, const QueryBudget& budget) const {
+  if (!supports_query())
+    return tl::unexpected(make_error(ErrorCode::unsupported,
+                                     "worker Lens has no query capability"));
+  const auto remaining = std::max<std::int64_t>(1,
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          budget.deadline - std::chrono::steady_clock::now()).count());
+  auto response = impl_->request("lens.query.request", cbor::object({
+      {"state", cbor::object({{"lens", state.lens}, {"artifact_hash", state.artifact_hash},
+          {"epoch", static_cast<std::int64_t>(state.epoch)},
+          {"generation", static_cast<std::int64_t>(state.generation)},
+          {"path_index", static_cast<std::int64_t>(state.path_index)},
+          {"value", state.data()}})},
+      {"capability", std::string(capability)}, {"parameters", parameters},
+      {"budget", cbor::object({{"timeout_ms", remaining},
+          {"max_request_bytes", static_cast<std::int64_t>(budget.max_request_bytes)},
+          {"max_response_bytes", static_cast<std::int64_t>(budget.max_response_bytes)},
+      {"call_index", static_cast<std::int64_t>(budget.call_index)}})}}),
+      budget.deadline);
+  if (!response) {
+    auto failure = response.error();
+    if (failure.code == ErrorCode::timeout)
+      failure.code = ErrorCode::deadline_exceeded;
+    return tl::unexpected(std::move(failure));
+  }
+  if (response->type != "lens.query.result")
+    return tl::unexpected(make_error(ErrorCode::protocol_error,
+                                     "unexpected worker query response"));
+  const auto* ok = cbor::find(response->payload, "ok");
+  if (!ok || !ok->as_bool())
+    return tl::unexpected(worker_error(response->payload, "worker Lens query failed"));
+  const auto* value = cbor::find(response->payload, "value");
+  if (!value)
+    return tl::unexpected(make_error(ErrorCode::protocol_error,
+                                     "worker query result has no value"));
+  return *value;
 }
 
 void WorkerLensProxy::request_stop() noexcept {

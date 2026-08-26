@@ -117,12 +117,49 @@ class RefractionBeam:
         self.logs.append({"level": level, "message": message, "fields": fields})
 
 
+class OpticalContext:
+    """A beat-scoped, host-mediated read/query view. It exposes no emit or I/O handle."""
+
+    def __init__(self, exchange: Any) -> None:
+        self._exchange = exchange
+
+    async def get(self, channel: str, key: str) -> Result[Any]:
+        return await self._exchange({"operation": "get", "channel": channel, "key": key})
+
+    async def get_all(self, channel: str) -> Result[list[Any]]:
+        return await self._exchange({"operation": "get_all", "channel": channel})
+
+    async def query(
+        self, capability: str, parameters: Any, *, request_schema: str = "",
+        response_schema: str = "", timeout_ms: int = 0,
+        max_response_bytes: int = 0,
+    ) -> Result[Any]:
+        return await self._exchange({
+            "operation": "query", "capability": capability, "parameters": parameters,
+            "request_schema": request_schema, "response_schema": response_schema,
+            "timeout_ms": timeout_ms, "max_response_bytes": max_response_bytes,
+        })
+
+
 class Lens:
     id: str
     version: str = "0.1.0"
 
     def view(self, photons: Mapping[str, Any], surface: SurfaceBuilder) -> Result[None]:
         raise NotImplementedError
+
+    def derive(self, photons: Mapping[str, Any]) -> Result[Any]:
+        return ok(None)
+
+    async def coordinate(
+        self, photons: Mapping[str, Any], optical: OpticalContext, surface: SurfaceBuilder
+    ) -> Result[None]:
+        return ok(None)
+
+    def query(
+        self, state: Any, capability: str, parameters: Any, budget: Mapping[str, Any]
+    ) -> Result[Any]:
+        return err("unsupported", f"unsupported optical capability: {capability}")
 
     async def refract(
         self, photons: Mapping[str, Any], act: dict[str, Any], beam: RefractionBeam

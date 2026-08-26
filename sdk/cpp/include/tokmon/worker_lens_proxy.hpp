@@ -17,7 +17,7 @@ struct WorkerLensOptions {
   std::chrono::milliseconds startup_timeout{10'000};
 };
 
-class WorkerLensProxy final : public ILens {
+class WorkerLensProxy final : public ILens, public IOpticalLensExtension {
  public:
   ~WorkerLensProxy() override;
   WorkerLensProxy(const WorkerLensProxy&) = delete;
@@ -31,6 +31,16 @@ class WorkerLensProxy final : public ILens {
   Result<RefractionResult> refract(const PhotonWindow& photons, const Act& act,
                                    RefractionBeam& beam) override;
   void request_stop() noexcept override;
+  [[nodiscard]] bool supports_derive() const noexcept override;
+  [[nodiscard]] bool supports_coordinate() const noexcept override;
+  [[nodiscard]] bool supports_query() const noexcept override;
+  Result<cbor::Value> derive(const PhotonWindow& photons) override;
+  Result<void> coordinate(const PhotonWindow& photons,
+                          const OpticalContext& optical,
+                          SurfaceBuilder& surface) override;
+  Result<cbor::Value> optical_query(const FrozenLensState& state,
+      std::string_view capability, const cbor::Value& parameters,
+      const QueryBudget& budget) const override;
 
  private:
   WorkerLensProxy();

@@ -8,6 +8,7 @@ export type PhotonWindow = { photons: Photon[] };
 export type Act = {
   id: string; ray: string; kind: string; schema: string; parameters: Record<string, unknown>;
   target: string; epoch: number; generation: number; risk: string; approved: boolean;
+  idempotency_key?: string; timeout_ms?: number; provenance?: Record<string, unknown>;
 };
 export type RefractionResult = { status: "passed" | "completed" | "rejected" | "failed"; detail?: string };
 export declare const ok: <T>(value: T) => Result<T>;
@@ -34,6 +35,15 @@ export declare class RefractionBeam {
     toolResult(act: Act, toolName: string, payload: Record<string, unknown>): Promise<Result<{ id: string }>>;
   };
   log(level: string, message: string, fields?: Record<string, unknown>): void;
+}
+export declare class OpticalContext {
+  constructor(exchange: (request: Record<string, unknown>) => Promise<Result<unknown>>);
+  get(channel: string, key: string): Promise<Result<unknown>>;
+  getAll(channel: string): Promise<Result<unknown[]>>;
+  query(capability: string, parameters: unknown, options?: {
+    requestSchema?: string; responseSchema?: string; timeoutMs?: number;
+    maxResponseBytes?: number;
+  }): Promise<Result<unknown>>;
 }
 export declare const passed: () => RefractionResult;
 export declare const completed: (detail?: string) => RefractionResult;

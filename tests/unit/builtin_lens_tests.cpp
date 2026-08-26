@@ -73,6 +73,34 @@ tokmon::PhotonWindow photon_window_from(const std::vector<tokmon::PhotonDraft>& 
   return tokmon::PhotonWindow(std::move(photons));
 }
 
+tokmon::Result<void> coordinate_from_frozen_surface(
+    const std::shared_ptr<tokmon::ILens>& lens,
+    const tokmon::PhotonWindow& photons,
+    const tokmon::SurfaceBuilder& derived,
+    tokmon::SurfaceBuilder& coordinated) {
+  auto* extension = dynamic_cast<tokmon::IOpticalLensExtension*>(lens.get());
+  if (!extension || !extension->supports_coordinate())
+    return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::unsupported,
+                                              "Lens has no coordinate phase"));
+  auto optical = tokmon::OpticalContext::from_callbacks(
+      [&derived](const std::string_view channel, const std::string_view key)
+          -> tokmon::Result<tokmon::cbor::Value> {
+        for (const auto& contribution : derived.contributions())
+          if (contribution.channel == channel && contribution.key == key)
+            return contribution.value;
+        return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::not_found,
+                                                  "frozen value not found"));
+      },
+      [](const std::string_view)
+          -> tokmon::Result<std::vector<tokmon::cbor::Value>> { return {}; },
+      [](tokmon::OpticalQueryRequest)
+          -> tokmon::Result<tokmon::cbor::Value> {
+        return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::unsupported,
+                                                  "fixture has no query provider"));
+      });
+  return extension->coordinate(photons, optical, coordinated);
+}
+
 }  // namespace
 
 TEST_CASE("official LightPath contains nineteen unique business Lenses") {
@@ -213,10 +241,13 @@ TEST_CASE("Janus forwards a platform-neutral protocol envelope to Rhea") {
           {"auth", "bearer"}, {"thinking", true}, {"max_output_tokens", 8192},
           {"max_attempts", 6}, {"retry_backoff_ms", 5'000}}),
       .epoch = 7, .hash = std::string(64, 'a')};
+  const tokmon::PhotonWindow photons({input});
   tokmon::SurfaceBuilder surface(lens->manifest().id);
-  REQUIRE(lens->view(tokmon::PhotonWindow({input}), surface));
-  REQUIRE(surface.proposals().size() == 1);
-  const auto& parameters = surface.proposals().front().parameters;
+  REQUIRE(lens->view(photons, surface));
+  tokmon::SurfaceBuilder coordinated(lens->manifest().id);
+  REQUIRE(coordinate_from_frozen_surface(lens, photons, surface, coordinated));
+  REQUIRE(coordinated.proposals().size() == 1);
+  const auto& parameters = coordinated.proposals().front().parameters;
   REQUIRE(tokmon::cbor::find(parameters, "provider")->as_string() == "private-cloud");
   REQUIRE(tokmon::cbor::find(parameters, "protocol")->as_string() ==
           "openai-compatible");
@@ -226,7 +257,8 @@ TEST_CASE("Janus forwards a platform-neutral protocol envelope to Rhea") {
   REQUIRE(tokmon::cbor::find(parameters, "api_key") == nullptr);
   // Six HTTP attempts plus 5/10/20/40/60 second waits must fit inside the
   // enclosing Act. This guards against the old fixed 30-second cutoff.
-  REQUIRE(surface.proposals().front().timeout == std::chrono::milliseconds(510'000));
+  REQUIRE(coordinated.proposals().front().timeout ==
+          std::chrono::milliseconds(510'000));
 }
 
 TEST_CASE("Janus carries the verified Agent action ledger into the next model turn") {
@@ -249,11 +281,13 @@ TEST_CASE("Janus carries the verified Agent action ledger into the next model tu
           tokmon::cbor::object({{"path", "result.txt"}})}}));
   auto read = make(5, "read", "fs.read-completed",
       tokmon::cbor::object({{"path", "result.txt"}, {"content", "ok"}}));
+  const tokmon::PhotonWindow photons({input, write_call, written, read_call, read});
   tokmon::SurfaceBuilder surface(lens->manifest().id);
-  REQUIRE(lens->view(tokmon::PhotonWindow({input, write_call, written, read_call, read}),
-                     surface));
-  REQUIRE(surface.proposals().size() == 1);
-  const auto* messages = tokmon::cbor::find(surface.proposals().front().parameters,
+  REQUIRE(lens->view(photons, surface));
+  tokmon::SurfaceBuilder coordinated(lens->manifest().id);
+  REQUIRE(coordinate_from_frozen_surface(lens, photons, surface, coordinated));
+  REQUIRE(coordinated.proposals().size() == 1);
+  const auto* messages = tokmon::cbor::find(coordinated.proposals().front().parameters,
                                             "messages");
   REQUIRE(messages != nullptr);
   const auto diagnostic = tokmon::cbor::diagnostic(*messages);
@@ -556,6 +590,24 @@ TEST_CASE("native C ABI Lens runs in a supervised replaceable worker") {
   const auto* value = tokmon::cbor::find(host.drafts.back().payload, "result");
   REQUIRE(value != nullptr);
   REQUIRE(std::get<double>(value->data) == 42.0);
+  auto* optical = dynamic_cast<tokmon::IOpticalLensExtension*>((*lens).get());
+  REQUIRE(optical != nullptr);
+  REQUIRE(optical->supports_derive());
+  REQUIRE(optical->supports_query());
+  auto state = optical->derive(tokmon::PhotonWindow{});
+  REQUIRE(state);
+  auto queried = optical->optical_query(tokmon::FrozenLensState{
+      .lens = (*lens)->manifest().id, .artifact_hash = "worker-artifact",
+      .epoch = 1, .generation = 17, .path_index = 1,
+      .value = std::make_shared<const tokmon::cbor::Value>(*state)},
+      "math.evaluate", tokmon::cbor::object({{"expression", "21 * 2"}}),
+      tokmon::QueryBudget{.deadline = std::chrono::steady_clock::now() +
+                                           std::chrono::milliseconds(250),
+                          .max_request_bytes = 4096,
+                          .max_response_bytes = 4096,
+                          .call_index = 1});
+  REQUIRE(queried);
+  REQUIRE(std::get<double>(tokmon::cbor::find(*queried, "result")->data) == 42.0);
   (*lens)->request_stop();
 }
 

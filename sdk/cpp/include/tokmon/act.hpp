@@ -28,6 +28,7 @@ struct Act {
   bool approved{false};
   std::string idempotency_key;
   std::chrono::milliseconds timeout{30'000};
+  cbor::Value provenance{cbor::Value::Map{}};
 };
 
 struct ActPattern {

@@ -15,6 +15,7 @@
 #include "tokmon/light_path.hpp"
 #include "tokmon/logging.hpp"
 #include "tokmon/manifest_io.hpp"
+#include "tokmon/optical.hpp"
 #include "tokmon/photon.hpp"
 #include "tokmon/photon_store.hpp"
 #include "tokmon/runtime.hpp"

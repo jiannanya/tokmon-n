@@ -119,6 +119,143 @@ Result<std::vector<LensDependency>> dependencies(
   return result;
 }
 
+bool integer(const cbor::Value* value);
+
+Result<std::vector<OpticalQueryCapability>> query_capabilities(
+    const cbor::Value* sequence, const std::filesystem::path& source) {
+  std::vector<OpticalQueryCapability> result;
+  if (!sequence) return result;
+  if (!sequence->as_array())
+    return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+        source.string() + ": provides_queries must be a sequence"));
+  std::set<std::string> seen;
+  for (const auto& item : *sequence->as_array()) {
+    if (auto checked = reject_unknown(item,
+        {"capability", "request_schema", "response_schema", "deterministic",
+         "priority", "default_timeout_ms", "max_timeout_ms", "max_request_bytes",
+         "max_response_bytes", "max_concurrent_queries", "max_queries_per_beat", "cache"},
+        source); !checked) return tl::unexpected(checked.error());
+    const auto* name = cbor::find(item, "capability");
+    const auto* request = cbor::find(item, "request_schema");
+    const auto* response = cbor::find(item, "response_schema");
+    if (!name || name->as_string().empty() || !request || request->as_string().empty() ||
+        !response || response->as_string().empty())
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+          "query capability requires capability, request_schema and response_schema"));
+    OpticalQueryCapability capability;
+    capability.capability = std::string(name->as_string());
+    capability.request_schema = std::string(request->as_string());
+    capability.response_schema = std::string(response->as_string());
+    if (!seen.insert(capability.capability).second)
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+          "query capabilities must be unique per Lens"));
+    if (const auto* field = cbor::find(item, "deterministic")) {
+      if (!std::holds_alternative<bool>(field->data))
+        return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                         "deterministic must be boolean"));
+      capability.deterministic = field->as_bool();
+    }
+    const auto number = [&](const std::string_view key, const std::int64_t fallback,
+                            const std::int64_t maximum) -> Result<std::int64_t> {
+      const auto* field = cbor::find(item, key);
+      if (!field) return fallback;
+      if (!integer(field) || field->as_integer() <= 0 || field->as_integer() > maximum)
+        return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+            std::string(key) + " is outside its safe positive range"));
+      return field->as_integer();
+    };
+    if (const auto* priority = cbor::find(item, "priority")) {
+      if (!integer(priority) || priority->as_integer() < -1'000'000 ||
+          priority->as_integer() > 1'000'000)
+        return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                         "query priority is invalid"));
+      capability.priority = static_cast<std::int32_t>(priority->as_integer());
+    }
+    auto default_timeout = number("default_timeout_ms", 10, 60'000);
+    auto max_timeout = number("max_timeout_ms", 100, 60'000);
+    auto max_request = number("max_request_bytes", 256 * 1024, 64ll * 1024ll * 1024ll);
+    auto max_response = number("max_response_bytes", 1024 * 1024, 64ll * 1024ll * 1024ll);
+    auto max_concurrent = number("max_concurrent_queries", 4, 1024);
+    auto max_calls = number("max_queries_per_beat", 1024, 1'000'000);
+    if (!default_timeout) return tl::unexpected(default_timeout.error());
+    if (!max_timeout) return tl::unexpected(max_timeout.error());
+    if (!max_request) return tl::unexpected(max_request.error());
+    if (!max_response) return tl::unexpected(max_response.error());
+    if (!max_concurrent) return tl::unexpected(max_concurrent.error());
+    if (!max_calls) return tl::unexpected(max_calls.error());
+    if (*default_timeout > *max_timeout)
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+          "default query timeout cannot exceed maximum timeout"));
+    capability.default_timeout = std::chrono::milliseconds(*default_timeout);
+    capability.max_timeout = std::chrono::milliseconds(*max_timeout);
+    capability.max_request_bytes = static_cast<std::size_t>(*max_request);
+    capability.max_response_bytes = static_cast<std::size_t>(*max_response);
+    capability.max_concurrent_queries = static_cast<std::size_t>(*max_concurrent);
+    capability.max_queries_per_beat = static_cast<std::size_t>(*max_calls);
+    if (const auto* cache = cbor::find(item, "cache")) {
+      if (cache->as_string() == "none") capability.cache = OpticalQueryCache::none;
+      else if (cache->as_string() == "per_beat") capability.cache = OpticalQueryCache::per_beat;
+      else return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                             "query cache must be none or per_beat"));
+    }
+    if (!capability.deterministic && capability.cache == OpticalQueryCache::per_beat)
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+          "nondeterministic query capability cannot enable the per-beat cache"));
+    result.push_back(std::move(capability));
+  }
+  return result;
+}
+
+Result<std::vector<OpticalQueryConsumption>> query_consumptions(
+    const cbor::Value* sequence, const std::filesystem::path& source) {
+  std::vector<OpticalQueryConsumption> result;
+  if (!sequence) return result;
+  if (!sequence->as_array())
+    return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+        source.string() + ": consumes_queries must be a sequence"));
+  std::set<std::string> seen;
+  for (const auto& item : *sequence->as_array()) {
+    if (auto checked = reject_unknown(item,
+        {"capability", "cardinality", "required", "merge"}, source); !checked)
+      return tl::unexpected(checked.error());
+    const auto* name = cbor::find(item, "capability");
+    if (!name || name->as_string().empty() ||
+        !seen.insert(std::string(name->as_string())).second)
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+          "consumed query capabilities must be unique and non-empty"));
+    OpticalQueryConsumption consumption;
+    consumption.capability = std::string(name->as_string());
+    const auto cardinality = cbor::find(item, "cardinality") ?
+        cbor::find(item, "cardinality")->as_string() : std::string_view("optional-single");
+    if (cardinality == "single") consumption.cardinality = OpticalQueryCardinality::single;
+    else if (cardinality == "optional-single")
+      consumption.cardinality = OpticalQueryCardinality::optional_single;
+    else if (cardinality == "many") consumption.cardinality = OpticalQueryCardinality::many;
+    else return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                           "unknown query cardinality"));
+    if (const auto* required = cbor::find(item, "required")) {
+      if (!std::holds_alternative<bool>(required->data))
+        return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                         "query required must be boolean"));
+      consumption.required = required->as_bool();
+    }
+    const auto merge = cbor::find(item, "merge") ? cbor::find(item, "merge")->as_string() :
+                                                    std::string_view("first");
+    if (merge == "first") consumption.merge = OpticalQueryMerge::first;
+    else if (merge == "all") consumption.merge = OpticalQueryMerge::all;
+    else if (merge == "priority_then_path")
+      consumption.merge = OpticalQueryMerge::priority_then_path;
+    else return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                           "unknown query merge rule"));
+    if (consumption.cardinality != OpticalQueryCardinality::many &&
+        consumption.merge != OpticalQueryMerge::first)
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+          "single-provider consumption must use merge: first"));
+    result.push_back(std::move(consumption));
+  }
+  return result;
+}
+
 bool integer(const cbor::Value* value) {
   return value && std::holds_alternative<std::int64_t>(value->data);
 }
@@ -131,7 +268,8 @@ Result<LensManifest> load_lens_manifest(const std::filesystem::path& path) {
   const auto& root = *loaded;
   if (auto checked = reject_unknown(root,
       {"api", "id", "display_name", "version", "abi", "runtime", "trust", "stateless",
-       "observes", "view_channels", "refracts", "light_permissions", "dependencies",
+       "observes", "view_channels", "provides_queries", "consumes_queries",
+       "refracts", "light_permissions", "dependencies",
        "conflicts", "optical_order", "resources", "replacement", "schema_bundle", "sbom"}, path);
       !checked) return tl::unexpected(checked.error());
 
@@ -216,6 +354,12 @@ Result<LensManifest> load_lens_manifest(const std::filesystem::path& path) {
   if (!light_permissions) return tl::unexpected(light_permissions.error());
   manifest.view_channels = std::move(*view_channels);
   manifest.light_permissions = std::move(*light_permissions);
+  auto provides = query_capabilities(cbor::find(root, "provides_queries"), path);
+  auto consumes = query_consumptions(cbor::find(root, "consumes_queries"), path);
+  if (!provides) return tl::unexpected(provides.error());
+  if (!consumes) return tl::unexpected(consumes.error());
+  manifest.provides_queries = std::move(*provides);
+  manifest.consumes_queries = std::move(*consumes);
   auto required_lenses = dependencies(cbor::find(root, "dependencies"), path);
   if (!required_lenses) return tl::unexpected(required_lenses.error());
   manifest.dependencies = std::move(*required_lenses);

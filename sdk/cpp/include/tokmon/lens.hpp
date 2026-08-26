@@ -10,6 +10,7 @@
 
 #include "tokmon/act.hpp"
 #include "tokmon/error.hpp"
+#include "tokmon/optical.hpp"
 #include "tokmon/photon.hpp"
 #include "tokmon/surface.hpp"
 
@@ -41,6 +42,8 @@ struct LensManifest {
   TrustLevel trust{TrustLevel::t1};
   std::vector<PhotonPattern> observes;
   std::vector<std::string> view_channels;
+  std::vector<OpticalQueryCapability> provides_queries;
+  std::vector<OpticalQueryConsumption> consumes_queries;
   std::vector<ActPattern> refracts;
   std::vector<std::string> light_permissions;
   bool stateless{true};
