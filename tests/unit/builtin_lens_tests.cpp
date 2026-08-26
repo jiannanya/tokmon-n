@@ -211,7 +211,9 @@ TEST_CASE("Janus forwards a platform-neutral protocol envelope to Rhea") {
           {"endpoint", "https://models.example.test/v1/chat/completions"},
           {"model", "custom-model"}, {"secret_ref", "model-provider/private-cloud"},
           {"auth", "bearer"}, {"thinking", true}, {"max_output_tokens", 8192},
-          {"max_attempts", 6}, {"retry_backoff_ms", 5'000}}),
+          {"max_attempts", 6}, {"retry_backoff_ms", 5'000},
+          {"request_parameters", tokmon::cbor::object({
+              {"temperature", 0.25}, {"top_p", 0.9}})}}),
       .epoch = 7, .hash = std::string(64, 'a')};
   auto viewed = tokmon::tests::view_lens_once(lens, tokmon::PhotonWindow({input}));
   REQUIRE(viewed);
@@ -225,6 +227,11 @@ TEST_CASE("Janus forwards a platform-neutral protocol envelope to Rhea") {
   REQUIRE(tokmon::cbor::find(parameters, "secret_ref")->as_string() ==
           "model-provider/private-cloud");
   REQUIRE(tokmon::cbor::find(parameters, "api_key") == nullptr);
+  const auto* request_parameters =
+      tokmon::cbor::find(parameters, "request_parameters");
+  REQUIRE(request_parameters != nullptr);
+  REQUIRE(std::get<double>(
+      tokmon::cbor::find(*request_parameters, "temperature")->data) == 0.25);
   // Six HTTP attempts plus 5/10/20/40/60 second waits must fit inside the
   // enclosing Act. This guards against the old fixed 30-second cutoff.
   REQUIRE(surface.proposals.front().timeout == std::chrono::milliseconds(510'000));
@@ -264,6 +271,21 @@ TEST_CASE("Janus carries the verified Agent action ledger into the next model tu
   REQUIRE(diagnostic.find("read_file") != std::string::npos);
   REQUIRE(diagnostic.find("fs.read-completed") != std::string::npos);
   REQUIRE(diagnostic.find("Do not redo a successful entry") != std::string::npos);
+}
+
+TEST_CASE("Rhea rejects dynamic parameters that would replace runtime-owned fields") {
+  const auto lens = tokmon::make_builtin_lens("rhea");
+  RecordingHost host;
+  auto result = refract(lens, "model.call", "tokmon.model.call.v1",
+      tokmon::cbor::object({
+          {"provider", "fixture-cloud"}, {"protocol", "openai-compatible"},
+          {"model", "fixture-model"}, {"prompt", "hello"},
+          {"endpoint", "http://127.0.0.1:1/v1/chat/completions"},
+          {"allow_anonymous", true}, {"max_attempts", 1},
+          {"request_parameters", tokmon::cbor::object({{"model", "hijacked-model"}})}}),
+      host);
+  REQUIRE_FALSE(result);
+  REQUIRE(result.error().code == tokmon::ErrorCode::permission_denied);
 }
 
 TEST_CASE("Styx executes argv without a shell and captures bounded output") {
@@ -564,13 +586,14 @@ TEST_CASE("native C ABI Lens runs in a supervised replaceable worker") {
 TEST_CASE("Rhea streams an OpenAI-compatible provider and retries transient failure") {
   const auto root = lens_temporary_directory("rhea-http");
   const auto ready = root / "ready.port";
+  const auto captured_requests = root / "requests.jsonl";
   std::optional<tokmon::Result<tokmon::builtin::ProcessOutput>> server_result;
   std::jthread server([&] {
     server_result = tokmon::builtin::run_process(tokmon::builtin::ProcessRequest{
         .argv = {TOKMON_PYTHON_EXECUTABLE,
             (std::filesystem::path(TOKMON_SOURCE_DIR) /
              "tests/fixtures/model_sse_server.py").string(),
-            "0", ready.string(), "2", "1"},
+            "0", ready.string(), "2", "1", captured_requests.string()},
         .cwd = root, .timeout = std::chrono::seconds(15),
         .max_output_bytes = 16u * 1024u});
   });
@@ -592,7 +615,12 @@ TEST_CASE("Rhea streams an OpenAI-compatible provider and retries transient fail
           {"prompt", "hello"},
           {"endpoint", "http://127.0.0.1:" + port + "/v1/chat/completions"},
           {"allow_anonymous", true}, {"max_attempts", 2},
-          {"retry_backoff_ms", 1}}), host);
+          {"retry_backoff_ms", 1},
+          {"request_parameters", tokmon::cbor::object({
+              {"temperature", 0.25}, {"top_p", 0.9},
+              {"stop", tokmon::cbor::Value::Array{"END", "STOP"}},
+              {"response_format", tokmon::cbor::object({{"type", "json_object"}})}})}}),
+      host);
   REQUIRE(result);
   REQUIRE(result->status == tokmon::RefractionStatus::completed);
   REQUIRE(std::count_if(host.drafts.begin(), host.drafts.end(), [](const auto& draft) {
@@ -623,6 +651,24 @@ TEST_CASE("Rhea streams an OpenAI-compatible provider and retries transient fail
   REQUIRE(server_result);
   REQUIRE(*server_result);
   REQUIRE((*server_result)->exit_code == 0);
+  std::ifstream captured(captured_requests);
+  std::string request_line;
+  std::string last_request;
+  while (std::getline(captured, request_line))
+    if (!request_line.empty()) last_request = request_line;
+  REQUIRE_FALSE(last_request.empty());
+  auto request_body = tokmon::json::parse(last_request);
+  REQUIRE(request_body);
+  REQUIRE(std::get<double>(
+      tokmon::cbor::find(*request_body, "temperature")->data) == 0.25);
+  REQUIRE(std::get<double>(
+      tokmon::cbor::find(*request_body, "top_p")->data) == 0.9);
+  REQUIRE(tokmon::cbor::find(
+      *tokmon::cbor::find(*request_body, "response_format"), "type")->as_string() ==
+      "json_object");
+  REQUIRE(tokmon::cbor::find(*request_body, "stop")->as_array()->size() == 2);
+  REQUIRE(tokmon::cbor::find(*request_body, "model")->as_string() == "fixture-model");
+  REQUIRE(tokmon::cbor::find(*request_body, "messages") != nullptr);
 }
 
 TEST_CASE("Rhea performs five retries before publishing a terminal model failure") {

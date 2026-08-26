@@ -176,6 +176,38 @@ bool loopback_endpoint(const std::string_view endpoint) {
       endpoint.starts_with("http://localhost") || endpoint.starts_with("http://[::1]");
 }
 
+const std::set<std::string>& fixed_model_provider_fields() {
+  static const std::set<std::string> fields{
+      "protocol", "endpoint", "model", "secret_ref", "secret_env", "auth", "enabled",
+      "allow_anonymous", "thinking", "reasoning_effort", "max_output_tokens",
+      "max_attempts", "retry_backoff_ms", "first_token_timeout_ms", "idle_timeout_ms",
+      "request_parameters"};
+  return fields;
+}
+
+Result<void> merge_model_request_parameter(
+    ModelProviderConfig& provider, const std::string& provider_id,
+    const std::string& key, const cbor::Value& value,
+    const std::filesystem::path& source) {
+  static const std::set<std::string> protected_fields{
+      "api_key", "secret", "secret_value", "secret_binding", "secret_purpose",
+      "authorization", "provider", "protocol", "endpoint", "model", "messages",
+      "contents", "tools", "prompt", "stream", "stream_options", "thinking",
+      "reasoning_effort", "max_tokens", "max_output_tokens", "request_body", "fallbacks",
+      "curl_executable", "workspace_root", "access_mode", "effort", "idempotency_key"};
+  if (key.empty())
+    return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+        source.string() + ": model request parameter names cannot be empty"));
+  if (protected_fields.contains(key))
+    return tl::unexpected(make_error(ErrorCode::permission_denied,
+        source.string() + ": model request parameter '" + key +
+        "' is controlled by Tokmon and cannot be configured for provider " + provider_id));
+  if (!provider.request_parameters.as_map())
+    provider.request_parameters = cbor::Value::Map{};
+  (*provider.request_parameters.as_map())[key] = value;
+  return {};
+}
+
 Result<void> parse_model_providers(RuntimeConfig& config, const cbor::Value& models,
                                    const std::filesystem::path& source) {
   if (!models.as_map())
@@ -201,10 +233,6 @@ Result<void> parse_model_providers(RuntimeConfig& config, const cbor::Value& mod
     if (!std::regex_match(id, id_pattern) || !value.as_map())
       return tl::unexpected(make_error(ErrorCode::schema_mismatch,
           source.string() + ": invalid model provider id or definition: " + id));
-    if (auto result = reject_unknown(value,
-        {"protocol", "endpoint", "model", "secret_ref", "secret_env", "auth", "enabled",
-         "allow_anonymous", "thinking", "reasoning_effort", "max_output_tokens",
-         "max_attempts", "retry_backoff_ms"}, source); !result) return result;
     for (const auto* key : {"protocol", "endpoint", "model", "secret_ref", "secret_env",
                             "auth", "reasoning_effort"})
       if (auto result = require_type<std::string>(value, key, "a string", source); !result)
@@ -212,9 +240,14 @@ Result<void> parse_model_providers(RuntimeConfig& config, const cbor::Value& mod
     for (const auto* key : {"enabled", "allow_anonymous", "thinking"})
       if (auto result = require_type<bool>(value, key, "a boolean", source); !result)
         return result;
-    for (const auto* key : {"max_output_tokens", "max_attempts", "retry_backoff_ms"})
+    for (const auto* key : {"max_output_tokens", "max_attempts", "retry_backoff_ms",
+                            "first_token_timeout_ms", "idle_timeout_ms"})
       if (auto result = require_type<std::int64_t>(value, key, "an integer", source); !result)
         return result;
+    if (const auto* parameters = cbor::find(value, "request_parameters");
+        parameters && !parameters->as_map())
+      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+          source.string() + ": request_parameters must be a map for provider " + id));
     ModelProviderConfig provider;
     if (const auto found = config.model_providers.find(id);
         found != config.model_providers.end()) provider = found->second;
@@ -241,6 +274,27 @@ Result<void> parse_model_providers(RuntimeConfig& config, const cbor::Value& mod
       provider.max_attempts = field->as_integer();
     if (const auto* field = cbor::find(value, "retry_backoff_ms"))
       provider.retry_backoff_ms = field->as_integer();
+    if (const auto* field = cbor::find(value, "first_token_timeout_ms"))
+      provider.first_token_timeout_ms = field->as_integer();
+    if (const auto* field = cbor::find(value, "idle_timeout_ms"))
+      provider.idle_timeout_ms = field->as_integer();
+    std::set<std::string> explicitly_nested;
+    if (const auto* parameters = cbor::find(value, "request_parameters")) {
+      for (const auto& [key, parameter] : *parameters->as_map()) {
+        auto merged = merge_model_request_parameter(provider, id, key, parameter, source);
+        if (!merged) return merged;
+        explicitly_nested.insert(key);
+      }
+    }
+    for (const auto& [key, parameter] : *value.as_map()) {
+      if (fixed_model_provider_fields().contains(key)) continue;
+      if (explicitly_nested.contains(key))
+        return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+            source.string() + ": model request parameter '" + key +
+            "' is declared both directly and under request_parameters for provider " + id));
+      auto merged = merge_model_request_parameter(provider, id, key, parameter, source);
+      if (!merged) return merged;
+    }
     if (!protocols.contains(provider.protocol))
       return tl::unexpected(make_error(ErrorCode::schema_mismatch,
           source.string() + ": unsupported model protocol for " + id));
@@ -277,9 +331,11 @@ Result<void> parse_model_providers(RuntimeConfig& config, const cbor::Value& mod
           source.string() + ": invalid secret_env for provider " + id));
     if (provider.max_output_tokens <= 0 || provider.max_output_tokens > 1'000'000 ||
         provider.max_attempts <= 0 || provider.max_attempts > 10 ||
-        provider.retry_backoff_ms < 0 || provider.retry_backoff_ms > 60'000)
+        provider.retry_backoff_ms < 0 || provider.retry_backoff_ms > 60'000 ||
+        provider.first_token_timeout_ms <= 0 || provider.first_token_timeout_ms > 600'000 ||
+        provider.idle_timeout_ms <= 0 || provider.idle_timeout_ms > 600'000)
       return tl::unexpected(make_error(ErrorCode::invalid_argument,
-          source.string() + ": provider retry/token limits are outside the allowed range"));
+          source.string() + ": provider retry/token/timeout limits are outside the allowed range"));
     config.model_providers[id] = std::move(provider);
   }
   return {};
@@ -747,6 +803,9 @@ Result<cbor::Value> resolve_model_provider_context(
       {"max_output_tokens", provider.max_output_tokens},
       {"max_attempts", provider.max_attempts},
       {"retry_backoff_ms", provider.retry_backoff_ms},
+      {"first_token_timeout_ms", provider.first_token_timeout_ms},
+      {"idle_timeout_ms", provider.idle_timeout_ms},
+      {"request_parameters", provider.request_parameters},
       {"workspace_root", config.paths.project.parent_path().generic_string()},
       {"access_mode", cbor::find(request, "access_mode")
           ? std::string(cbor::find(request, "access_mode")->as_string())

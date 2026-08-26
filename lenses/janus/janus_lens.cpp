@@ -247,7 +247,8 @@ Result<void> JanusLens::view(const OpticalInput& photons, WavefrontBuilder& surf
   for (const auto* key : {"provider", "protocol", "endpoint", "secret_ref", "auth",
                           "allow_anonymous", "thinking", "reasoning_effort",
                           "max_output_tokens", "max_attempts", "retry_backoff_ms",
-                          "first_token_timeout_ms", "idle_timeout_ms", "workspace_root"})
+                          "first_token_timeout_ms", "idle_timeout_ms", "request_parameters",
+                          "workspace_root"})
     if (const auto* value = cbor::find(input->payload, key))
       (*parameters.as_map())[key] = *value;
   auto act = propose(source, "model.call", "tokmon.model.call.v1",

@@ -75,6 +75,12 @@ struct ModelProviderConfig {
   // product retry schedule: 5s, 10s, 20s, 40s, 60s.
   std::int64_t max_attempts{6};
   std::int64_t retry_backoff_ms{5'000};
+  std::int64_t first_token_timeout_ms{60'000};
+  std::int64_t idle_timeout_ms{30'000};
+  // Every non-reserved provider YAML field is retained here and merged into
+  // the protocol request body. This keeps vendor-specific parameters open
+  // ended without weakening validation of Tokmon's transport/security fields.
+  cbor::Value request_parameters{cbor::Value::Map{}};
 };
 
 struct RuntimeConfig {

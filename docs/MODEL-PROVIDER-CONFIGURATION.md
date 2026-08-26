@@ -148,9 +148,31 @@ models:
       max_output_tokens: 8192
       max_attempts: 3
       retry_backoff_ms: 500
+      first_token_timeout_ms: 60000
+      idle_timeout_ms: 30000
+      temperature: 0.2
+      top_p: 0.95
+      response_format:
+        type: json_object
 ```
 
 `secret_env` 是可选的非交互式引导来源，不是保存 Key 的位置。名称必须是大写环境变量格式（例如 `OPENCODE_API_KEY`），YAML 仍必须提供严格命名空间化的 `secret_ref`。`tokmond` 启动时先读取当前进程环境；Windows 还会读取当前用户和本机环境变量注册表，以支持在 Desktop/终端启动之后才写入的变量。读取成功后立即导入操作系统凭据库，后续调用只使用 `secret_ref`，临时明文缓冲区会被覆写。环境变量不存在时不会降低为匿名调用。
+
+provider 字段分成两类：
+
+- Tokmon 固定字段负责平台身份、传输、安全、重试和超时，例如 `protocol`、`endpoint`、`model`、`secret_ref`、`auth`、`thinking`、`reasoning_effort`、`max_output_tokens`、`max_attempts`、`retry_backoff_ms`、`first_token_timeout_ms`、`idle_timeout_ms`；
+- 固定字段之外的任意 YAML 字段都作为模型请求参数原样保留，可使用字符串、整数、浮点数、布尔值、null、数组和嵌套对象。Rhea 会把它们合并到厂商请求 JSON 中，因此无需为 `temperature`、`top_p`、`seed`、`response_format` 或未来厂商参数修改、重新编译 Tokmon。
+
+动态参数也可以集中写在 `request_parameters` 下；两种写法语义相同：
+
+```yaml
+      request_parameters:
+        temperature: 0.2
+        response_format:
+          type: json_object
+```
+
+同一个参数不能既直接声明又出现在 `request_parameters` 中。`model`、`messages`、`tools`、`stream` 等因果与协议控制字段，以及所有凭据字段，由 Tokmon 独占；尝试通过动态参数覆盖会使整个候选配置明确失败，不会忽略、回退或部分生效。
 
 OpenCode 验收配置示例：
 
@@ -178,7 +200,9 @@ models:
 
 用户级 `~/.tokmon/config.yaml` 与项目级 `<workspace>/.tokmon/config.yaml` 使用同一 schema。先合并用户级，再按 provider id 合并项目级；项目可以覆盖 model、endpoint 或预算，但 SecretRef 必须严格等于自己的 `model-provider/<id>`，不能引用其他 provider 或其他透镜的凭据。`models.default` 必须指向存在且启用的 provider。
 
-配置由 `tokmond` 使用临时文件和原子替换发布。daemon 同时监听用户级/项目级 `config.yaml` 与 `light-path.yaml`，外部编辑保存后会触发验证和热重载；非法字段、非 HTTPS 远程地址、越权 SecretRef 或越界预算会拒绝整个候选配置。
+配置由 `tokmond` 使用临时文件和原子替换发布。daemon 监视用户级和项目级配置文件，外部编辑后会重新读取、完整验证并锁存失败状态；非法固定字段、非 HTTPS 远程地址、越权 SecretRef、受保护的动态参数或越界预算会拒绝整个候选配置。
+
+Desktop 和 CLI 都会在启动后台服务前预检配置。Desktop 以模态错误窗口显示具体文件和原因，并在空闲状态持续读取 daemon 的配置健康状态；CLI 向标准错误输出相同诊断并返回非零退出码。运行中热重载失败时 Desktop 会主动弹窗，后续非生命周期请求会被失败锁存阻止，直到修复后的配置通过完整 reconcile。配置错误不会再表现为 daemon 启动超时，不会沿用旧配置，也不会静默回退。
 
 ## 7. Desktop 操作
 

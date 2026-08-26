@@ -9,6 +9,7 @@
 
 #include "tests/support/test_framework.hpp"
 #include "tests/support/optical_harness.hpp"
+#include "lenses/common/process_runner.hpp"
 #include <sqlite3.h>
 
 #include "tokmon/tokmon.hpp"
@@ -1030,7 +1031,14 @@ TEST_CASE("model platforms merge by id while credentials remain SecretRefs") {
             "      model: base-model\n"
             "      secret_ref: model-provider/private-cloud\n"
             "      secret_env: PRIVATE_CLOUD_API_KEY\n"
-            "      auth: bearer\n";
+            "      auth: bearer\n"
+            "      temperature: 0.25\n"
+            "      stop:\n"
+            "        - END\n"
+            "        - STOP\n"
+            "      request_parameters:\n"
+            "        response_format:\n"
+            "          type: json_object\n";
   }
   {
     std::ofstream project(workspace / ".tokmon" / "config.yaml");
@@ -1038,7 +1046,8 @@ TEST_CASE("model platforms merge by id while credentials remain SecretRefs") {
                "  providers:\n"
                "    private-cloud:\n"
                "      model: project-model\n"
-               "      thinking: true\n";
+               "      thinking: true\n"
+               "      top_p: 0.9\n";
   }
   auto config = tokmon::load_config(workspace);
   REQUIRE(config);
@@ -1050,6 +1059,15 @@ TEST_CASE("model platforms merge by id while credentials remain SecretRefs") {
   REQUIRE(provider.secret_ref == "model-provider/private-cloud");
   REQUIRE(provider.secret_env == "PRIVATE_CLOUD_API_KEY");
   REQUIRE(provider.thinking);
+  const auto* request_parameters = provider.request_parameters.as_map();
+  REQUIRE(request_parameters != nullptr);
+  REQUIRE(std::get<double>(request_parameters->at("temperature").data) == 0.25);
+  REQUIRE(std::get<double>(request_parameters->at("top_p").data) == 0.9);
+  REQUIRE(request_parameters->at("stop").as_array() != nullptr);
+  REQUIRE(request_parameters->at("stop").as_array()->size() == 2);
+  const auto* response_format = request_parameters->at("response_format").as_map();
+  REQUIRE(response_format != nullptr);
+  REQUIRE(response_format->at("type").as_string() == "json_object");
 }
 
 TEST_CASE("model context keeps provider and configured model inseparable") {
@@ -1065,7 +1083,8 @@ TEST_CASE("model context keeps provider and configured model inseparable") {
       .id = "deepseek", .protocol = "openai-compatible",
       .endpoint = "https://api.deepseek.com/chat/completions",
       .model = "deepseek-v4-flash", .secret_ref = "model-provider/deepseek",
-      .auth = "bearer", .thinking = true, .reasoning_effort = "high"});
+      .auth = "bearer", .thinking = true, .reasoning_effort = "high",
+      .request_parameters = tokmon::cbor::object({{"temperature", 0.3}})});
 
   auto selected = tokmon::resolve_model_provider_context(config,
       tokmon::cbor::object({{"provider", "deepseek"},
@@ -1077,6 +1096,11 @@ TEST_CASE("model context keeps provider and configured model inseparable") {
           "deepseek-v4-flash");
   REQUIRE(tokmon::cbor::find(*selected, "endpoint")->as_string() ==
           "https://api.deepseek.com/chat/completions");
+  const auto* selected_parameters =
+      tokmon::cbor::find(*selected, "request_parameters");
+  REQUIRE(selected_parameters != nullptr);
+  REQUIRE(std::get<double>(
+      tokmon::cbor::find(*selected_parameters, "temperature")->data) == 0.3);
 
   auto mismatch = tokmon::resolve_model_provider_context(config,
       tokmon::cbor::object({{"provider", "opencode"},
@@ -1107,7 +1131,7 @@ TEST_CASE("model configuration rejects plaintext keys and insecure remote endpoi
   }
   auto plaintext = tokmon::load_config(workspace);
   REQUIRE_FALSE(plaintext);
-  REQUIRE(plaintext.error().code == tokmon::ErrorCode::schema_mismatch);
+  REQUIRE(plaintext.error().code == tokmon::ErrorCode::permission_denied);
   {
     std::ofstream output(file, std::ios::trunc);
     output << "models:\n  providers:\n    unsafe:\n"
@@ -1129,6 +1153,30 @@ TEST_CASE("model configuration rejects plaintext keys and insecure remote endpoi
   auto invalid_environment = tokmon::load_config(workspace);
   REQUIRE_FALSE(invalid_environment);
   REQUIRE(invalid_environment.error().code == tokmon::ErrorCode::schema_mismatch);
+}
+
+TEST_CASE("CLI reports configuration errors before attempting daemon startup") {
+  const auto root = temporary_directory("cli-config-error");
+  UserProfileGuard profile(root / "home");
+  const auto workspace = root / "workspace";
+  std::filesystem::create_directories(root / "home" / ".tokmon");
+  std::filesystem::create_directories(workspace / ".tokmon");
+  {
+    std::ofstream output(workspace / ".tokmon" / "config.yaml");
+    output << "engine:\n  max_beats: 4\n  misspelled_limit: 9\n";
+  }
+  auto invoked = tokmon::builtin::run_process(tokmon::builtin::ProcessRequest{
+      .argv = {TOKMON_CLI_EXECUTABLE, "--workspace", workspace.string(),
+               "model", "list"},
+      .cwd = root,
+      .timeout = std::chrono::seconds(5),
+      .max_output_bytes = 16u * 1024u});
+  REQUIRE(invoked);
+  REQUIRE(invoked->exit_code != 0);
+  REQUIRE_FALSE(invoked->timed_out);
+  REQUIRE(invoked->stderr_text.find("unknown YAML field 'misspelled_limit'") !=
+          std::string::npos);
+  REQUIRE(invoked->stderr_text.find("did not become ready") == std::string::npos);
 }
 
 TEST_CASE("workspace Snow endpoints are isolated and daemon health is probeable") {

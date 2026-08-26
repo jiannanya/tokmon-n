@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <map>
 #include <optional>
+#include <set>
 #include <thread>
 
 #include "lenses/common/http_client.hpp"
@@ -182,8 +183,28 @@ cbor::Value request_tools(const ProviderPlan& plan, const cbor::Value& tools) {
   return normalized;
 }
 
-cbor::Value request_body(const ProviderPlan& plan, const cbor::Value& parameters,
-                         const std::string& prompt) {
+Result<cbor::Value> merge_request_parameters(cbor::Value body,
+                                             const cbor::Value& parameters) {
+  const auto* configured = cbor::find(parameters, "request_parameters");
+  if (!configured) return body;
+  if (!configured->as_map())
+    return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+        "model request_parameters must be a map"));
+  static const std::set<std::string> protected_fields{
+      "api_key", "secret", "secret_value", "authorization", "model", "messages",
+      "contents", "tools", "stream", "stream_options", "thinking", "reasoning_effort",
+      "max_tokens", "max_output_tokens"};
+  for (const auto& [key, value] : *configured->as_map()) {
+    if (protected_fields.contains(key))
+      return tl::unexpected(make_error(ErrorCode::permission_denied,
+          "model request parameter '" + key + "' is controlled by Tokmon"));
+    (*body.as_map())[key] = value;
+  }
+  return body;
+}
+
+Result<cbor::Value> request_body(const ProviderPlan& plan, const cbor::Value& parameters,
+                                 const std::string& prompt) {
   if (const auto* supplied = cbor::find(parameters, "request_body");
       supplied && supplied->is_map()) return *supplied;
   const auto max_tokens = cbor::find(parameters, "max_output_tokens")
@@ -194,7 +215,7 @@ cbor::Value request_body(const ProviderPlan& plan, const cbor::Value& parameters
         {"max_tokens", max_tokens}, {"stream", true}});
     if (const auto* tools = cbor::find(parameters, "tools"))
       (*body.as_map())["tools"] = request_tools(plan, *tools);
-    return body;
+    return merge_request_parameters(std::move(body), parameters);
   }
   if (plan.protocol == "gemini") {
     cbor::Value::Array contents;
@@ -207,7 +228,7 @@ cbor::Value request_body(const ProviderPlan& plan, const cbor::Value& parameters
     auto body = cbor::object({{"contents", std::move(contents)}});
     if (const auto* tools = cbor::find(parameters, "tools"))
       (*body.as_map())["tools"] = request_tools(plan, *tools);
-    return body;
+    return merge_request_parameters(std::move(body), parameters);
   }
   const auto* tools = cbor::find(parameters, "tools");
   const bool has_tools = tools && tools->as_array() && !tools->as_array()->empty();
@@ -224,7 +245,7 @@ cbor::Value request_body(const ProviderPlan& plan, const cbor::Value& parameters
     (*body.as_map())["reasoning_effort"] = effort;
   if (tools)
     (*body.as_map())["tools"] = request_tools(plan, *tools);
-  return body;
+  return merge_request_parameters(std::move(body), parameters);
 }
 
 std::vector<std::pair<std::string, std::string>> headers(
@@ -537,7 +558,9 @@ Result<RefractionResult> RheaLens::refract(const PhotonWindow& photons, const Ac
       ++global_attempt;
       if (beam.stop_requested())
         return tl::unexpected(make_error(ErrorCode::cancelled, "model call cancelled"));
-      const auto body = json::stringify(request_body(plan, act.parameters, prompt));
+      auto requested_body = request_body(plan, act.parameters, prompt);
+      if (!requested_body) return tl::unexpected(requested_body.error());
+      const auto body = json::stringify(*requested_body);
       if (auto result = append("model.dispatched", "tokmon.model.dispatch.v1",
           cbor::object({{"model", plan.model}, {"provider", plan.provider},
               {"endpoint", plan.endpoint}, {"attempt", global_attempt},

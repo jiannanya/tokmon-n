@@ -1276,15 +1276,16 @@ private:
     TimelineItem item;
     item.time = "now";
     item.kind = "snow.error";
-    item.title = "后台服务连接失败";
+    item.title = "配置或后台服务错误";
     item.detail = display_string(message);
     item.progress = -1;
     item.tone = "danger";
     auto model = timeline_;
-    update_daemon_state("后台服务连接失败");
+    update_daemon_state("配置或后台服务错误");
     (void)slint::invoke_from_event_loop(
-        [model, item = std::move(item)]() mutable {
+        [model, item = std::move(item), message = std::move(message)]() mutable {
           model->push_back(std::move(item));
+          show_error_dialog("Tokmon 配置或后台服务错误", message);
         });
   }
 
@@ -1306,6 +1307,7 @@ private:
             (*locked)->set_daemon_state("原工作空间仍连接");
             (*locked)->set_settings_status(display_string(message));
           }
+          show_error_dialog("Tokmon 工作空间错误", message);
         });
   }
 
@@ -1319,6 +1321,12 @@ private:
     std::filesystem::create_directories(*target, directory_error);
     if (directory_error) {
       show_workspace_error("无法创建工作空间：" + directory_error.message());
+      return false;
+    }
+    auto validated_config = tokmon::load_config(*target);
+    if (!validated_config) {
+      show_workspace_error("配置文件无效：" +
+                           validated_config.error().describe());
       return false;
     }
     if (same_workspace(*target, current_workspace_)) {
@@ -1434,10 +1442,14 @@ private:
           command = std::move(commands_.front());
           commands_.pop_front();
         } else {
-          // A snapshot is explicitly queued at startup. Replaying the global
-          // tail while a new session is idle would overwrite its blank state
-          // with an unrelated older ray.
-          continue;
+          // Do not replay the causal tail while idle, but keep validating the
+          // watched YAML so an external edit produces a Desktop dialog even
+          // before the user submits another action.
+          const auto now = std::chrono::steady_clock::now();
+          if (now - last_config_validation_ < std::chrono::seconds(1))
+            continue;
+          last_config_validation_ = now;
+          command = Command{"config-validate", {}};
         }
       }
       if (command.kind == "workspace-refresh") {
@@ -1570,6 +1582,9 @@ private:
           if (const auto *values = command.payload.as_map())
             for (const auto &[key, value] : *values)
               (*request.payload.as_map())[key] = value;
+        } else if (command.kind == "config-validate") {
+          request.payload =
+              tokmon::cbor::object({{"action", "config.validate"}});
         } else
           request.payload =
               tokmon::cbor::object({{"action", "lens.reconcile"}});
@@ -1592,12 +1607,14 @@ private:
         }
         continue;
       }
-      last_error_.clear();
-      update_daemon_state("后台服务已连接");
       if (response->kind == tokmon::SnowMessageKind::error) {
         const auto *message = tokmon::cbor::find(response->payload, "message");
-        show_error(message ? std::string(message->as_string())
-                           : "后台服务拒绝了请求");
+        const auto error_message = message ? std::string(message->as_string())
+                                           : std::string("后台服务拒绝了请求");
+        if (error_message != last_error_) {
+          last_error_ = error_message;
+          show_error(error_message);
+        }
         if (command.kind == "settings-load") {
           const auto *include =
               tokmon::cbor::find(command.payload, "include_navigation");
@@ -1606,6 +1623,8 @@ private:
         }
         continue;
       }
+      last_error_.clear();
+      update_daemon_state("后台服务已连接");
       if (command.kind != "navigation-save")
         cursor_ = std::max(cursor_, response->cursor);
       if (command.kind == "settings-load") {
@@ -1620,6 +1639,8 @@ private:
         apply_providers(response->payload);
         continue;
       }
+      if (command.kind == "config-validate")
+        continue;
       if (command.kind == "settings-save") {
         auto window = window_;
         (void)slint::invoke_from_event_loop([window] {
@@ -1740,6 +1761,7 @@ private:
   tokmon::RayId active_ray_;
   std::vector<tokmon::Photon> photons_;
   std::string last_error_;
+  std::chrono::steady_clock::time_point last_config_validation_{};
   std::jthread worker_;
 };
 

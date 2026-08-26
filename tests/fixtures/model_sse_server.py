@@ -4,12 +4,12 @@ import socket
 import sys
 
 
-def read_request(connection: socket.socket) -> None:
+def read_request(connection: socket.socket):
     data = b""
     while b"\r\n\r\n" not in data:
         chunk = connection.recv(4096)
         if not chunk:
-            return
+            return None
         data += chunk
     header, body = data.split(b"\r\n\r\n", 1)
     length = 0
@@ -22,7 +22,8 @@ def read_request(connection: socket.socket) -> None:
             break
         body += chunk
     if body:
-        json.loads(body[:length].decode("utf-8"))
+        return json.loads(body[:length].decode("utf-8"))
+    return None
 
 
 def send(connection: socket.socket, status: int, body: bytes,
@@ -42,6 +43,7 @@ def main() -> None:
     ready_path = pathlib.Path(sys.argv[2])
     request_count = int(sys.argv[3])
     failures = int(sys.argv[4])
+    capture_path = pathlib.Path(sys.argv[5]) if len(sys.argv) > 5 else None
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind(("127.0.0.1", requested_port))
@@ -50,7 +52,10 @@ def main() -> None:
     for index in range(request_count):
         connection, _ = server.accept()
         with connection:
-            read_request(connection)
+            request = read_request(connection)
+            if capture_path is not None and request is not None:
+                with capture_path.open("a", encoding="utf-8") as capture:
+                    capture.write(json.dumps(request, separators=(",", ":")) + "\n")
             if index < failures:
                 send(connection, 503, b'{"error":{"message":"retry"}}')
                 continue

@@ -394,6 +394,15 @@ int tokmon::app::cli_main(int argc, char** argv) {
     return 0;
   }
 
+  // Fail in the foreground with the actual YAML/schema error. Otherwise a
+  // freshly spawned hidden daemon can exit before Snow is ready and the user
+  // only sees a misleading startup timeout.
+  auto validated_config = tokmon::load_config(paths->project.parent_path());
+  if (!validated_config) {
+    print_error(validated_config.error());
+    return 2;
+  }
+
   auto connection = tokmon::ensure_daemon(tokmon::DaemonLaunchOptions{
       .endpoint = endpoint,
       .workspace = paths->project.parent_path(),

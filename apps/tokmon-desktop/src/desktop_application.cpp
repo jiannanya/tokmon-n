@@ -99,8 +99,15 @@ int run_application(int argc, char **argv) {
     }
   }
   auto paths = tokmon::resolve_paths(workspace);
-  if (!paths)
+  if (!paths) {
+    show_error_dialog("Tokmon 配置错误", paths.error().describe());
     return 2;
+  }
+  auto validated_config = tokmon::load_config(paths->project.parent_path());
+  if (!validated_config) {
+    show_error_dialog("Tokmon 配置文件无效", validated_config.error().describe());
+    return 2;
+  }
 
   std::error_code path_error;
   auto executable = argc > 0 ? std::filesystem::absolute(argv[0], path_error)
@@ -126,12 +133,7 @@ int run_application(int argc, char **argv) {
                                   .workspace = paths->project.parent_path(),
                                   .executable = daemon_executable});
   if (!connected) {
-#if defined(_WIN32)
-    const auto description = connected.error().describe();
-    const auto message = std::wstring(description.begin(), description.end());
-    MessageBoxW(nullptr, message.c_str(), L"Tokmon 无法启动",
-                MB_OK | MB_ICONERROR);
-#endif
+    show_error_dialog("Tokmon 无法启动", connected.error().describe());
     return 2;
   }
   auto client_lease =
@@ -143,12 +145,8 @@ int run_application(int argc, char **argv) {
           .idle_timeout = std::chrono::milliseconds(250),
           .lease_ttl = std::chrono::seconds(6)});
   if (!client_lease) {
-#if defined(_WIN32)
-    const auto description = client_lease.error().describe();
-    const auto message = std::wstring(description.begin(), description.end());
-    MessageBoxW(nullptr, message.c_str(), L"Tokmon 无法连接后台服务",
-                MB_OK | MB_ICONERROR);
-#endif
+    show_error_dialog("Tokmon 无法连接后台服务",
+                      client_lease.error().describe());
     return 2;
   }
   auto window = MainWindow::create();

@@ -404,6 +404,9 @@ tokmon::Result<void> select_project_model_provider(const std::filesystem::path& 
 
 tokmon::cbor::Value provider_value(const tokmon::ModelProviderConfig& provider,
                                    const bool credential_present) {
+  tokmon::cbor::Value::Array request_parameter_keys;
+  if (const auto* parameters = provider.request_parameters.as_map())
+    for (const auto& [key, _] : *parameters) request_parameter_keys.emplace_back(key);
   return tokmon::cbor::object({
       {"id", provider.id}, {"protocol", provider.protocol},
       {"endpoint", provider.endpoint}, {"model", provider.model},
@@ -413,6 +416,9 @@ tokmon::cbor::Value provider_value(const tokmon::ModelProviderConfig& provider,
       {"max_output_tokens", provider.max_output_tokens},
       {"max_attempts", provider.max_attempts},
       {"retry_backoff_ms", provider.retry_backoff_ms},
+      {"first_token_timeout_ms", provider.first_token_timeout_ms},
+      {"idle_timeout_ms", provider.idle_timeout_ms},
+      {"request_parameter_keys", std::move(request_parameter_keys)},
       {"credential_present", credential_present},
       {"credential_source", provider.secret_env.empty() ? "operating-system-vault"
                                                           : "environment-to-vault"}});
@@ -893,6 +899,7 @@ int tokmon::app::daemon_main(int argc, char** argv) {
   if (once) return runtime.verify() ? 0 : 1;
 
   std::mutex runtime_mutex;
+  std::optional<tokmon::Error> configuration_error;
   std::mutex request_mutex;
   std::set<std::uint64_t> cancelled_requests;
   std::unordered_map<std::uint64_t, tokmon::SnowMessage> completed_requests;
@@ -912,7 +919,8 @@ int tokmon::app::daemon_main(int argc, char** argv) {
       runtime.config().paths.run, runtime.config().paths.project.parent_path()));
   DaemonInstanceLock instance_lock(endpoint);
   if (!instance_lock.acquired()) return 0;
-  auto snow_started = snow.start(endpoint, [&runtime, &runtime_mutex, &request_mutex,
+  auto snow_started = snow.start(endpoint, [&runtime, &runtime_mutex,
+                                        &configuration_error, &request_mutex,
                                         &cancelled_requests, &completed_requests,
                                         &active_requests, &lifecycle_mutex,
                                         &client_leases, &idle_shutdown_at,
@@ -1060,6 +1068,8 @@ int tokmon::app::daemon_main(int argc, char** argv) {
           .payload = tokmon::cbor::object({{"healthy", true}})});
     }
     if (request.kind == tokmon::SnowMessageKind::snapshot_request) {
+      if (configuration_error)
+        return snow_error(request, *configuration_error);
       auto complete_history = runtime.history_all(0);
       if (!complete_history) return snow_error(request, complete_history.error());
       const auto tail = complete_history->empty() ? 0u : complete_history->back().sequence;
@@ -1084,11 +1094,22 @@ int tokmon::app::daemon_main(int argc, char** argv) {
                                                     "unsupported Snow request"));
     const auto* action_field = tokmon::cbor::find(request.payload, "action");
     const auto action = action_field ? action_field->as_string() : std::string_view{};
-    if (action == "chat" || action == "command.execute" ||
-        action.starts_with("model.")) {
-      if (auto reloaded = runtime.reload_configuration(); !reloaded)
+    if (configuration_error && action == "config.validate") {
+      if (auto reconciled = runtime.reconcile(); !reconciled) {
+        configuration_error = reconciled.error();
+        return snow_error(request, reconciled.error());
+      }
+      configuration_error.reset();
+    }
+    if (configuration_error && !action.starts_with("daemon."))
+      return snow_error(request, *configuration_error);
+    if (!action.starts_with("daemon.") && action != "config.validate") {
+      if (auto reloaded = runtime.reload_configuration(); !reloaded) {
+        configuration_error = reloaded.error();
         return snow_error(request, reloaded.error());
-      if (auto credentials = bootstrap_environment_credentials(runtime.config()); !credentials)
+      }
+      if (auto credentials = bootstrap_environment_credentials(runtime.config());
+          !credentials)
         return snow_error(request, credentials.error());
     }
     if (action == "daemon.shutdown") {
@@ -1098,6 +1119,11 @@ int tokmon::app::daemon_main(int argc, char** argv) {
           .payload = tokmon::cbor::object({{"stopping", true},
                                            {"ownership", "explicit-user-stop"}})});
     }
+    if (action == "config.validate")
+      return remember(tokmon::SnowMessage{.kind = tokmon::SnowMessageKind::intent_result,
+          .request_id = request.request_id, .cursor = request.cursor,
+          .payload = tokmon::cbor::object({{"valid", true},
+              {"project", runtime.config().paths.project.generic_string()}})});
     if (action == "settings.get") {
       auto values = read_project_settings(runtime.config().paths.project / "config.yaml");
       if (!values) return snow_error(request, values.error());
@@ -1468,9 +1494,13 @@ int tokmon::app::daemon_main(int argc, char** argv) {
     }
     if (changed) {
       std::scoped_lock lock(runtime_mutex);
-      if (auto result = runtime.reconcile(); !result)
+      if (auto result = runtime.reconcile(); !result) {
+        configuration_error = result.error();
         tokmon::log_error("configuration reconcile rejected: {}",
                           result.error().describe());
+      } else {
+        configuration_error.reset();
+      }
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(250));
   }
