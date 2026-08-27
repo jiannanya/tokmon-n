@@ -504,6 +504,10 @@ export component WorkspacePanel inherits Rectangle {
                             }
                             if !root.chat-empty : ScrollView {
                                 VerticalLayout {
+                                    // Keep message rows constrained to the
+                                    // viewport. Rich Markdown must wrap instead
+                                    // of growing the scroll content horizontally.
+                                    width: parent.width;
                                     spacing: 24px;
                                     padding-top: 20px;
                                     padding-bottom: 160px;

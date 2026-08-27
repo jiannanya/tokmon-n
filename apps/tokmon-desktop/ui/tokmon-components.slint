@@ -520,21 +520,30 @@ export component ChatBlockRow inherits VerticalLayout {
                 vertical-alignment: center;
             }
         }
-        StyledText {
-            text: root.block.rich;
-            default-font-size: !root.heading ? 13.5px
-                : root.block.depth <= 1 ? 15px
-                : root.block.depth == 2 ? 14.5px
-                : root.block.depth == 3 ? 14px
-                : root.block.depth == 4 ? 13.5px
-                : root.block.depth == 5 ? 13px : 12.5px;
-            default-color: Palette.body;
-            default-font-family: "Microsoft YaHei UI";
-            vertical-alignment: top;
-            link-color: Palette.accent-text;
+        // StyledText's intrinsic width is the unwrapped line width. As a
+        // direct layout child that width becomes the row minimum and expands
+        // the ScrollView horizontally. Isolate it behind a zero-min-width
+        // wrapper, then measure height again using the assigned viewport width.
+        rich-box := Rectangle {
             horizontal-stretch: 1;
+            min-width: 0px;
             vertical-stretch: 0;
-            min-height: 21px;
+            height: max(21px, rich-text.preferred-height);
+            rich-text := StyledText {
+                width: parent.width;
+                height: self.preferred-height;
+                text: root.block.rich;
+                default-font-size: !root.heading ? 13.5px
+                    : root.block.depth <= 1 ? 15px
+                    : root.block.depth == 2 ? 14.5px
+                    : root.block.depth == 3 ? 14px
+                    : root.block.depth == 4 ? 13.5px
+                    : root.block.depth == 5 ? 13px : 12.5px;
+                default-color: Palette.body;
+                default-font-family: "Microsoft YaHei UI";
+                vertical-alignment: top;
+                link-color: Palette.accent-text;
+            }
         }
     }
 }
