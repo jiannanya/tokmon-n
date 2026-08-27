@@ -176,6 +176,14 @@ bool loopback_endpoint(const std::string_view endpoint) {
       endpoint.starts_with("http://localhost") || endpoint.starts_with("http://[::1]");
 }
 
+Result<RuntimeProfile> parse_runtime_profile(const std::string_view text) {
+  if (text == "production") return RuntimeProfile::production;
+  if (text == "development") return RuntimeProfile::development;
+  if (text == "test") return RuntimeProfile::test;
+  return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                   "unknown runtime profile: " + std::string(text)));
+}
+
 const std::set<std::string>& fixed_model_provider_fields() {
   static const std::set<std::string> fields{
       "protocol", "endpoint", "model", "secret_ref", "secret_env", "auth", "enabled",
@@ -350,8 +358,15 @@ Result<void> merge_config_file(RuntimeConfig& config, const std::filesystem::pat
     return tl::unexpected(make_error(ErrorCode::schema_mismatch,
                                      source.string() + " must contain a YAML map"));
   if (auto result = reject_unknown(root,
-      {"logging", "engine", "security", "ui", "fallen", "models"}, source);
+      {"profile", "logging", "engine", "security", "ui", "fallen", "models"}, source);
       !result) return result;
+  if (auto result = require_type<std::string>(root, "profile", "a string", source);
+      !result) return result;
+  if (const auto* profile = cbor::find(root, "profile")) {
+    auto parsed = parse_runtime_profile(profile->as_string());
+    if (!parsed) return tl::unexpected(parsed.error());
+    config.profile = *parsed;
+  }
   if (const auto* logging = cbor::find(root, "logging")) {
     if (!logging->is_map())
       return tl::unexpected(make_error(ErrorCode::schema_mismatch,
@@ -520,13 +535,17 @@ Result<void> merge_light_path(RuntimeConfig& config,
     if (lens.id.empty())
       return tl::unexpected(make_error(ErrorCode::schema_mismatch,
                                        source.string() + ": Lens id cannot be empty"));
+    auto builtin_name = lens.id;
+    constexpr std::string_view official_prefix = "org.tokmon.lens.";
+    if (builtin_name.starts_with(official_prefix))
+      builtin_name.erase(0, official_prefix.size());
     lens.artifact = artifact_field ? std::string(artifact_field->as_string())
-                                   : "builtin:" + lens.id;
-      if (!lens.artifact.starts_with("builtin:")) {
-        auto artifact = std::filesystem::path(lens.artifact);
-        if (artifact.is_relative())
-          lens.artifact = (source.parent_path() / artifact).lexically_normal().string();
-      }
+                                   : "builtin:" + builtin_name;
+    if (!lens.artifact.starts_with("builtin:")) {
+      auto artifact = std::filesystem::path(lens.artifact);
+      if (artifact.is_relative())
+        lens.artifact = (source.parent_path() / artifact).lexically_normal().string();
+    }
     lens.enabled = !enabled || enabled->as_bool();
     auto runtime = parse_runtime(runtime_field ? std::string(runtime_field->as_string())
                                                : "in_process");
@@ -688,6 +707,15 @@ PolicyEffect evaluate_single_policy(const FallenPolicy& policy, const Act& act,
 
 }  // namespace
 
+std::string_view to_string(const RuntimeProfile profile) noexcept {
+  switch (profile) {
+    case RuntimeProfile::production: return "production";
+    case RuntimeProfile::development: return "development";
+    case RuntimeProfile::test: return "test";
+  }
+  return "production";
+}
+
 std::string_view to_string(const PolicyEffect effect) noexcept {
   switch (effect) {
     case PolicyEffect::allow: return "allow";
@@ -758,6 +786,10 @@ Result<RuntimeConfig> load_config(const std::optional<std::filesystem::path>& wo
     return tl::unexpected(result.error());
   if (auto result = merge_config_file(config, config.paths.project / "config.yaml"); !result)
     return tl::unexpected(result.error());
+  if (config.profile != RuntimeProfile::production)
+    config.light_path.push_back(DesiredLens{
+        .id = "org.tokmon.lens.calculator", .artifact = "builtin:calculator",
+        .enabled = true, .runtime = RuntimeKind::in_process});
   const auto selected = config.model_providers.find(config.default_model_provider);
   if (selected == config.model_providers.end() || !selected->second.enabled)
     return tl::unexpected(make_error(ErrorCode::schema_mismatch,
@@ -766,7 +798,54 @@ Result<RuntimeConfig> load_config(const std::optional<std::filesystem::path>& wo
     return tl::unexpected(result.error());
   if (auto result = merge_light_path(config, config.paths.project / "light-path.yaml"); !result)
     return tl::unexpected(result.error());
+  if (config.profile == RuntimeProfile::production &&
+      std::ranges::any_of(config.light_path, [](const DesiredLens& lens) {
+        return lens.enabled && lens.id == "org.tokmon.lens.calculator";
+      }))
+    return tl::unexpected(make_error(ErrorCode::permission_denied,
+        "Calculator Lens is available only in development or test profile"));
   return config;
+}
+
+Result<cbor::Value> update_light_path_document(
+    cbor::Value root, std::string id, std::optional<std::string> artifact,
+    std::optional<std::string> runtime, const bool enabled) {
+  if (id.empty())
+    return tl::unexpected(make_error(ErrorCode::invalid_argument,
+                                     "Lens id is required"));
+  if (!root.is_map()) root = cbor::Value::Map{};
+  auto& root_map = *root.as_map();
+  root_map.erase("version");
+  root_map["api"] = "tokmon.light-path/wavefront";
+  auto& lenses_value = root_map["lenses"];
+  if (!lenses_value.as_array()) lenses_value = cbor::Value::Array{};
+  auto& lenses = *std::get_if<cbor::Value::Array>(&lenses_value.data);
+  auto selected = lenses.end();
+  for (auto iterator = lenses.begin(); iterator != lenses.end(); ++iterator) {
+    const auto* mounted_id = cbor::find(*iterator, "id");
+    if (mounted_id && mounted_id->as_string() == id) {
+      selected = iterator;
+      break;
+    }
+  }
+  auto entry = selected == lenses.end() ? cbor::Value(cbor::Value::Map{}) : *selected;
+  if (!entry.is_map()) entry = cbor::Value::Map{};
+  auto& entry_map = *entry.as_map();
+  entry_map["id"] = std::move(id);
+  entry_map["enabled"] = enabled;
+  if (enabled) {
+    if (!artifact || artifact->empty())
+      return tl::unexpected(make_error(ErrorCode::invalid_argument,
+                                       "Lens artifact is required"));
+    const auto runtime_name = runtime && !runtime->empty() ? *runtime : "in_process";
+    if (auto parsed = parse_runtime(runtime_name); !parsed)
+      return tl::unexpected(parsed.error());
+    entry_map["artifact"] = std::move(*artifact);
+    entry_map["runtime"] = runtime_name;
+  }
+  if (selected == lenses.end()) lenses.push_back(std::move(entry));
+  else *selected = std::move(entry);
+  return root;
 }
 
 Result<cbor::Value> resolve_model_provider_context(

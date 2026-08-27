@@ -4,6 +4,7 @@
 #include <chrono>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -46,11 +47,14 @@ class BeamRegistry {
     std::chrono::steady_clock::time_point deadline;
   };
 
-  [[nodiscard]] std::shared_ptr<Ticket> acquire(const LensId& lens,
-                                                GenerationId generation, RayId ray,
-                                                std::chrono::milliseconds timeout);
+  [[nodiscard]] Result<std::shared_ptr<Ticket>> acquire(
+      const LensId& lens, GenerationId generation, RayId ray,
+      std::chrono::milliseconds timeout);
   void release(const std::string& ticket_id);
+  // Closing and admission share the same mutex, making the transition a hard
+  // gate: once this returns, no new Beam can target the generation.
   std::size_t stop_generation(const LensId& lens, GenerationId generation);
+  void reopen_generation(const LensId& lens, GenerationId generation);
   std::size_t stop_ray(const RayId& ray);
   [[nodiscard]] std::size_t active(const LensId& lens,
                                    GenerationId generation) const;
@@ -58,6 +62,7 @@ class BeamRegistry {
  private:
   mutable std::mutex mutex_;
   std::unordered_map<std::string, std::shared_ptr<Ticket>> tickets_;
+  std::set<std::pair<LensId, GenerationId>> closed_generations_;
 };
 
 }  // namespace tokmon

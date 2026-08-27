@@ -142,7 +142,86 @@ CREATE TABLE IF NOT EXISTS photon_verification_state(
   sequence INTEGER NOT NULL,
   hash TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS mount_allocator(
+  singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+  last_epoch INTEGER NOT NULL,
+  last_generation INTEGER NOT NULL
+);
+INSERT OR IGNORE INTO mount_allocator(singleton,last_epoch,last_generation)
+SELECT 1, COALESCE(MAX(epoch),0),
+       CASE WHEN COALESCE(MAX(epoch),0)=0 THEN 0
+            WHEN COALESCE(MAX(epoch),0)>9223372036854774 THEN 9223372036854775807
+            ELSE COALESCE(MAX(epoch),0)*1000+999 END
+FROM photons;
 )SQL");
+}
+
+Result<MountAllocation> PhotonStore::allocate_mount(
+    const std::size_t generation_count) {
+  std::scoped_lock lock(mutex_);
+  if (!database_)
+    return tl::unexpected(make_error(ErrorCode::invalid_state,
+                                     "PhotonStore is not open"));
+  auto begin = execute(database_, "BEGIN IMMEDIATE;");
+  if (!begin) return tl::unexpected(begin.error());
+  bool committed = false;
+  const auto rollback = [&] {
+    if (!committed) sqlite3_exec(database_, "ROLLBACK;", nullptr, nullptr, nullptr);
+  };
+
+  sqlite3_stmt* statement = nullptr;
+  if (sqlite3_prepare_v2(database_,
+          "SELECT last_epoch,last_generation FROM mount_allocator WHERE singleton=1",
+          -1, &statement, nullptr) != SQLITE_OK) {
+    rollback();
+    return tl::unexpected(sqlite_error(database_, "prepare mount allocation"));
+  }
+  if (sqlite3_step(statement) != SQLITE_ROW) {
+    sqlite3_finalize(statement);
+    rollback();
+    return tl::unexpected(sqlite_error(database_, "read mount allocation"));
+  }
+  const auto last_epoch = static_cast<std::uint64_t>(sqlite3_column_int64(statement, 0));
+  const auto last_generation = static_cast<std::uint64_t>(
+      sqlite3_column_int64(statement, 1));
+  sqlite3_finalize(statement);
+  constexpr auto max_persisted_identity =
+      static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+  const bool generation_exhausted =
+      last_generation > max_persisted_identity ||
+      generation_count > max_persisted_identity - last_generation;
+  if (last_epoch >= max_persisted_identity || generation_exhausted) {
+    rollback();
+    return tl::unexpected(make_error(
+        ErrorCode::invalid_state, "mount identity space is exhausted"));
+  }
+
+  MountAllocation allocation{
+      .epoch = last_epoch + 1u,
+      .first_generation = generation_count == 0 ? 0 : last_generation + 1u,
+      .generation_count = generation_count};
+  const auto next_generation = last_generation + generation_count;
+  if (sqlite3_prepare_v2(database_,
+          "UPDATE mount_allocator SET last_epoch=?,last_generation=? WHERE singleton=1",
+          -1, &statement, nullptr) != SQLITE_OK) {
+    rollback();
+    return tl::unexpected(sqlite_error(database_, "prepare mount allocation update"));
+  }
+  sqlite3_bind_int64(statement, 1, static_cast<sqlite3_int64>(allocation.epoch));
+  sqlite3_bind_int64(statement, 2, static_cast<sqlite3_int64>(next_generation));
+  const auto updated = sqlite3_step(statement);
+  sqlite3_finalize(statement);
+  if (updated != SQLITE_DONE) {
+    rollback();
+    return tl::unexpected(sqlite_error(database_, "update mount allocation"));
+  }
+  auto commit = execute(database_, "COMMIT;");
+  if (!commit) {
+    rollback();
+    return tl::unexpected(commit.error());
+  }
+  committed = true;
+  return allocation;
 }
 
 Result<Photon> PhotonStore::append(PhotonDraft draft) {

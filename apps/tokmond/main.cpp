@@ -128,41 +128,15 @@ tokmon::Result<void> update_project_light_path(const std::filesystem::path& file
   const auto id = std::string(id_field->as_string());
   auto loaded = editable_yaml(file);
   if (!loaded) return tl::unexpected(loaded.error());
-  auto root = std::move(*loaded);
-  auto& root_map = *root.as_map();
-  root_map["version"] = 1;
-  auto& lenses_value = root_map["lenses"];
-  if (!lenses_value.as_array()) lenses_value = tokmon::cbor::Value::Array{};
-  auto& lenses = *std::get_if<tokmon::cbor::Value::Array>(&lenses_value.data);
-  std::size_t selected = lenses.size();
-  for (std::size_t index = 0; index < lenses.size(); ++index) {
-    const auto* mounted_id = tokmon::cbor::find(lenses[index], "id");
-    if (mounted_id && mounted_id->as_string() == id) {
-      selected = index;
-      break;
-    }
-  }
-  auto entry = selected < lenses.size() ? lenses[selected]
-                                        : tokmon::cbor::Value(tokmon::cbor::Value::Map{});
-  if (!entry.is_map()) entry = tokmon::cbor::Value::Map{};
-  auto& entry_map = *entry.as_map();
-  entry_map["id"] = id;
-    if (action == "lens.unmount") {
-      entry_map["enabled"] = false;
-    } else {
-      const auto* artifact = tokmon::cbor::find(payload, "artifact");
-      const auto* runtime = tokmon::cbor::find(payload, "runtime");
-      if (!artifact || artifact->as_string().empty())
-        return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::invalid_argument,
-                                                 "Lens artifact is required"));
-      entry_map["artifact"] = std::string(artifact->as_string());
-      entry_map["runtime"] = runtime && !runtime->as_string().empty()
-          ? std::string(runtime->as_string()) : "in_process";
-      entry_map["enabled"] = true;
-    }
-    if (selected < lenses.size()) lenses[selected] = entry;
-    else lenses.push_back(entry);
-  return publish_yaml(file, root, "LightPath");
+  const bool enabled = action != "lens.unmount";
+  const auto* artifact_field = tokmon::cbor::find(payload, "artifact");
+  const auto* runtime_field = tokmon::cbor::find(payload, "runtime");
+  auto updated = tokmon::update_light_path_document(std::move(*loaded), id,
+      artifact_field ? std::optional<std::string>(artifact_field->as_string()) : std::nullopt,
+      runtime_field ? std::optional<std::string>(runtime_field->as_string()) : std::nullopt,
+      enabled);
+  if (!updated) return tl::unexpected(updated.error());
+  return publish_yaml(file, *updated, "LightPath");
 }
 
 tokmon::Result<void> update_project_settings(const std::filesystem::path& file,

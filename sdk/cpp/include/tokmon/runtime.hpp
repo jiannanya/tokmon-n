@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <optional>
 
 #include "tokmon/config.hpp"
@@ -45,6 +46,7 @@ class TokmonRuntime {
   BeamRegistry beams_;
   std::unique_ptr<RayTracingEngine> engine_;
   std::string reconciled_configuration_hash_;
+  std::mutex reconcile_mutex_;
   bool open_{false};
 };
 

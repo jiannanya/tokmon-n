@@ -16,6 +16,12 @@ struct sqlite3;
 
 namespace tokmon {
 
+struct MountAllocation {
+  MountEpoch epoch{0};
+  GenerationId first_generation{0};
+  std::size_t generation_count{0};
+};
+
 class PhotonStore {
  public:
   using Observer = std::function<void(const Photon&)>;
@@ -33,6 +39,10 @@ class PhotonStore {
   Result<std::vector<Photon>> read_all(std::uint64_t after_sequence = 0,
                                        std::size_t limit = 4096) const;
   Result<std::optional<Photon>> read_latest_kind(std::string_view kind) const;
+  // Atomically reserves one globally unique mount epoch and a contiguous range
+  // of generation ids. Reservations are durable even when a later candidate
+  // is rejected, so identities are never reused after failure or restart.
+  Result<MountAllocation> allocate_mount(std::size_t generation_count);
   // Verifies only the immutable tail after the last durable checkpoint. The
   // first call performs a complete verification and establishes that anchor.
   Result<void> verify() const;

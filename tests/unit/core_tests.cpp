@@ -42,6 +42,13 @@ struct UserProfileGuard {
   std::string previous;
 };
 
+void write_runtime_profile(const std::filesystem::path& root,
+                           const std::string_view profile) {
+  const auto directory = root / "home" / ".tokmon";
+  std::filesystem::create_directories(directory);
+  std::ofstream(directory / "config.yaml") << "profile: " << profile << '\n';
+}
+
 class ManifestLens final : public tokmon::ILens {
  public:
   explicit ManifestLens(tokmon::LensManifest manifest) : manifest_(std::move(manifest)) {}
@@ -620,6 +627,20 @@ TEST_CASE("LightPath publication only exposes complete immutable epochs") {
   REQUIRE_FALSE(invalid.load());
 }
 
+TEST_CASE("closed Lens generations reject every later Beam acquisition") {
+  tokmon::BeamRegistry beams;
+  auto active = beams.acquire("org.example.lens", 42, "ray-active",
+                              std::chrono::seconds(1));
+  REQUIRE(active);
+  REQUIRE(beams.stop_generation("org.example.lens", 42) == 1);
+  REQUIRE((*active)->stop.stop_requested());
+  auto stale = beams.acquire("org.example.lens", 42, "ray-stale",
+                             std::chrono::seconds(1));
+  REQUIRE_FALSE(stale);
+  REQUIRE(stale.error().code == tokmon::ErrorCode::invalid_state);
+  beams.release((*active)->id);
+}
+
 TEST_CASE("C ABI Lens loads and passes a dark-lane view") {
   auto lens = tokmon::CAbiLens::load(TOKMON_TEST_LENS_PATH);
   REQUIRE(lens);
@@ -713,6 +734,73 @@ TEST_CASE("Fallen policy keeps deny precedence and project policy cannot expand 
                                   "C:/workspace") == tokmon::PolicyEffect::ask);
 }
 
+TEST_CASE("runtime profiles keep Calculator out of production") {
+  const auto root = temporary_directory("runtime-profiles");
+  UserProfileGuard profile(root / "home");
+  const auto workspace = root / "workspace";
+
+  auto production = tokmon::load_config(workspace);
+  REQUIRE(production);
+  REQUIRE(production->profile == tokmon::RuntimeProfile::production);
+  REQUIRE(std::ranges::none_of(production->light_path, [](const auto& lens) {
+    return lens.enabled && lens.id == "org.tokmon.lens.calculator";
+  }));
+
+  write_runtime_profile(root, "development");
+  auto development = tokmon::load_config(workspace);
+  REQUIRE(development);
+  REQUIRE(development->profile == tokmon::RuntimeProfile::development);
+  REQUIRE(std::ranges::count_if(development->light_path, [](const auto& lens) {
+    return lens.enabled && lens.id == "org.tokmon.lens.calculator";
+  }) == 1);
+
+  write_runtime_profile(root, "production");
+  std::filesystem::create_directories(workspace / ".tokmon");
+  std::ofstream(workspace / ".tokmon" / "light-path.yaml")
+      << "api: tokmon.light-path/wavefront\nlenses:\n"
+         "  - { id: org.tokmon.lens.calculator, artifact: builtin:calculator, enabled: true, runtime: in_process }\n";
+  auto forbidden = tokmon::load_config(workspace);
+  REQUIRE_FALSE(forbidden);
+  REQUIRE(forbidden.error().code == tokmon::ErrorCode::permission_denied);
+}
+
+TEST_CASE("Lens YAML management emits the strict loadable schema") {
+  const auto root = temporary_directory("light-path-writer");
+  UserProfileGuard profile(root / "home");
+  const auto workspace = root / "workspace";
+  const auto project = workspace / ".tokmon";
+  std::filesystem::create_directories(project);
+
+  auto unmounted = tokmon::update_light_path_document(
+      tokmon::cbor::object({{"version", 1}}), "org.tokmon.lens.nota",
+      std::nullopt, std::nullopt, false);
+  REQUIRE(unmounted);
+  REQUIRE(tokmon::cbor::find(*unmounted, "version") == nullptr);
+  REQUIRE(tokmon::cbor::find(*unmounted, "api")->as_string() ==
+          "tokmon.light-path/wavefront");
+  auto yaml = tokmon::yaml::stringify(*unmounted);
+  REQUIRE(yaml);
+  std::ofstream(project / "light-path.yaml") << *yaml;
+  auto disabled = tokmon::load_config(workspace);
+  REQUIRE(disabled);
+  REQUIRE(std::ranges::none_of(disabled->light_path, [](const auto& lens) {
+    return lens.enabled && lens.id == "org.tokmon.lens.nota";
+  }));
+
+  auto mounted = tokmon::update_light_path_document(std::move(*unmounted),
+      "org.tokmon.lens.nota", "builtin:nota", "in_process", true);
+  REQUIRE(mounted);
+  yaml = tokmon::yaml::stringify(*mounted);
+  REQUIRE(yaml);
+  std::ofstream(project / "light-path.yaml", std::ios::trunc) << *yaml;
+  auto enabled = tokmon::load_config(workspace);
+  REQUIRE(enabled);
+  REQUIRE(std::ranges::any_of(enabled->light_path, [](const auto& lens) {
+    return lens.enabled && lens.id == "org.tokmon.lens.nota" &&
+        lens.artifact == "builtin:nota";
+  }));
+}
+
 TEST_CASE("Act approved boolean cannot bypass the common admission decision") {
   auto snapshot = std::make_shared<tokmon::LightPathSnapshot>();
   snapshot->epoch = 9;
@@ -736,6 +824,7 @@ TEST_CASE("Act approved boolean cannot bypass the common admission decision") {
 TEST_CASE("calculator executes the complete Fact Lens Act photon loop") {
   const auto root = temporary_directory("runtime");
   UserProfileGuard profile(root / "home");
+  write_runtime_profile(root, "test");
   tokmon::TokmonRuntime runtime;
   REQUIRE(runtime.open(root / "workspace", "tokmon-tests"));
   auto ray = runtime.submit("请计算 128 * 4", tokmon::cbor::object({
@@ -817,6 +906,30 @@ TEST_CASE("Nyxia recovery marks unterminated in-flight Act outcome unknown") {
            photon.caused_by_act == "act-interrupted";
   }));
   REQUIRE(recovered.verify());
+}
+
+TEST_CASE("mount epochs and generations remain monotonic across runtime restarts") {
+  const auto root = temporary_directory("mount-identity-recovery");
+  UserProfileGuard profile(root / "home");
+  const auto workspace = root / "workspace";
+  tokmon::MountEpoch first_epoch = 0;
+  tokmon::GenerationId first_max_generation = 0;
+  {
+    tokmon::TokmonRuntime first;
+    REQUIRE(first.open(workspace, "tokmon-mount-identity-one"));
+    first_epoch = first.light_path()->epoch;
+    for (const auto& mounted : first.light_path()->lenses)
+      first_max_generation = std::max(first_max_generation, mounted.generation);
+  }
+  {
+    tokmon::TokmonRuntime second;
+    REQUIRE(second.open(workspace, "tokmon-mount-identity-two"));
+    REQUIRE(second.light_path()->epoch > first_epoch);
+    REQUIRE(std::ranges::all_of(second.light_path()->lenses,
+        [&](const tokmon::MountedLens& mounted) {
+          return mounted.generation > first_max_generation;
+        }));
+  }
 }
 
 TEST_CASE("language Lens manifests carry an exact runtime entry") {
@@ -919,7 +1032,7 @@ TEST_CASE("signature-required runtime rejects an unlocked external Lens") {
   std::filesystem::create_directories(artifact);
   std::filesystem::create_directories(root / "home" / ".tokmon");
   std::ofstream(root / "home" / ".tokmon" / "config.yaml")
-      << "security:\n  require_signatures: true\n";
+      << "profile: test\nsecurity:\n  require_signatures: true\n";
 #if defined(_WIN32)
   constexpr auto library_name = "calculator.dll";
 #elif defined(__APPLE__)
@@ -955,6 +1068,7 @@ TEST_CASE("runtime hot swaps a C ABI Lens generation through a higher epoch") {
   const auto project = workspace / ".tokmon";
   const auto artifact = project / "calculator-artifact";
   std::filesystem::create_directories(artifact);
+  write_runtime_profile(root, "test");
 #if defined(_WIN32)
   constexpr auto library_name = "calculator.dll";
 #elif defined(__APPLE__)
@@ -991,10 +1105,39 @@ TEST_CASE("runtime hot swaps a C ABI Lens generation through a higher epoch") {
   REQUIRE(runtime.open(workspace, "tokmon-tests"));
   const auto first = runtime.light_path();
   REQUIRE(first->lenses.size() == 20);
-  REQUIRE(dynamic_cast<tokmon::CAbiLens*>(
-      runtime.light_path()->lenses.back().lens.get()) != nullptr);
+  const auto find_calculator = [](const auto& snapshot) {
+    return std::ranges::find_if(snapshot->lenses, [](const auto& mounted) {
+      return mounted.lens->manifest().id == "org.tokmon.lens.calculator";
+    });
+  };
+  const auto first_calculator = find_calculator(first);
+  REQUIRE(first_calculator != first->lenses.end());
+  REQUIRE(dynamic_cast<tokmon::CAbiLens*>(first_calculator->lens.get()) != nullptr);
   const auto first_epoch = first->epoch;
-  const auto first_hash = first->lenses.back().artifact_hash;
+  const auto first_hash = first_calculator->artifact_hash;
+
+  // Changing bytes under the same configured artifact path must not be hidden
+  // by the in-memory configuration hash. Only that Lens receives a new
+  // generation; every unchanged mount is reused.
+  std::ofstream(artifact / "revision.txt") << "revision two\n";
+  REQUIRE(runtime.reconcile());
+  const auto content_replaced = runtime.light_path();
+  REQUIRE(content_replaced->epoch == first_epoch + 1);
+  const auto content_calculator = find_calculator(content_replaced);
+  REQUIRE(content_calculator != content_replaced->lenses.end());
+  REQUIRE(content_calculator->artifact_hash != first_hash);
+  REQUIRE(content_calculator->generation != first_calculator->generation);
+  REQUIRE(dynamic_cast<tokmon::CAbiLens*>(content_calculator->lens.get()) != nullptr);
+  for (const auto& old : first->lenses) {
+    if (old.lens->manifest().id == "org.tokmon.lens.calculator") continue;
+    const auto same = std::ranges::find_if(content_replaced->lenses,
+        [&](const auto& mounted) {
+          return mounted.lens->manifest().id == old.lens->manifest().id;
+        });
+    REQUIRE(same != content_replaced->lenses.end());
+    REQUIRE(same->generation == old.generation);
+    REQUIRE(same->lens == old.lens);
+  }
 
   {
     std::ofstream path(project / "light-path.yaml", std::ios::trunc);
@@ -1005,11 +1148,23 @@ TEST_CASE("runtime hot swaps a C ABI Lens generation through a higher epoch") {
         "    runtime: in_process\n";
   }
   REQUIRE(runtime.reconcile());
-  const auto second = runtime.light_path();
-  REQUIRE(second->epoch == first_epoch + 1);
-  REQUIRE(second->lenses.size() == 20);
-  REQUIRE(second->lenses.back().artifact_hash != first_hash);
-  REQUIRE(dynamic_cast<tokmon::CAbiLens*>(second->lenses.back().lens.get()) == nullptr);
+  const auto builtin_replaced = runtime.light_path();
+  REQUIRE(builtin_replaced->epoch == content_replaced->epoch + 1);
+  REQUIRE(builtin_replaced->lenses.size() == 20);
+  const auto builtin_calculator = find_calculator(builtin_replaced);
+  REQUIRE(builtin_calculator != builtin_replaced->lenses.end());
+  REQUIRE(builtin_calculator->artifact_hash != content_calculator->artifact_hash);
+  REQUIRE(builtin_calculator->generation != content_calculator->generation);
+  REQUIRE(dynamic_cast<tokmon::CAbiLens*>(builtin_calculator->lens.get()) == nullptr);
+  for (const auto& old : content_replaced->lenses) {
+    if (old.lens->manifest().id == "org.tokmon.lens.calculator") continue;
+    const auto same = std::ranges::find_if(builtin_replaced->lenses,
+        [&](const auto& mounted) {
+          return mounted.lens->manifest().id == old.lens->manifest().id;
+        });
+    REQUIRE(same != builtin_replaced->lenses.end());
+    REQUIRE(same->generation == old.generation);
+  }
   REQUIRE(runtime.verify());
 }
 

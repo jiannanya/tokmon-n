@@ -67,8 +67,13 @@ Result<std::filesystem::path> current_executable() {
 }
 
 Result<std::string> artifact_hash(const DesiredLens& desired) {
-  if (desired.artifact.starts_with("builtin:"))
+  if (desired.artifact.starts_with("builtin:")) {
+    const auto expected = "builtin:" + short_id(desired.id);
+    if (desired.artifact != expected)
+      return tl::unexpected(make_error(ErrorCode::integrity_error,
+          "built-in Lens artifact does not match desired id: " + desired.id));
     return sha256_hex(desired.artifact + ":0.1.0");
+  }
 
   const std::filesystem::path artifact(desired.artifact);
   std::error_code error;
@@ -152,12 +157,15 @@ cbor::Value endpoint_value(const OpticalEndpoint& endpoint) {
   return cbor::object({{"lens", endpoint.lens}, {"port", endpoint.port}});
 }
 
-std::string light_path_configuration_hash(const RuntimeConfig& config) {
+std::string light_path_configuration_hash(
+    const RuntimeConfig& config,
+    const std::unordered_map<LensId, std::string>& artifact_hashes) {
   cbor::Value::Array lenses;
   for (const auto& lens : config.light_path)
     lenses.push_back(cbor::object({
         {"id", lens.id}, {"artifact", lens.artifact},
-        {"enabled", lens.enabled},
+        {"enabled", lens.enabled}, {"artifact_hash", artifact_hashes.contains(lens.id)
+            ? cbor::Value(artifact_hashes.at(lens.id)) : cbor::Value("")},
         {"runtime", std::string(to_string(lens.runtime))}}));
   cbor::Value::Array connections;
   for (const auto& connection : config.optical_assembly.connections)
@@ -184,6 +192,7 @@ std::string light_path_configuration_hash(const RuntimeConfig& config) {
   }
   return sha256_hex(cbor::encode(cbor::object({
       {"project", config.paths.project.generic_string()},
+      {"profile", std::string(to_string(config.profile))},
       {"lenses", std::move(lenses)},
       {"assembly", cbor::object({
           {"id", config.optical_assembly.id},
@@ -358,7 +367,8 @@ bool inside(const std::filesystem::path& root, const std::filesystem::path& path
 }
 
 Result<std::shared_ptr<ILens>> stage_lens(const DesiredLens& desired,
-                                          const RuntimeConfig& config) {
+                                          const RuntimeConfig& config,
+                                          const std::string_view computed_hash) {
   if (desired.artifact.starts_with("builtin:")) {
     auto lens = make_builtin_lens(short_id(desired.id));
     if (!lens)
@@ -383,9 +393,7 @@ Result<std::shared_ptr<ILens>> stage_lens(const DesiredLens& desired,
   if (manifest->runtime != desired.runtime)
     return tl::unexpected(make_error(ErrorCode::integrity_error,
         "artifact runtime does not match desired Lens: " + desired.id));
-  auto locked_hash = artifact_hash(desired);
-  if (!locked_hash) return tl::unexpected(locked_hash.error());
-  if (auto verified = verify_artifact_evidence(root, *manifest, *locked_hash, config);
+  if (auto verified = verify_artifact_evidence(root, *manifest, computed_hash, config);
       !verified) return tl::unexpected(verified.error());
 
   if (desired.runtime == RuntimeKind::native_worker) {
@@ -666,44 +674,65 @@ Result<void> TokmonRuntime::reload_configuration() {
 }
 
 Result<void> TokmonRuntime::reconcile() {
+  std::scoped_lock reconcile_lock(reconcile_mutex_);
   if (auto refreshed = reload_configuration(); !refreshed) return refreshed;
-  const auto configuration_hash = light_path_configuration_hash(config_);
   const auto current = path_.snapshot();
+
+  struct PreparedLens {
+    const DesiredLens* desired{nullptr};
+    std::string artifact_hash;
+    const MountedLens* previous{nullptr};
+    bool reuse{false};
+  };
+  std::vector<PreparedLens> prepared;
+  std::unordered_map<LensId, std::string> artifact_hashes;
+  std::size_t changed_lenses = 0;
+  for (const auto& desired : config_.light_path) {
+    if (!desired.enabled) continue;
+    auto hash = artifact_hash(desired);
+    if (!hash) return tl::unexpected(hash.error());
+    artifact_hashes[desired.id] = *hash;
+    const auto previous = std::find_if(current->lenses.begin(), current->lenses.end(),
+        [&](const MountedLens& mounted) {
+          return mounted.lens && mounted.lens->manifest().id == desired.id;
+        });
+    const auto* mounted = previous == current->lenses.end() ? nullptr : &*previous;
+    const bool reuse = mounted && mounted->artifact_hash == *hash &&
+        mounted->lens->manifest().runtime == desired.runtime;
+    prepared.push_back(PreparedLens{
+        .desired = &desired, .artifact_hash = std::move(*hash),
+        .previous = mounted, .reuse = reuse});
+    if (!reuse) ++changed_lenses;
+  }
+  const auto configuration_hash = light_path_configuration_hash(config_, artifact_hashes);
   if (!reconciled_configuration_hash_.empty() &&
       reconciled_configuration_hash_ == configuration_hash)
     return {};
 
-  bool durable_noop = false;
-  if (current->lenses.empty()) {
-    auto committed = store_.read_latest_kind("mount.epoch-committed");
-    if (!committed) return tl::unexpected(committed.error());
-    if (*committed) {
-      const auto* previous = cbor::find((*committed)->payload, "configuration_hash");
-      durable_noop = previous && previous->as_string() == configuration_hash;
-    }
-  }
+  auto allocation = store_.allocate_mount(changed_lenses);
+  if (!allocation) return tl::unexpected(allocation.error());
   auto candidate = std::make_shared<LightPathSnapshot>();
-  candidate->epoch = current->epoch + 1u;
+  candidate->epoch = allocation->epoch;
   candidate->optical = config_.optical_assembly;
   const auto control_ray = make_id("mount-ray");
   cbor::Value::Array desired_entries;
   for (const auto& desired : config_.light_path) {
     desired_entries.push_back(cbor::object({
         {"id", desired.id}, {"artifact", desired.artifact},
+        {"artifact_hash", artifact_hashes.contains(desired.id)
+            ? cbor::Value(artifact_hashes.at(desired.id)) : cbor::Value("")},
         {"enabled", desired.enabled},
         {"runtime", std::string(to_string(desired.runtime))}}));
   }
-  if (!durable_noop) {
-    auto observed = store_.append(PhotonDraft{.ray = control_ray,
-        .kind = "config.light-path-observed",
-        .schema = "tokmon.config.light-path.v1",
-        .payload = cbor::object({
-            {"candidate_epoch", static_cast<std::int64_t>(candidate->epoch)},
-            {"configuration_hash", configuration_hash},
-            {"lenses", std::move(desired_entries)}}),
-        .epoch = current->epoch});
-    if (!observed) return tl::unexpected(observed.error());
-  }
+  auto observed = store_.append(PhotonDraft{.ray = control_ray,
+      .kind = "config.light-path-observed",
+      .schema = "tokmon.config.light-path.v1",
+      .payload = cbor::object({
+          {"candidate_epoch", static_cast<std::int64_t>(candidate->epoch)},
+          {"configuration_hash", configuration_hash},
+          {"lenses", std::move(desired_entries)}}),
+      .epoch = current->epoch});
+  if (!observed) return tl::unexpected(observed.error());
 
   const auto rejected = [&](const LensId& lens_id, const Error& cause) -> Error {
     auto photon = store_.append(PhotonDraft{.ray = control_ray,
@@ -716,10 +745,14 @@ Result<void> TokmonRuntime::reconcile() {
     return photon ? cause : photon.error();
   };
 
-  GenerationId generation = candidate->epoch * 1000u;
-  for (const auto& desired : config_.light_path) {
-    if (!desired.enabled) continue;
-    auto staged = stage_lens(desired, config_);
+  GenerationId generation = allocation->first_generation;
+  for (const auto& entry : prepared) {
+    const auto& desired = *entry.desired;
+    if (entry.reuse) {
+      candidate->lenses.push_back(*entry.previous);
+      continue;
+    }
+    auto staged = stage_lens(desired, config_, entry.artifact_hash);
     if (!staged) return tl::unexpected(rejected(desired.id, staged.error()));
     auto lens = std::move(*staged);
     if (lens->manifest().id != desired.id)
@@ -728,12 +761,8 @@ Result<void> TokmonRuntime::reconcile() {
     if (lens->manifest().runtime != desired.runtime)
       return tl::unexpected(rejected(desired.id, make_error(ErrorCode::integrity_error,
           "artifact runtime does not match desired Lens: " + desired.id)));
-    const auto previous = std::find_if(current->lenses.begin(), current->lenses.end(),
-        [&](const MountedLens& mounted) {
-          return mounted.lens && mounted.lens->manifest().id == desired.id;
-        });
-    if (previous != current->lenses.end()) {
-      const auto& old_permissions = previous->lens->manifest().light_permissions;
+    if (entry.previous) {
+      const auto& old_permissions = entry.previous->lens->manifest().light_permissions;
       for (const auto& permission : lens->manifest().light_permissions)
         if (std::find(old_permissions.begin(), old_permissions.end(), permission) ==
             old_permissions.end())
@@ -741,32 +770,21 @@ Result<void> TokmonRuntime::reconcile() {
               "Lens replacement expands authority with permission '" + permission +
               "'; an explicitly approved configuration epoch is required")));
     }
-    auto hash = artifact_hash(desired);
-    if (!hash) return tl::unexpected(rejected(desired.id, hash.error()));
     const auto mounted_generation = generation++;
-    if (!durable_noop) {
-      auto verified = store_.append(PhotonDraft{.ray = control_ray,
-          .kind = "lens.candidate-verified", .schema = "tokmon.lens.candidate.v1",
-          .payload = cbor::object({
-              {"lens_id", desired.id}, {"artifact_hash", *hash},
-              {"runtime", std::string(to_string(desired.runtime))},
-              {"generation", static_cast<std::int64_t>(mounted_generation)},
-              {"candidate_epoch", static_cast<std::int64_t>(candidate->epoch)},
-              {"declared_output_ports",
-               static_cast<std::int64_t>(lens->manifest().outputs.size())}}),
-          .epoch = current->epoch});
-      if (!verified) return tl::unexpected(verified.error());
-    }
+    auto verified = store_.append(PhotonDraft{.ray = control_ray,
+        .kind = "lens.candidate-verified", .schema = "tokmon.lens.candidate.v1",
+        .payload = cbor::object({
+            {"lens_id", desired.id}, {"artifact_hash", entry.artifact_hash},
+            {"runtime", std::string(to_string(desired.runtime))},
+            {"generation", static_cast<std::int64_t>(mounted_generation)},
+            {"candidate_epoch", static_cast<std::int64_t>(candidate->epoch)},
+            {"declared_output_ports",
+             static_cast<std::int64_t>(lens->manifest().outputs.size())}}),
+        .epoch = current->epoch});
+    if (!verified) return tl::unexpected(verified.error());
     candidate->lenses.push_back(MountedLens{
-        std::move(lens), mounted_generation, std::move(*hash)});
+        std::move(lens), mounted_generation, entry.artifact_hash});
   }
-  const auto has_calculator = std::ranges::any_of(candidate->lenses,
-      [](const MountedLens& mounted) {
-        return mounted.lens->manifest().id == "org.tokmon.lens.calculator";
-      });
-  if (!has_calculator)
-    candidate->lenses.push_back(MountedLens{make_builtin_lens("calculator"),
-                                            generation++, sha256_hex("builtin:calculator:0.1.0")});
   if (auto ordered = order_light_path(candidate->lenses); !ordered)
     return tl::unexpected(rejected("org.tokmon.lens.ignis", ordered.error()));
   auto compiled = compile_optical_assembly(candidate->epoch, candidate->lenses,
@@ -780,21 +798,44 @@ Result<void> TokmonRuntime::reconcile() {
   if (auto checked = dark_path.publish(candidate); !checked)
     return tl::unexpected(checked.error());
 
-  if (!durable_noop) {
-    auto committed = store_.append(PhotonDraft{.ray = control_ray,
-        .kind = "mount.epoch-committed", .schema = "tokmon.mount.epoch.v1",
-        .payload = cbor::object({
-            {"epoch", static_cast<std::int64_t>(candidate->epoch)},
-            {"path_hash", candidate->hash},
-            {"configuration_hash", configuration_hash},
-            {"lens_count", static_cast<std::int64_t>(candidate->lenses.size())}}),
-        .epoch = candidate->epoch});
-    if (!committed) return tl::unexpected(committed.error());
+  std::vector<MountedLens> retired;
+  for (const auto& old : current->lenses) {
+    const auto reused = std::ranges::any_of(candidate->lenses,
+        [&](const MountedLens& mounted) {
+          return mounted.lens->manifest().id == old.lens->manifest().id &&
+              mounted.generation == old.generation;
+        });
+    if (!reused) retired.push_back(old);
   }
-  if (auto result = path_.publish(candidate); !result) return result;
+
+  cbor::Value::Array committed_lenses;
+  for (const auto& mounted : candidate->lenses)
+    committed_lenses.push_back(cbor::object({
+        {"id", mounted.lens->manifest().id},
+        {"generation", static_cast<std::int64_t>(mounted.generation)},
+        {"artifact_hash", mounted.artifact_hash},
+        {"runtime", std::string(to_string(mounted.lens->manifest().runtime))}}));
+  auto committed = store_.append(PhotonDraft{.ray = control_ray,
+      .kind = "mount.epoch-committed", .schema = "tokmon.mount.epoch.v1",
+      .payload = cbor::object({
+          {"epoch", static_cast<std::int64_t>(candidate->epoch)},
+          {"path_hash", candidate->hash},
+          {"configuration_hash", configuration_hash},
+          {"lens_count", static_cast<std::int64_t>(candidate->lenses.size())},
+          {"lenses", std::move(committed_lenses)}}),
+      .epoch = candidate->epoch});
+  if (!committed) return tl::unexpected(committed.error());
+
+  for (const auto& old : retired)
+    beams_.stop_generation(old.lens->manifest().id, old.generation);
+  if (auto result = path_.publish(candidate); !result) {
+    for (const auto& old : retired)
+      beams_.reopen_generation(old.lens->manifest().id, old.generation);
+    return result;
+  }
   reconciled_configuration_hash_ = configuration_hash;
 
-  for (const auto& old : current->lenses) {
+  for (const auto& old : retired) {
     auto started = store_.append(PhotonDraft{.ray = control_ray,
         .kind = "lens.afterglow-started", .schema = "tokmon.lens.afterglow.v1",
         .payload = cbor::object({
@@ -803,7 +844,6 @@ Result<void> TokmonRuntime::reconcile() {
             {"superseded_by_epoch", static_cast<std::int64_t>(candidate->epoch)}}),
         .epoch = candidate->epoch});
     if (!started) return tl::unexpected(started.error());
-    beams_.stop_generation(old.lens->manifest().id, old.generation);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
     while (beams_.active(old.lens->manifest().id, old.generation) != 0 &&
            std::chrono::steady_clock::now() < deadline)

@@ -72,12 +72,13 @@ Result<RefractionResult> RayTracingEngine::execute(const PhotonWindow& window, A
                                                     const MountedLens& mounted) {
   auto ticket = beams_.acquire(mounted.lens->manifest().id, mounted.generation,
                                act.ray, act.timeout);
+  if (!ticket) return tl::unexpected(ticket.error());
   act.target = mounted.lens->manifest().id;
   act.generation = mounted.generation;
   if (auto audit = audit_act(act, "act.started"); !audit) {
-    beams_.release(ticket->id); return tl::unexpected(audit.error());
+    beams_.release((*ticket)->id); return tl::unexpected(audit.error());
   }
-  RefractionBeam beam(*this, act, ticket->stop.get_token(), ticket->deadline);
+  RefractionBeam beam(*this, act, (*ticket)->stop.get_token(), (*ticket)->deadline);
   Result<RefractionResult> result = tl::unexpected(
       make_error(ErrorCode::internal_error, "Lens refract did not return"));
   try {
@@ -89,7 +90,7 @@ Result<RefractionResult> RayTracingEngine::execute(const PhotonWindow& window, A
     result = tl::unexpected(make_error(ErrorCode::lens_crashed,
                                        "Lens raised an unknown exception"));
   }
-  beams_.release(ticket->id);
+  beams_.release((*ticket)->id);
   if (!result) {
     auto failure = result.error();
     failure.lens = act.target; failure.ray = act.ray; failure.act = act.id;

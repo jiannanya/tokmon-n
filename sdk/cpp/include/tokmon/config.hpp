@@ -13,6 +13,8 @@
 
 namespace tokmon {
 
+enum class RuntimeProfile : std::uint8_t { production, development, test };
+
 struct TokmonPaths {
   std::filesystem::path user;
   std::filesystem::path project;
@@ -85,6 +87,7 @@ struct ModelProviderConfig {
 
 struct RuntimeConfig {
   TokmonPaths paths;
+  RuntimeProfile profile{RuntimeProfile::production};
   std::vector<DesiredLens> light_path;
   OpticalAssemblySpec optical_assembly;
   std::string log_level{"info"};
@@ -98,6 +101,7 @@ struct RuntimeConfig {
   std::unordered_map<std::string, ModelProviderConfig> model_providers;
 };
 
+[[nodiscard]] std::string_view to_string(RuntimeProfile profile) noexcept;
 [[nodiscard]] std::string_view to_string(PolicyEffect effect) noexcept;
 [[nodiscard]] PolicyEffect evaluate_policy(const RuntimeConfig& config, const Act& act,
                                             TrustLevel target_trust,
@@ -107,6 +111,9 @@ struct RuntimeConfig {
     const std::optional<std::filesystem::path>& workspace = std::nullopt);
 [[nodiscard]] Result<RuntimeConfig> load_config(
     const std::optional<std::filesystem::path>& workspace = std::nullopt);
+[[nodiscard]] Result<cbor::Value> update_light_path_document(
+    cbor::Value root, std::string id, std::optional<std::string> artifact,
+    std::optional<std::string> runtime, bool enabled);
 [[nodiscard]] Result<cbor::Value> resolve_model_provider_context(
     const RuntimeConfig& config, const cbor::Value& request);
 Result<void> ensure_directory_layout(const TokmonPaths& paths);
