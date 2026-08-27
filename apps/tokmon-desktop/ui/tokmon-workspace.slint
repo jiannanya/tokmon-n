@@ -507,17 +507,26 @@ export component WorkspacePanel inherits Rectangle {
                                     padding-bottom: 160px;
                                     padding-left: 24px;
                                     padding-right: 24px;
+                                    // The scroll viewport imposes its own minimum
+                                    // height, so every content row must refuse the
+                                    // extra space (vertical-stretch: 0) and the
+                                    // trailing spring absorbs it. Otherwise the
+                                    // layout spreads surplus height across rows,
+                                    // inflating bubbles and gaps.
                                     if root.chat-time != "" : Text {
                                         text: root.chat-time;
                                         font-size: 11.5px;
                                         font-weight: 500;
                                         color: Palette.faint;
                                         horizontal-alignment: center;
+                                        vertical-stretch: 0;
                                     }
                                     if root.last-message != "" : HorizontalLayout {
                                         alignment: end;
+                                        vertical-stretch: 0;
                                         Rectangle {
                                             max-width: 560px;
+                                            vertical-stretch: 0;
                                             border-radius: 16px;
                                             background: Palette.bubble;
                                             border-width: 0.67px;
@@ -547,6 +556,7 @@ export component WorkspacePanel inherits Rectangle {
                                         color: Palette.body;
                                         wrap: word-wrap;
                                         vertical-alignment: top;
+                                        vertical-stretch: 0;
                                     }
                                     if root.conversation-workflow.length > 0 : Rectangle {
                                         border-radius: 12px;
@@ -658,7 +668,7 @@ export component WorkspacePanel inherits Rectangle {
                                                         source: Icons.chev-down;
                                                         width: 15px;
                                                         height: 15px;
-                                                        rotation-angle: 180deg;
+                                                        transform-rotation: 180deg;
                                                         y: (parent.height - 15px) / 2;
                                                     }
                                                 }
@@ -686,6 +696,12 @@ export component WorkspacePanel inherits Rectangle {
                                                 }
                                             }
                                         }
+                                    }
+                                    Rectangle {
+                                        // Absorbs any surplus scroll-viewport height so
+                                        // the rows above keep their natural thickness.
+                                        min-height: 0px;
+                                        vertical-stretch: 1;
                                     }
                                 }
                             }

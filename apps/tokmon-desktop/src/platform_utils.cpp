@@ -127,17 +127,42 @@ std::string utf8_path(const std::wstring_view path) {
 std::string choose_attachment(const bool directory) {
 #if defined(_WIN32)
   if (directory) {
-    BROWSEINFOW browse{};
-    browse.hwndOwner = current_process_window();
-    browse.lpszTitle = L"选择要交给 Tokmon 的文件夹";
-    browse.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
-    auto *selected = SHBrowseForFolderW(&browse);
-    if (!selected)
-      return {};
-    wchar_t path[MAX_PATH]{};
-    const auto resolved = SHGetPathFromIDListW(selected, path) != FALSE;
-    CoTaskMemFree(selected);
-    return resolved ? utf8_path(path) : std::string{};
+    // COM state is thread-local; the UI thread usually holds an STA from
+    // OLE initialization, so only balance a successful init here.
+    const auto com_init =
+        CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    std::string selected;
+    if (SUCCEEDED(com_init)) {
+      // The Vista+ common item dialog offers the full Explorer-style folder
+      // browser; SHBrowseForFolderW only shows the small tree window.
+      IFileOpenDialog *folder_dialog = nullptr;
+      if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr,
+                                     CLSCTX_INPROC_SERVER, IID_IFileOpenDialog,
+                                     reinterpret_cast<void **>(&folder_dialog))) &&
+          folder_dialog) {
+        DWORD options = 0;
+        if (SUCCEEDED(folder_dialog->GetOptions(&options)))
+          folder_dialog->SetOptions(options | FOS_PICKFOLDERS |
+                                    FOS_FORCEFILESYSTEM);
+        folder_dialog->SetTitle(L"选择要交给 Tokmon 的文件夹");
+        if (folder_dialog->Show(current_process_window()) == S_OK) {
+          IShellItem *chosen = nullptr;
+          if (SUCCEEDED(folder_dialog->GetResult(&chosen)) && chosen) {
+            wchar_t *wide_path = nullptr;
+            if (SUCCEEDED(chosen->GetDisplayName(SIGDN_FILESYSPATH,
+                                                 &wide_path)) &&
+                wide_path) {
+              selected = utf8_path(std::wstring_view(wide_path));
+              CoTaskMemFree(wide_path);
+            }
+            chosen->Release();
+          }
+        }
+        folder_dialog->Release();
+      }
+      CoUninitialize();
+    }
+    return selected;
   }
   std::wstring path(32'768, L'\0');
   OPENFILENAMEW dialog{};
