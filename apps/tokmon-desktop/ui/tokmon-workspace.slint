@@ -1,7 +1,7 @@
 import { LineEdit, ScrollView } from "std-widgets.slint";
-import { ModelChoice, TimelineItem, SlashCommandItem, ProjectFile, GanttSegment, TraceEvent } from "tokmon-models.slint";
+import { ModelChoice, TimelineItem, SlashCommandItem, ProjectFile, GanttSegment, TraceEvent, ChatBlock } from "tokmon-models.slint";
 import { Palette, Icons } from "tokmon-theme.slint";
-import { ToolIcon, MenuOption, WorkflowStepRow, ThoughtProcessCard } from "tokmon-components.slint";
+import { ToolIcon, MenuOption, WorkflowStepRow, ThoughtProcessCard, ChatBlockRow } from "tokmon-components.slint";
 import { TrajectoryPanel } from "tokmon-trajectory.slint";
 import { EnvironmentPanel } from "tokmon-environment-panel.slint";
 import { SessionEmptyState, ComposerContextTab } from "tokmon-session-initial.slint";
@@ -26,6 +26,8 @@ export component WorkspacePanel inherits Rectangle {
     // Chain-of-thought text for the current turn, rendered by the collapsible
     // thought-process card above the assistant reply.
     in property <string> thought-text;
+    // Parsed markdown blocks of the current assistant reply (md4c).
+    in property <[ChatBlock]> assistant-blocks;
     in property <string> chat-time;
     in property <string> trace-duration;
     in property <string> workflow-duration;
@@ -550,7 +552,14 @@ export component WorkspacePanel inherits Rectangle {
                                     if root.thought-text != "" : ThoughtProcessCard {
                                         content: root.thought-text;
                                     }
-                                    if root.assistant-text != "" : Text {
+                                    if root.assistant-blocks.length > 0 : VerticalLayout {
+                                        spacing: 6px;
+                                        vertical-stretch: 0;
+                                        for blk in root.assistant-blocks : ChatBlockRow {
+                                            block: blk;
+                                        }
+                                    }
+                                    if root.assistant-text != "" && root.assistant-blocks.length == 0 : Text {
                                         text: root.assistant-text;
                                         font-size: 13.5px;
                                         color: Palette.body;

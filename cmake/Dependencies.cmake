@@ -41,6 +41,10 @@ FetchContent_Declare(chjson
 FetchContent_Declare(sqlite3
   URL https://www.sqlite.org/2025/sqlite-amalgamation-3490100.zip
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+FetchContent_Declare(md4c
+  GIT_REPOSITORY https://github.com/mity/md4c.git
+  GIT_TAG release-0.5.2
+  GIT_SHALLOW TRUE)
 
 # Add fetched projects below an EXCLUDE_FROM_ALL directory boundary.  Tokmon
 # links their targets normally, while their developer headers/CMake packages do
@@ -61,6 +65,27 @@ tokmon_make_dependency_available(chlog)
 tokmon_make_dependency_available(chyaml)
 tokmon_make_dependency_available(chjson)
 tokmon_make_dependency_available(sqlite3)
+
+# Only fetch md4c's sources; its own CMake tree is skipped because tokmon_md4c
+# below compiles the parser TU directly.
+FetchContent_GetProperties(md4c)
+if(NOT md4c_POPULATED)
+  FetchContent_Populate(md4c)
+endif()
+
+# md4c is vendored as a plain static library (parser + entity table) instead of
+# using its own CMake tree, mirroring the sqlite3 amalgamation approach. The
+# entity table is #included by md4c.c upstream, so only the one TU compiles.
+if(NOT TARGET tokmon_md4c)
+  add_library(tokmon_md4c STATIC "${md4c_SOURCE_DIR}/src/md4c.c")
+  target_include_directories(tokmon_md4c PUBLIC "${md4c_SOURCE_DIR}/src")
+  target_compile_definitions(tokmon_md4c PUBLIC $<$<CONFIG:Release>:MD4C_USE_UTF8>)
+  if(MSVC)
+    target_compile_options(tokmon_md4c PRIVATE /W0)
+  else()
+    target_compile_options(tokmon_md4c PRIVATE -w)
+  endif()
+endif()
 
 if(NOT TARGET tokmon_sqlite3)
   add_library(tokmon_sqlite3 STATIC "${sqlite3_SOURCE_DIR}/sqlite3.c")

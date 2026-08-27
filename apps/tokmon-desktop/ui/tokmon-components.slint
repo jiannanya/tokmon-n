@@ -1,4 +1,4 @@
-import { NavigationItem, TimelineItem, TraceEvent } from "tokmon-models.slint";
+import { NavigationItem, TimelineItem, TraceEvent, ChatBlock } from "tokmon-models.slint";
 import { Palette, Icons } from "tokmon-theme.slint";
 
 export component ToolIcon inherits Rectangle {
@@ -436,6 +436,106 @@ export component SidebarRow inherits Rectangle {
     ta := TouchArea {
         clicked => { parent.selected() }
         mouse-cursor: pointer;
+    }
+}
+
+// One parsed markdown block of the assistant reply (see chat_blocks_from).
+// Root is a layout so every branch keeps full row width and natural height;
+// rich lines go through StyledText consuming the markup subset emitted by the
+// C++ serializer.
+export component ChatBlockRow inherits VerticalLayout {
+    in property <ChatBlock> block;
+
+    property <bool> rule: root.block.kind == "rule";
+    property <bool> code: root.block.kind == "code";
+    property <bool> bullet: root.block.kind == "bullet";
+    property <bool> ordered: root.block.kind == "ordered";
+    property <bool> heading: root.block.kind == "heading";
+    property <length> indent: root.heading || (!root.bullet && !root.ordered)
+        ? (root.block.depth > 0 && !root.heading ? (root.block.depth * 12px)
+                                                 : 0px)
+        : ((root.block.depth - 1) * 12px);
+
+    if root.rule : Rectangle {
+        height: 15px;
+        vertical-stretch: 0;
+        Rectangle {
+            y: (parent.height - 1px) / 2;
+            x: 2px;
+            width: parent.width - 4px;
+            height: 1px;
+            background: #DEDCD6;
+        }
+    }
+
+    if root.code : Rectangle {
+        border-radius: 8px;
+        background: #F2F1ED;
+        border-width: 0.67px;
+        border-color: #E4E2DC;
+        clip: true;
+        vertical-stretch: 0;
+        VerticalLayout {
+            padding-left: 12px;
+            padding-right: 12px;
+            padding-top: 8px;
+            padding-bottom: 9px;
+            Text {
+                text: root.block.title;
+                font-family: "Consolas";
+                font-size: 12px;
+                color: #37332F;
+                wrap: word-wrap;
+                vertical-alignment: top;
+            }
+        }
+    }
+
+    if !root.rule && !root.code : HorizontalLayout {
+        padding-left: root.indent;
+        spacing: 6px;
+        alignment: start;
+        Rectangle {
+            width: root.bullet ? 6px : (root.ordered ? ord.preferred-width : 0px);
+            height: 21px;
+            horizontal-stretch: 0;
+            vertical-stretch: 0;
+            Rectangle {
+                visible: root.bullet;
+                width: 5px;
+                height: 5px;
+                border-radius: 999px;
+                background: #A8A29E;
+                x: 0px;
+                y: 9px;
+            }
+            ord := Text {
+                visible: root.ordered;
+                x: 0px;
+                width: self.preferred-width;
+                height: parent.height;
+                text: root.block.ordinal;
+                font-size: 12.5px;
+                color: Palette.mid;
+                vertical-alignment: center;
+            }
+        }
+        StyledText {
+            text: root.block.rich;
+            default-font-size: !root.heading ? 13.5px
+                : root.block.depth <= 1 ? 15px
+                : root.block.depth == 2 ? 14.5px
+                : root.block.depth == 3 ? 14px
+                : root.block.depth == 4 ? 13.5px
+                : root.block.depth == 5 ? 13px : 12.5px;
+            default-color: Palette.body;
+            default-font-family: "Microsoft YaHei UI";
+            vertical-alignment: top;
+            link-color: Palette.accent-text;
+            horizontal-stretch: 1;
+            vertical-stretch: 0;
+            min-height: 21px;
+        }
     }
 }
 

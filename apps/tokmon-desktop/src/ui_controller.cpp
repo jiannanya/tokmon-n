@@ -31,6 +31,7 @@ public:
       std::filesystem::path daemon_executable,
       std::shared_ptr<slint::VectorModel<TimelineItem>> timeline,
       std::shared_ptr<slint::VectorModel<TimelineItem>> conversation_workflow,
+      std::shared_ptr<slint::VectorModel<ChatBlock>> assistant_blocks,
       std::shared_ptr<slint::VectorModel<CodeLine>> code,
       std::shared_ptr<slint::VectorModel<TraceEvent>> trace_events,
       std::shared_ptr<slint::VectorModel<GanttSegment>> gantt,
@@ -45,6 +46,7 @@ public:
         daemon_executable_(std::move(daemon_executable)),
         timeline_(std::move(timeline)),
         conversation_workflow_(std::move(conversation_workflow)),
+        assistant_blocks_(std::move(assistant_blocks)),
         code_(std::move(code)), trace_events_(std::move(trace_events)),
         gantt_(std::move(gantt)),
         navigation_model_(std::move(navigation_model)),
@@ -654,7 +656,8 @@ private:
     auto workflow = conversation_workflow_;
     auto window = window_;
     (void)slint::invoke_from_event_loop(
-        [timeline, workflow, window, item = std::move(item),
+        [timeline, workflow, blocks = assistant_blocks_, window,
+         item = std::move(item),
          message = display_string(text)]() mutable {
           workflow->clear();
           timeline->push_back(std::move(item));
@@ -664,6 +667,7 @@ private:
             handle->set_last_message(message);
             handle->set_assistant_text("");
             handle->set_thought_text("");
+            blocks->clear();
             handle->set_status_text("正在提交请求");
             handle->set_chat_empty(false);
             handle->set_workspace_locked(true);
@@ -889,6 +893,7 @@ private:
     publish_trace_view();
     auto timeline = timeline_;
     auto workflow = conversation_workflow_;
+    auto blocks = assistant_blocks_;
     auto code = code_;
     auto window = window_;
     std::string assistant;
@@ -942,13 +947,17 @@ private:
           state = "执行失败";
           break;
         }
+    auto chat_block_items =
+        chat_blocks_from(assistant.empty() ? std::string{} : assistant);
     (void)slint::invoke_from_event_loop(
-        [timeline, workflow, code, window, items = std::move(items),
+        [timeline, workflow, blocks = assistant_blocks_, code, window,
+         items = std::move(items),
          workflow_items = std::move(workflow_items), lines = std::move(lines),
          trace, assistant = std::move(assistant),
          user_message = std::move(user_message),
          current_turn_time = std::move(current_turn_time),
          turn_thought_text = std::move(turn_thought_text),
+         blocks_in = std::move(chat_block_items),
          state = std::move(state), workflow_complete, replace]() mutable {
           timeline->clear();
           for (auto &item : items)
@@ -959,6 +968,7 @@ private:
           code->clear();
           for (auto &line : lines)
             code->push_back(std::move(line));
+          blocks->set_vector(blocks_in);
           if (auto locked = window.lock()) {
             auto handle = *locked;
             if (replace || !assistant.empty())
@@ -1418,7 +1428,8 @@ private:
     const auto state = slint::SharedString(
         started ? "工作空间后台服务已自动启动" : "工作空间后台服务已连接");
     (void)slint::invoke_from_event_loop(
-        [timeline, workflow, code, window, display, state] {
+        [timeline, workflow, blocks = assistant_blocks_, code, window,
+         display, state] {
           timeline->clear();
           workflow->clear();
           code->clear();
@@ -1427,6 +1438,7 @@ private:
             handle->set_assistant_text("");
             handle->set_last_message("");
             handle->set_thought_text("");
+            blocks->clear();
             handle->set_status_text("等待输入");
             handle->set_chat_empty(true);
             handle->set_chat_time("");
@@ -1501,7 +1513,8 @@ private:
         auto window = window_;
         const bool reset_environment_panel = command.kind == "new-session";
         (void)slint::invoke_from_event_loop(
-            [timeline, workflow, code, window, reset_environment_panel] {
+            [timeline, workflow, blocks = assistant_blocks_, code, window,
+         reset_environment_panel] {
               timeline->clear();
               workflow->clear();
               code->clear();
@@ -1510,6 +1523,7 @@ private:
                 handle->set_assistant_text("");
                 handle->set_last_message("");
                 handle->set_thought_text("");
+                blocks->clear();
                 handle->set_chat_time("");
                 handle->set_status_text("等待输入");
                 handle->set_chat_empty(true);
@@ -1757,6 +1771,7 @@ private:
   std::optional<tokmon::DaemonClientLease> active_workspace_lease_;
   std::shared_ptr<slint::VectorModel<TimelineItem>> timeline_;
   std::shared_ptr<slint::VectorModel<TimelineItem>> conversation_workflow_;
+  std::shared_ptr<slint::VectorModel<ChatBlock>> assistant_blocks_;
   std::shared_ptr<slint::VectorModel<CodeLine>> code_;
   std::shared_ptr<slint::VectorModel<TraceEvent>> trace_events_;
   std::shared_ptr<slint::VectorModel<GanttSegment>> gantt_;
@@ -1788,6 +1803,7 @@ std::unique_ptr<UiController> make_ui_controller(
     std::filesystem::path daemon_executable,
     std::shared_ptr<slint::VectorModel<TimelineItem>> timeline,
     std::shared_ptr<slint::VectorModel<TimelineItem>> conversation_workflow,
+    std::shared_ptr<slint::VectorModel<ChatBlock>> assistant_blocks,
     std::shared_ptr<slint::VectorModel<CodeLine>> code,
     std::shared_ptr<slint::VectorModel<TraceEvent>> trace_events,
     std::shared_ptr<slint::VectorModel<GanttSegment>> gantt,
@@ -1797,7 +1813,8 @@ std::unique_ptr<UiController> make_ui_controller(
     const bool restore_initial_workspace) {
   return std::make_unique<UiControllerImpl>(
       std::move(endpoint), std::move(workspace), std::move(daemon_executable),
-      std::move(timeline), std::move(conversation_workflow), std::move(code),
+      std::move(timeline), std::move(conversation_workflow),
+      std::move(assistant_blocks), std::move(code),
       std::move(trace_events), std::move(gantt), std::move(navigation_model),
       std::move(navigation), std::move(assets), std::move(window),
       restore_initial_workspace);

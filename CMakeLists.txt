@@ -173,6 +173,7 @@ if(TOKMON_BUILD_DESKTOP)
     apps/tokmon-desktop/src/ui_controller.cpp
     apps/tokmon-desktop/src/ui_projection.cpp)
   target_link_libraries(tokmon-desktop PRIVATE tokmon_core Slint::Slint)
+  target_link_libraries(tokmon-desktop PRIVATE tokmon_md4c)
   if(WIN32)
     target_link_libraries(tokmon-desktop PRIVATE comdlg32 shell32 ole32)
   endif()

@@ -8,6 +8,8 @@
 #include "tokmon.h"
 #include "tokmon/tokmon.hpp"
 
+struct ChatBlock;
+
 namespace tokmon::desktop {
 
 struct TraceSummary final {
@@ -36,6 +38,11 @@ std::string act_field(const tokmon::Photon &photon, std::string_view key);
 std::vector<TimelineItem>
 conversation_workflow_from(const std::vector<tokmon::Photon> &photons,
                            std::string *thought_text = nullptr);
+
+// Parses full markdown (md4c) into display blocks. Inline spans are
+// re-serialized into the StyledText markup subset so each block stays one
+// rich-text line/box in the UI.
+std::vector<ChatBlock> chat_blocks_from(const std::string &markdown);
 TraceSummary trace_summary_from(const std::vector<tokmon::Photon> &photons);
 std::vector<CodeLine>
 code_lines_from(const std::vector<tokmon::Photon> &photons);

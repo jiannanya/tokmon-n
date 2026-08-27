@@ -9,6 +9,8 @@
 #include <utility>
 #include <vector>
 
+#include <md4c.h>
+
 #include "platform_utils.hpp"
 
 namespace tokmon::desktop {
@@ -321,8 +323,546 @@ conversation_workflow_from(const std::vector<tokmon::Photon> &photons,
   return result;
 }
 
+// ---------------------------------------------------------------------------
+// Markdown -> ChatBlock projection (md4c based)
+//
+// Every markdown block becomes one UI row. Inline spans are re-serialized
+// into the StyledText markup subset (bold/emphasis/strike/inline-code/link),
+// the richest per-line styling the Slint renderer can express today.
+// Tables degrade to a fixed-width grid rendered as a monospace code box.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+std::string decode_entity(std::string_view entity) {
+  // entity arrives without '&' and ';'. Cover the handful HTML produces in
+  // model output; unknown entities fall back to their bare name.
+  if (entity == "amp")
+    return "&";
+  if (entity == "lt")
+    return "<";
+  if (entity == "gt")
+    return ">";
+  if (entity == "quot")
+    return "\"";
+  if (entity == "apos")
+    return "'";
+  return std::string(entity);
+}
+
+std::string sanitize_href(std::string_view href) {
+  std::string out;
+  out.reserve(href.size());
+  for (const char c : href) {
+    switch (c) {
+    case '(':
+      out += "%28";
+      break;
+    case ')':
+      out += "%29";
+      break;
+    case ' ':
+      out += "%20";
+      break;
+    default:
+      out.push_back(c);
+      break;
+    }
+  }
+  return out;
+}
+
+bool html_tag_allowed(std::string_view tag) {
+  // Only <u> is among the HTML extensions StyledText documents;
+  // unknown tags would make from_markdown bail to plain text.
+  return tag == "<u>" || tag == "</u>";
+}
+
+struct MdTableRow {
+  std::vector<std::string> cells;
+};
+
+class MarkdownBlocksBuilder final {
+public:
+  std::vector<ChatBlock> take() {
+    detach_row();
+    if (in_table_)
+      flush_table();
+    for (auto &block : blocks_)
+      finish_block(block);
+    return std::move(blocks_);
+  }
+
+  // Converts the serialized markup into a runtime StyledText value. The
+  // @markdown() macro only interpolates literals, so host-side conversion is
+  // the documented path (slint issue #11158 / milestone 1.17 API).
+  static void finish_block(ChatBlock &block) {
+    const std::string source(block.title);
+    auto parsed = slint::StyledText::from_markdown(source);
+    if (!parsed)
+      parsed = slint::StyledText::from_plain_text(source);
+    block.rich = std::move(*parsed);
+  }
+
+  void enter_block(MD_BLOCKTYPE type, void *detail) {
+    switch (type) {
+    case MD_BLOCK_P:
+      if (!row_ && !in_table_)
+        new_paragraph();
+      break;
+    case MD_BLOCK_H: {
+      detach_row();
+      auto &row = new_paragraph();
+      in_heading_ = true;
+      if (detail)
+        heading_level_ = static_cast<int>(
+            reinterpret_cast<MD_BLOCK_H_DETAIL *>(detail)->level);
+      row.kind = display_string("heading");
+      row.depth = heading_level_;
+      break;
+    }
+    case MD_BLOCK_UL:
+      close_for_structure();
+      list_ordered_.push_back(false);
+      ordered_next_.push_back(1);
+      break;
+    case MD_BLOCK_OL:
+      close_for_structure();
+      list_ordered_.push_back(true);
+      ordered_next_.push_back(
+          detail ? static_cast<long long>(
+                       reinterpret_cast<MD_BLOCK_OL_DETAIL *>(detail)->start)
+                 : 1);
+      break;
+    case MD_BLOCK_LI: {
+      const bool ordered = !list_ordered_.empty() && list_ordered_.back();
+      ChatBlock &row =
+          list_item(ordered ? "ordered" : "bullet");
+      long long &next = ordered_next_.back();
+      if (ordered) {
+        row.ordinal = display_string(std::to_string(next) + ".");
+        ++next;
+      }
+      fresh_li_ = true;
+      break;
+    }
+    case MD_BLOCK_CODE:
+      close_for_structure();
+      in_code_block_ = true;
+      code_buffer_.clear();
+      break;
+    case MD_BLOCK_QUOTE:
+      ++quote_depth_;
+      detach_row();
+      break;
+    case MD_BLOCK_HR:
+      close_for_structure();
+      blocks_.emplace_back();
+      blocks_.back().kind = display_string("rule");
+      detach_row();
+      break;
+    case MD_BLOCK_TABLE:
+      close_for_structure();
+      in_table_ = true;
+      md_table_rows_.clear();
+      md_table_cols_ =
+          detail ? static_cast<size_t>(
+                       reinterpret_cast<MD_BLOCK_TABLE_DETAIL *>(detail)
+                           ->col_count)
+                 : size_t{1};
+      break;
+    case MD_BLOCK_TR:
+      md_table_rows_.emplace_back();
+      break;
+    case MD_BLOCK_TH:
+    case MD_BLOCK_TD:
+      end_cell();
+      md_active_cell_.emplace();
+      break;
+    default:
+      // MD_BLOCK_DOC / THEAD / TBODY are structural only; HTML blocks drop.
+      break;
+    }
+  }
+
+  void leave_block(MD_BLOCKTYPE type, void *detail) {
+    switch (type) {
+    case MD_BLOCK_P:
+    case MD_BLOCK_LI:
+      detach_row();
+      break;
+    case MD_BLOCK_H:
+      in_heading_ = false;
+      detach_row();
+      break;
+    case MD_BLOCK_UL:
+    case MD_BLOCK_OL:
+      list_ordered_.pop_back();
+      ordered_next_.pop_back();
+      detach_row();
+      break;
+    case MD_BLOCK_CODE:
+      while (!code_buffer_.empty() &&
+             (code_buffer_.back() == '\n' || code_buffer_.back() == '\r'))
+        code_buffer_.pop_back();
+      if (!code_buffer_.empty()) {
+        auto &row = blocks_.emplace_back();
+        row.kind = display_string("code");
+        row.depth = 0;
+        row.title = display_string(code_buffer_);
+      }
+      in_code_block_ = false;
+      code_buffer_.clear();
+      detach_row();
+      break;
+    case MD_BLOCK_QUOTE:
+      quote_depth_ = std::max(0, quote_depth_ - 1);
+      detach_row();
+      break;
+    case MD_BLOCK_TH:
+    case MD_BLOCK_TD:
+      end_cell();
+      break;
+    case MD_BLOCK_TABLE:
+      flush_table();
+      in_table_ = false;
+      break;
+    default:
+      break;
+    }
+    (void)detail;
+  }
+
+  void enter_span(MD_SPANTYPE type, void *detail) {
+    switch (type) {
+    case MD_SPAN_CODE:
+      emit("`");
+      break;
+    case MD_SPAN_STRONG:
+      emit("**");
+      break;
+    case MD_SPAN_EM:
+      emit("*");
+      break;
+    case MD_SPAN_DEL:
+      emit("~~");
+      break;
+    case MD_SPAN_U:
+      emit("<u>");
+      break;
+    case MD_SPAN_A:
+      md_links_.push_back(sanitize_href(
+          span_href(reinterpret_cast<MD_SPAN_A_DETAIL *>(detail))));
+      if (!md_active_cell_)
+        emit("[");
+      break;
+    default:
+      // IMG renders below as plain alt text via its inner spans; LATEXMATH
+      // and WIKILINK stay disabled by dialect flags.
+      break;
+    }
+  }
+
+  void leave_span(MD_SPANTYPE type, void *detail) {
+    switch (type) {
+    case MD_SPAN_CODE:
+      emit("`");
+      break;
+    case MD_SPAN_STRONG:
+      emit("**");
+      break;
+    case MD_SPAN_EM:
+      emit("*");
+      break;
+    case MD_SPAN_DEL:
+      emit("~~");
+      break;
+    case MD_SPAN_U:
+      emit("</u>");
+      break;
+    case MD_SPAN_A:
+      if (!md_active_cell_ && !md_links_.empty())
+        emit("](" + md_links_.back() + ")");
+      if (!md_links_.empty())
+        md_links_.pop_back();
+      break;
+    default:
+      break;
+    }
+    (void)detail;
+  }
+
+  void text(MD_TEXTTYPE type, const MD_CHAR *data, MD_SIZE size) {
+    const std::string_view raw(data, size);
+    if (in_code_block_) {
+      if (type == MD_TEXT_CODE || type == MD_TEXT_NORMAL ||
+          type == MD_TEXT_NULLCHAR || type == MD_TEXT_HTML ||
+          type == MD_TEXT_ENTITY)
+        code_buffer_ += std::string(raw);
+      return;
+    }
+    if (md_active_cell_) {
+      append_cell(raw, type);
+      return;
+    }
+    switch (type) {
+    case MD_TEXT_NORMAL: {
+      std::string_view body = raw;
+      if (fresh_li_) {
+        fresh_li_ = false;
+        if (body.starts_with("[ ] ")) {
+          emit("\xE2\x98\x90 ");
+          body.remove_prefix(4);
+        } else if (body.starts_with("[x] ") ||
+                   body.starts_with("[X] ")) {
+          emit("\xE2\x98\x91 ");
+          body.remove_prefix(4);
+        }
+      }
+      append(body);
+      break;
+    }
+    case MD_TEXT_NULLCHAR:
+      emit("\xEF\xBF\xBD");
+      break;
+    case MD_TEXT_ENTITY: {
+      const auto inner = raw.size() >= 2 && raw.front() == '&' &&
+                                 raw.back() == ';'
+                             ? raw.substr(1, raw.size() - 2)
+                             : raw;
+      append(decode_entity(inner));
+      break;
+    }
+    case MD_TEXT_BR:
+    case MD_TEXT_SOFTBR:
+      emit("\n");
+      break;
+    case MD_TEXT_CODE: {
+      // Inline code span contents.
+      std::string piece(raw);
+      piece.erase(std::remove(piece.begin(), piece.end(), '`'), piece.end());
+      emit("`");
+      append(piece);
+      emit("`");
+      break;
+    }
+    case MD_TEXT_HTML:
+      if (html_tag_allowed(raw))
+        append(raw);
+      break;
+    default:
+      break;
+    }
+  }
+
+private:
+  static constexpr int kQuoteIndentUnits = 2;
+
+  void append(std::string_view value) {
+    if (!value.empty() && row_)
+      row_->title += display_string(value);
+  }
+
+  ChatBlock &new_paragraph() {
+    ChatBlock block;
+    block.kind = display_string(
+        list_ordered_.empty() && quote_depth_ == 0 ? "paragraph" : "paragraph");
+    block.depth = static_cast<int>(list_ordered_.size()) +
+                  kQuoteIndentUnits * quote_depth_;
+    blocks_.push_back(std::move(block));
+    row_ = &blocks_.back();
+    return *row_;
+  }
+
+  ChatBlock &list_item(const char *kind) {
+    ChatBlock block;
+    block.kind = display_string(kind);
+    block.depth = static_cast<int>(list_ordered_.size()) +
+                  kQuoteIndentUnits * quote_depth_;
+    blocks_.push_back(std::move(block));
+    row_ = &blocks_.back();
+    return *row_;
+  }
+
+  void detach_row() { row_ = nullptr; }
+
+  void close_for_structure() { detach_row(); }
+
+  void emit(std::string_view value) {
+    if (md_active_cell_ || in_code_block_)
+      return;
+    if (!row_) {
+      ChatBlock block;
+      block.kind = display_string("paragraph");
+      block.depth = static_cast<int>(list_ordered_.size()) +
+                    kQuoteIndentUnits * quote_depth_;
+      blocks_.push_back(std::move(block));
+      row_ = &blocks_.back();
+    }
+    if (!value.empty() && row_)
+      row_->title += display_string(value);
+  }
+
+  static std::string_view span_href(const MD_SPAN_A_DETAIL *detail) {
+    if (!detail)
+      return {};
+    return {detail->href.text, detail->href.size};
+  }
+
+  void end_cell() {
+    if (!md_active_cell_)
+      return;
+    if (md_table_rows_.empty())
+      md_table_rows_.emplace_back();
+    auto &cells = md_table_rows_.back().cells;
+    cells.emplace_back();
+    cells.back().swap(*md_active_cell_);
+    while (!cells.back().empty() && cells.back().back() == ' ')
+      cells.back().pop_back();
+    md_active_cell_.reset();
+  }
+
+  void append_cell(std::string_view raw, MD_TEXTTYPE type) {
+    std::string &target = *md_active_cell_;
+    switch (type) {
+    case MD_TEXT_NORMAL:
+      target += std::string(raw);
+      break;
+    case MD_TEXT_ENTITY: {
+      const auto inner = raw.size() >= 2 && raw.front() == '&' &&
+                                 raw.back() == ';'
+                             ? raw.substr(1, raw.size() - 2)
+                             : raw;
+      target += decode_entity(inner);
+      break;
+    }
+    case MD_TEXT_BR:
+    case MD_TEXT_SOFTBR:
+      target += " ";
+      break;
+    case MD_TEXT_CODE: {
+      std::string piece(raw);
+      piece.erase(std::remove(piece.begin(), piece.end(), '`'), piece.end());
+      target += std::move(piece);
+      break;
+    }
+    default:
+      break;
+    }
+  }
+
+  void flush_table() {
+    size_t columns = md_table_cols_;
+    for (const auto &table_row : md_table_rows_)
+      columns = std::max(columns, table_row.cells.size());
+    std::vector<size_t> widths(columns, size_t{3});
+    for (const auto &table_row : md_table_rows_)
+      for (size_t index = 0; index < table_row.cells.size(); ++index)
+        widths[index] =
+            std::max(widths[index], table_row.cells[index].size());
+    std::string grid;
+    for (size_t r = 0; r < md_table_rows_.size(); ++r) {
+      const auto &cells = md_table_rows_[r].cells;
+      for (size_t c = 0; c < columns; ++c) {
+        static const std::string kFallback;
+        const std::string &value = c < cells.size() ? cells[c] : kFallback;
+        if (c)
+          grid += " | ";
+        grid += value;
+        grid.append(widths[c] > value.size() ? widths[c] - value.size() : 0,
+                    ' ');
+      }
+      grid += "\n";
+      if (r == 0)
+        for (size_t c = 0; c < columns; ++c) {
+          grid.append(widths[c], '-');
+          grid += c + 1 == columns ? "-\n" : "-+-";
+        }
+    }
+    while (!grid.empty() && grid.back() == '\n')
+      grid.pop_back();
+    if (!grid.empty()) {
+      auto &row = blocks_.emplace_back();
+      row.kind = display_string("code");
+      row.depth = 0;
+      row.title = display_string(grid);
+    }
+    detach_row();
+    md_table_rows_.clear();
+  }
+
+  std::vector<ChatBlock> blocks_;
+  ChatBlock *row_ = nullptr;
+
+  bool fresh_li_ = false;
+  bool in_heading_ = false;
+  int heading_level_ = 1;
+  bool in_code_block_ = false;
+  std::string code_buffer_;
+
+  int quote_depth_ = 0;
+  std::vector<bool> list_ordered_;
+  std::vector<long long> ordered_next_;
+
+  bool in_table_ = false;
+  size_t md_table_cols_ = 0;
+  std::vector<MdTableRow> md_table_rows_;
+  std::optional<std::string> md_active_cell_;
+  std::vector<std::string> md_links_;
+};
+
+int markdown_enter_block_thunk(MD_BLOCKTYPE type, void *detail,
+                              void *userdata) {
+  static_cast<MarkdownBlocksBuilder *>(userdata)->enter_block(type, detail);
+  return 0;
+}
+
+int markdown_leave_block_thunk(MD_BLOCKTYPE type, void *detail,
+                              void *userdata) {
+  static_cast<MarkdownBlocksBuilder *>(userdata)->leave_block(type, detail);
+  return 0;
+}
+
+int markdown_enter_span_thunk(MD_SPANTYPE type, void *detail,
+                              void *userdata) {
+  static_cast<MarkdownBlocksBuilder *>(userdata)->enter_span(type, detail);
+  return 0;
+}
+
+int markdown_leave_span_thunk(MD_SPANTYPE type, void *detail,
+                              void *userdata) {
+  static_cast<MarkdownBlocksBuilder *>(userdata)->leave_span(type, detail);
+  return 0;
+}
+
+int markdown_text_thunk(MD_TEXTTYPE type, const MD_CHAR *data, MD_SIZE size,
+                        void *userdata) {
+  static_cast<MarkdownBlocksBuilder *>(userdata)->text(type, data, size);
+  return 0;
+}
+
+} // namespace
+
+std::vector<ChatBlock> chat_blocks_from(const std::string &markdown) {
+  MarkdownBlocksBuilder builder;
+  MD_PARSER parser{};
+  parser.abi_version = 0;
+  parser.flags = MD_FLAG_COLLAPSEWHITESPACE | MD_FLAG_TABLES |
+                 MD_FLAG_STRIKETHROUGH | MD_FLAG_TASKLISTS |
+                 MD_FLAG_PERMISSIVEURLAUTOLINKS;
+  parser.enter_block = &markdown_enter_block_thunk;
+  parser.leave_block = &markdown_leave_block_thunk;
+  parser.enter_span = &markdown_enter_span_thunk;
+  parser.leave_span = &markdown_leave_span_thunk;
+  parser.text = &markdown_text_thunk;
+  if (md_parse(markdown.data(), static_cast<MD_SIZE>(markdown.size()),
+               &parser, &builder) != 0)
+    return {};
+  return builder.take();
+}
+
 std::string duration_label(const std::int64_t milliseconds) {
-  if (milliseconds < 1'000)
+    if (milliseconds < 1'000)
     return std::to_string(std::max<std::int64_t>(0, milliseconds)) + "ms";
   const auto seconds = milliseconds / 1'000;
   if (seconds < 60)

@@ -40,6 +40,24 @@ export struct SlashCommandItem {
     category: string,
 }
 
+// One formatted segment of an assistant reply, produced by the C++ side from
+// real markdown parsing (md4c). The UI renders structure instead of literal
+// markdown markers.
+export struct ChatBlock {
+    // "paragraph" | "heading" | "bullet" | "ordered" | "code" | "rule"
+    kind: string,
+    // Inline-rich text content, already serialized into the StyledText
+    // markup subset (bold/emphasis/code/links); raw source for "code".
+    title: string,
+    // "1." style ordinal for ordered items, empty otherwise.
+    ordinal: string,
+    // Nesting context: list indent levels for items, 1-6 for headings.
+    depth: int,
+    // Parsed rich-text value ready for StyledText; produced by the C++
+    // runtime markdown converter (falls back to plain text).
+    rich: styled-text,
+}
+
 export struct ProjectFile {
     name: string,
     path: string,

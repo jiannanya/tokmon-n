@@ -221,6 +221,8 @@ int run_application(int argc, char **argv) {
   auto timeline_model = std::make_shared<slint::VectorModel<TimelineItem>>();
   auto conversation_workflow_model =
       std::make_shared<slint::VectorModel<TimelineItem>>();
+  auto assistant_blocks_model =
+      std::make_shared<slint::VectorModel<ChatBlock>>();
   auto code_model = std::make_shared<slint::VectorModel<CodeLine>>();
   auto slash_model = std::make_shared<slint::VectorModel<SlashCommandItem>>();
   auto trace_events_model = std::make_shared<slint::VectorModel<TraceEvent>>();
@@ -230,6 +232,7 @@ int run_application(int argc, char **argv) {
   window->set_navigation(nav_model);
   window->set_timeline(timeline_model);
   window->set_conversation_workflow(conversation_workflow_model);
+  window->set_assistant_blocks(assistant_blocks_model);
   window->set_code_lines(code_model);
   window->set_slash_commands(slash_model);
   window->set_trace_events(trace_events_model);
@@ -239,7 +242,8 @@ int run_application(int argc, char **argv) {
                                               : "后台服务已连接");
   auto controller = make_ui_controller(
       endpoint, navigation_workspace, daemon_executable, timeline_model,
-      conversation_workflow_model, code_model, trace_events_model, gantt_model,
+      conversation_workflow_model, assistant_blocks_model, code_model,
+      trace_events_model, gantt_model,
       nav_model, navigation_state, assets,
       slint::ComponentWeakHandle<MainWindow>(window), !workspace.has_value());
   controller->load_settings(true);
@@ -263,7 +267,7 @@ int run_application(int argc, char **argv) {
     }
     window->set_slash_menu_visible(visible && slash_model->row_count() != 0);
   });
-  window->on_send_message([&controller, conversation_workflow_model, nav_model,
+  window->on_send_message([&controller, conversation_workflow_model, assistant_blocks_model, nav_model,
                            navigation_state,
                            window](const slint::SharedString &text) {
     const auto message = std::string(text);
@@ -292,6 +296,7 @@ int run_application(int argc, char **argv) {
     }
     window->set_slash_menu_visible(false);
     conversation_workflow_model->clear();
+    assistant_blocks_model->clear();
     window->set_last_message(text);
     window->set_assistant_text("");
     window->set_thought_text("");

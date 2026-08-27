@@ -1,4 +1,4 @@
-import { NavigationItem, ModelChoice, TimelineItem, CodeLine, SlashCommandItem, ProjectFile, GanttSegment, TraceEvent } from "tokmon-models.slint";
+import { NavigationItem, ModelChoice, TimelineItem, CodeLine, SlashCommandItem, ProjectFile, GanttSegment, TraceEvent, ChatBlock } from "tokmon-models.slint";
 import { Palette } from "tokmon-theme.slint";
 import { SettingsOverlay } from "tokmon-settings.slint";
 import { CodePanelSlot } from "tokmon-code-panel.slint";
@@ -213,6 +213,8 @@ export component MainWindow inherits Window {
     // Aggregated chain-of-thought text for the current turn, shown by the
     // collapsible thought-process card above the assistant reply.
     in-out property <string> thought-text;
+    // Parsed markdown blocks of the current assistant reply (md4c).
+    in-out property <[ChatBlock]> assistant-blocks;
     in-out property <string> daemon-state: "正在连接后台服务";
     in-out property <string> search-text;
     in-out property <string> chat-time;
@@ -521,6 +523,7 @@ export component MainWindow inherits Window {
                 last-message: root.last-message;
                 assistant-text: root.assistant-text;
                 thought-text: root.thought-text;
+                assistant-blocks <=> root.assistant-blocks;
                 chat-time: root.chat-time;
                 trace-duration: root.trace-duration;
                 workflow-duration: root.workflow-duration;

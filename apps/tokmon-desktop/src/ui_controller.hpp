@@ -47,6 +47,7 @@ std::unique_ptr<UiController> make_ui_controller(
     std::filesystem::path daemon_executable,
     std::shared_ptr<slint::VectorModel<TimelineItem>> timeline,
     std::shared_ptr<slint::VectorModel<TimelineItem>> conversation_workflow,
+    std::shared_ptr<slint::VectorModel<ChatBlock>> assistant_blocks,
     std::shared_ptr<slint::VectorModel<CodeLine>> code,
     std::shared_ptr<slint::VectorModel<TraceEvent>> trace_events,
     std::shared_ptr<slint::VectorModel<GanttSegment>> gantt,
