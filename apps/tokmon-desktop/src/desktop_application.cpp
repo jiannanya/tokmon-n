@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <thread>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -102,6 +103,59 @@ int run_fatal_desktop_error(slint::ComponentHandle<MainWindow> window,
   return 2;
 }
 
+// Non-fatal variant of the startup error dialog: keeps the event loop (and
+// therefore an already-wired UI) alive after the user dismisses it.
+void show_configuration_dialog(slint::ComponentHandle<MainWindow> &window,
+                               const std::string_view title,
+                               const std::string_view message) {
+  window->set_daemon_state("配置错误");
+  window->set_status_text("配置错误");
+  window->set_error_dialog_title(display_string(title));
+  window->set_error_dialog_message(display_string(message));
+  window->set_error_dialog_fatal(false);
+  window->set_error_dialog_open(true);
+}
+
+// One-shot authoritative configuration probe against the connected daemon.
+struct ConfigProbeResult {
+  bool ok{true};
+  bool booting{false};
+  std::string error;
+};
+
+ConfigProbeResult probe_daemon_configuration(
+    const std::filesystem::path &endpoint) {
+  ConfigProbeResult probe;
+  tokmon::SnowClient client(endpoint);
+  tokmon::SnowMessage message{.kind = tokmon::SnowMessageKind::intent,
+      .request_id = tokmon::next_snow_request_id(), .cursor = 0,
+      .payload = tokmon::cbor::object({{"action", "config.validate"}})};
+  auto response = client.request(message);
+  if (!response) {
+    probe.error = response.error().describe();
+    return probe;
+  }
+  if (response->kind == tokmon::SnowMessageKind::error) {
+    const auto *field = tokmon::cbor::find(response->payload, "message");
+    const auto *detail = tokmon::cbor::find(response->payload, "error");
+    probe.ok = false;
+    probe.error = field ? std::string(field->as_string())
+                        : (detail ? std::string(detail->as_string())
+                                  : std::string("配置校验未通过"));
+    return probe;
+  }
+  const auto *valid = tokmon::cbor::find(response->payload, "valid");
+  const auto *booting = tokmon::cbor::find(response->payload, "booting");
+  probe.booting = booting && booting->as_bool();
+  if (valid && !valid->as_bool() && !probe.booting) {
+    probe.ok = false;
+    const auto *error = tokmon::cbor::find(response->payload, "error");
+    probe.error = error ? std::string(error->as_string())
+                        : std::string("配置校验未通过");
+  }
+  return probe;
+}
+
 } // namespace
 
 int run_application(int argc, char **argv) {
@@ -136,10 +190,18 @@ int run_application(int argc, char **argv) {
   if (!paths)
     return run_fatal_desktop_error(window, "Tokmon 配置错误",
                                    paths.error().describe());
-  auto validated_config = tokmon::load_config(paths->project.parent_path());
-  if (!validated_config)
-    return run_fatal_desktop_error(window, "Tokmon 配置文件无效",
-                                   validated_config.error().describe());
+  // The daemon performs the authoritative configuration parse/validate; the
+  // frontend intentionally does not duplicate that work anymore. A rejected
+  // configuration surfaces through the post-attach probe below instead of a
+  // blocked first frame.
+
+  // First frame: show before any blocking handshake so launch latency equals
+  // component instantiation only. Everything network/process related runs on
+  // the worker joined further below.
+  window->show();
+#if defined(_WIN32)
+  make_current_process_window_frameless();
+#endif
 
   std::error_code path_error;
   auto executable = argc > 0 ? std::filesystem::absolute(argv[0], path_error)
@@ -160,24 +222,37 @@ int run_application(int argc, char **argv) {
 #else
   const auto daemon_executable = executable.parent_path() / "tokmon";
 #endif
-  auto connected = tokmon::ensure_daemon(
-      tokmon::DaemonLaunchOptions{.endpoint = endpoint,
-                                  .workspace = paths->project.parent_path(),
-                                  .executable = daemon_executable});
-  if (!connected)
-    return run_fatal_desktop_error(window, "Tokmon 无法启动",
-                                   connected.error().describe());
-  auto client_lease =
-      tokmon::DaemonClientLease::attach(tokmon::DaemonClientOptions{
-          .endpoint = endpoint,
-          .client_id = tokmon::make_id("desktop-client"),
-          .client_kind = "desktop",
-          .shutdown_when_idle = true,
-          .idle_timeout = std::chrono::milliseconds(250),
-          .lease_ttl = std::chrono::seconds(6)});
-  if (!client_lease)
-    return run_fatal_desktop_error(window, "Tokmon 无法连接后台服务",
-                                   client_lease.error().describe());
+  // Connect to / spawn the daemon on a worker thread so the window can paint
+  // while the handshake runs. Results are consumed at the join point below.
+  struct BackendConnection {
+    std::optional<tokmon::DaemonConnection> connection;
+    std::optional<tokmon::DaemonClientLease> lease;
+    std::optional<tokmon::Error> failure;
+  } backend;
+  std::thread backend_connect([endpoint, workspace = paths->project.parent_path(),
+                               executable = daemon_executable, &backend]() {
+    auto connection = tokmon::ensure_daemon(
+        tokmon::DaemonLaunchOptions{.endpoint = endpoint,
+                                    .workspace = workspace,
+                                    .executable = executable});
+    if (!connection) {
+      backend.failure = connection.error();
+      return;
+    }
+    backend.connection = std::move(*connection);
+    auto lease = tokmon::DaemonClientLease::attach(
+        tokmon::DaemonClientOptions{.endpoint = endpoint,
+            .client_id = tokmon::make_id("desktop-client"),
+            .client_kind = "desktop",
+            .shutdown_when_idle = true,
+            .idle_timeout = std::chrono::milliseconds(250),
+            .lease_ttl = std::chrono::seconds(6)});
+    if (!lease) {
+      backend.failure = lease.error();
+      return;
+    }
+    backend.lease = std::move(*lease);
+  });
   auto assets = executable.parent_path() / "assets" / "figma";
   if (!std::filesystem::exists(assets))
     assets = std::filesystem::current_path() / "apps" / "tokmon-desktop" /
@@ -238,8 +313,14 @@ int run_application(int argc, char **argv) {
   window->set_trace_events(trace_events_model);
   window->set_gantt(gantt_model);
   window->set_setting_workspace(display_string(navigation_workspace_text));
-  window->set_daemon_state(connected->started ? "后台服务已自动启动"
-                                              : "后台服务已连接");
+  backend_connect.join();
+  if (backend.failure)
+    return run_fatal_desktop_error(window, "Tokmon 无法启动",
+                                   backend.failure->describe());
+  auto client_lease = std::move(*backend.lease);
+  const bool daemon_started = backend.connection->started;
+  window->set_daemon_state(daemon_started ? "后台服务已自动启动"
+                                          : "后台服务已连接");
   auto controller = make_ui_controller(
       endpoint, navigation_workspace, daemon_executable, timeline_model,
       conversation_workflow_model, assistant_blocks_model, code_model,
@@ -248,6 +329,19 @@ int run_application(int argc, char **argv) {
       slint::ComponentWeakHandle<MainWindow>(window), !workspace.has_value());
   controller->load_settings(true);
   controller->load_providers();
+  // Authoritative configuration verdict from the just-attached daemon; errors
+  // surface as a dialog while the rest of the UI stays usable.
+  {
+    const auto verdict = probe_daemon_configuration(endpoint);
+    if (!verdict.ok) {
+      show_configuration_dialog(window, "Tokmon 配置文件无效", verdict.error);
+      // The generic startup path never wired the dialog callbacks, so make
+      // this dialog self-contained.
+      window->on_error_dialog_dismissed([window]() mutable {
+        window->set_error_dialog_open(false);
+      });
+    }
+  }
   window->on_slash_query_changed([slash_model,
                                   window](const slint::SharedString &text) {
     const auto query = std::string(text);
@@ -833,9 +927,7 @@ int run_application(int argc, char **argv) {
     window->set_settings_status(slint::SharedString("未找到匹配的设置项"));
   });
 
-  window->show();
 #if defined(_WIN32)
-  make_current_process_window_frameless();
   // Defer activation until Slint's event loop is actually dispatching native
   // focus messages. Activating before run_event_loop() makes Windows report the
   // HWND as foreground, but winit can still treat the first click as activation.

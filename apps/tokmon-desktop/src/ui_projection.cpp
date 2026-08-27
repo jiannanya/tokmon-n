@@ -611,11 +611,11 @@ public:
       if (fresh_li_) {
         fresh_li_ = false;
         if (body.starts_with("[ ] ")) {
-          emit("\xE2\x98\x90 ");
+          emit("\xE2\x96\xA1 ");
           body.remove_prefix(4);
         } else if (body.starts_with("[x] ") ||
                    body.starts_with("[X] ")) {
-          emit("\xE2\x98\x91 ");
+          emit("\xE2\x9C\x93 ");
           body.remove_prefix(4);
         }
       }

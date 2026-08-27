@@ -890,13 +890,31 @@ int tokmon::app::daemon_main(int argc, char** argv) {
   std::signal(SIGINT, stop_signal);
   std::signal(SIGTERM, stop_signal);
   tokmon::TokmonRuntime runtime;
-  if (auto opened = runtime.open(workspace, "tokmond"); !opened) {
-    std::cerr << opened.error().describe() << '\n'; return 2;
+
+  // Server-first startup: the Snow endpoint listens before configuration I/O,
+  // so frontends attach immediately instead of waiting out a timeout. The
+  // authoritative config load runs on the bootstrap thread; failures are kept
+  // in runtime_error/configuration_error and reported to clients -- the
+  // daemon stays alive and later intents re-attempt loading.
+  std::mutex boot_mutex;
+  bool runtime_ready = false;
+  std::string runtime_error;
+
+  if (once) {
+    // Verify mode keeps its historical synchronous fail-fast semantics.
+    if (auto opened = runtime.open(workspace, "tokmond"); !opened) {
+      std::cerr << opened.error().describe() << '\n'; return 2;
+    }
+    if (auto imported = bootstrap_environment_credentials(runtime.config()); !imported) {
+      std::cerr << imported.error().describe() << '\n'; return 2;
+    }
+    return runtime.verify() ? 0 : 1;
   }
-  if (auto imported = bootstrap_environment_credentials(runtime.config()); !imported) {
-    std::cerr << imported.error().describe() << '\n'; return 2;
+
+  auto early_paths = tokmon::resolve_paths(workspace);
+  if (!early_paths) {
+    std::cerr << early_paths.error().describe() << '\n'; return 2;
   }
-  if (once) return runtime.verify() ? 0 : 1;
 
   std::mutex runtime_mutex;
   std::optional<tokmon::Error> configuration_error;
@@ -916,7 +934,7 @@ int tokmon::app::daemon_main(int argc, char** argv) {
   bool daemon_pinned = false;
   tokmon::SnowServer snow;
   const auto endpoint = endpoint_override.value_or(tokmon::workspace_snow_endpoint(
-      runtime.config().paths.run, runtime.config().paths.project.parent_path()));
+      early_paths->run, early_paths->project.parent_path()));
   DaemonInstanceLock instance_lock(endpoint);
   if (!instance_lock.acquired()) return 0;
   auto snow_started = snow.start(endpoint, [&runtime, &runtime_mutex,
@@ -924,7 +942,9 @@ int tokmon::app::daemon_main(int argc, char** argv) {
                                         &cancelled_requests, &completed_requests,
                                         &active_requests, &lifecycle_mutex,
                                         &client_leases, &idle_shutdown_at,
-                                        &daemon_pinned, &endpoint, &snow](
+                                        &daemon_pinned, &endpoint, &snow,
+                                        &runtime_ready, &runtime_error,
+                                        &boot_mutex](
       const tokmon::SnowMessage& request) -> tokmon::SnowMessage {
     if (request.kind == tokmon::SnowMessageKind::cancel) {
       const auto* target = tokmon::cbor::find(request.payload, "request_id");
@@ -1044,6 +1064,37 @@ int tokmon::app::daemon_main(int argc, char** argv) {
           {"detached", true}, {"client_id", client_id},
           {"shutdown_when_idle", shutdown_when_idle && !daemon_pinned},
           {"active_clients", static_cast<std::int64_t>(client_leases.size())}}));
+    }
+    {
+      // Startup gate: while the bootstrap thread loads configuration, only
+      // lifecycle intents and liveness pings answer; runtime-touching work
+      // gets an immediate error instead of a client-side timeout.
+      std::scoped_lock boot_gate(boot_mutex);
+      if (!runtime_ready) {
+        if (request.kind == tokmon::SnowMessageKind::ping)
+          return tokmon::SnowMessage{.kind = tokmon::SnowMessageKind::pong,
+              .request_id = request.request_id, .cursor = request.cursor,
+              .payload = tokmon::cbor::object(
+                  {{"healthy", true}, {"starting", true}})};
+        if (request.kind == tokmon::SnowMessageKind::intent) {
+          const auto *gate_field =
+              tokmon::cbor::find(request.payload, "action");
+          const std::string_view gate_action = gate_field
+                                                   ? gate_field->as_string()
+                                                   : std::string_view{};
+          if (gate_action == "config.validate")
+            return tokmon::SnowMessage{
+                .kind = tokmon::SnowMessageKind::intent_result,
+                .request_id = request.request_id,
+                .cursor = request.cursor,
+                .payload = tokmon::cbor::object({{"valid", false},
+                    {"booting", true}, {"error", runtime_error}})};
+        }
+        return snow_error(request, tokmon::make_error(tokmon::ErrorCode::io_error,
+            runtime_error.empty()
+                ? std::string("Tokmon daemon is starting up")
+                : ("Tokmon daemon failed to initialize: " + runtime_error)));
+      }
     }
     std::scoped_lock lock(runtime_mutex);
     const auto remember = [&](tokmon::SnowMessage response) {
@@ -1440,14 +1491,52 @@ int tokmon::app::daemon_main(int argc, char** argv) {
   }
   tokmon::log_info("Snow endpoint listening at {}", endpoint.string());
 
-  const std::vector<std::filesystem::path> watched_config{
-      runtime.config().paths.user / "config.yaml",
-      runtime.config().paths.project / "config.yaml",
-      runtime.config().paths.user / "light-path.yaml",
-      runtime.config().paths.project / "light-path.yaml"};
-  std::vector<std::filesystem::file_time_type> watched_time(
-      watched_config.size(), std::filesystem::file_time_type::min());
+  std::jthread bootstrap([&runtime, &workspace, &runtime_ready,
+                          &runtime_error, &boot_mutex]() {
+    if (auto opened = runtime.open(workspace, "tokmond"); !opened) {
+      std::scoped_lock lock(boot_mutex);
+      runtime_error = opened.error().describe();
+      std::cerr << "[tokmond] runtime startup failed: "
+                << runtime_error << '\n';
+      return;
+    }
+    if (auto imported = bootstrap_environment_credentials(runtime.config());
+        !imported) {
+      std::scoped_lock lock(boot_mutex);
+      runtime_error = imported.error().describe();
+      std::cerr << "[tokmond] credential import failed: "
+                << runtime_error << '\n';
+      return;
+    }
+    {
+      std::scoped_lock lock(boot_mutex);
+      runtime_ready = true;
+    }
+    tokmon::log_info("tokmond configuration loaded");
+  });
+
+  std::vector<std::filesystem::path> watched_config;
+  std::vector<std::filesystem::file_time_type> watched_time;
+  bool watch_list_built = false;
   while (running.load(std::memory_order_acquire)) {
+    {
+      std::scoped_lock boot_lock(boot_mutex);
+      if (!runtime_ready) {
+        // Bootstrap still running or failed; retried opens happen on demand
+        // through client config.validate/reload intents.
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        continue;
+      }
+      if (!watch_list_built) {
+        watched_config.assign({runtime.config().paths.user / "config.yaml",
+            runtime.config().paths.project / "config.yaml",
+            runtime.config().paths.user / "light-path.yaml",
+            runtime.config().paths.project / "light-path.yaml"});
+        watched_time.assign(watched_config.size(),
+            std::filesystem::file_time_type::min());
+        watch_list_built = true;
+      }
+    }
     bool idle_stop_candidate = false;
     {
       std::scoped_lock lifecycle_lock(lifecycle_mutex);
@@ -1505,6 +1594,7 @@ int tokmon::app::daemon_main(int argc, char** argv) {
     std::this_thread::sleep_for(std::chrono::milliseconds(250));
   }
   snow.stop();
+  bootstrap.join();
   runtime.stop();
   return 0;
 }

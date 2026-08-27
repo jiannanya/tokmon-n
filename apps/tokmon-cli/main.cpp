@@ -394,15 +394,9 @@ int tokmon::app::cli_main(int argc, char** argv) {
     return 0;
   }
 
-  // Fail in the foreground with the actual YAML/schema error. Otherwise a
-  // freshly spawned hidden daemon can exit before Snow is ready and the user
-  // only sees a misleading startup timeout.
-  auto validated_config = tokmon::load_config(paths->project.parent_path());
-  if (!validated_config) {
-    print_error(validated_config.error());
-    return 2;
-  }
-
+  // Configuration loading/validation is owned by the daemon (which also
+  // revalidates on the next intent); this foreground process no longer
+  // duplicates that work.
   auto connection = tokmon::ensure_daemon(tokmon::DaemonLaunchOptions{
       .endpoint = endpoint,
       .workspace = paths->project.parent_path(),
@@ -434,6 +428,24 @@ int tokmon::app::cli_main(int argc, char** argv) {
                                   : std::chrono::seconds(15),
       .lease_ttl = std::chrono::seconds(6)});
   if (!client_lease) { print_error(client_lease.error()); return 1; }
+
+  // Surface the daemon's authoritative configuration verdict once attached;
+  // a still-booting daemon simply reports booting=true and we proceed so the
+  // eventual per-intent reload attempts surface errors on their own terms.
+  {
+    const auto config_state =
+        intent(client, tokmon::cbor::object({{"action", "config.validate"}}));
+    if (!config_state) { print_error(config_state.error()); return 1; }
+    const auto *valid = tokmon::cbor::find(config_state->payload, "valid");
+    const auto *booting = tokmon::cbor::find(config_state->payload, "booting");
+    if (valid && !valid->as_bool() && !(booting && booting->as_bool())) {
+      const auto *error = tokmon::cbor::find(config_state->payload, "error");
+      print_error(tokmon::make_error(tokmon::ErrorCode::schema_mismatch,
+          error ? std::string(error->as_string())
+                : std::string("configuration rejected by Tokmon daemon")));
+      return 2;
+    }
+  }
 
   if (arguments[0] == "stdio") return run_stdio(client);
   if (arguments[0] == "model" && arguments.size() > 1 && arguments[1] == "list") {
