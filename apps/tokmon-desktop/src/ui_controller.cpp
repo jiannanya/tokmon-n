@@ -64,6 +64,10 @@ public:
     {
       std::scoped_lock lock(mutex_);
       backend_connected_ = true;
+      // Endpoint reachability precedes daemon configuration readiness. Make
+      // the authoritative status probe the first request even when UI
+      // callbacks queued work while the backend process was starting.
+      commands_.push_front(Command{"config-validate", {}});
     }
     condition_.notify_all();
   }
@@ -613,6 +617,7 @@ private:
     std::string kind;
     std::string text;
     tokmon::cbor::Value payload;
+    bool projected{false};
   };
 
   void enqueue(Command command) {
@@ -644,6 +649,22 @@ private:
       while (!deferred_user_commands_.empty()) {
         commands_.push_back(std::move(deferred_user_commands_.front()));
         deferred_user_commands_.pop_front();
+      }
+    }
+    condition_.notify_one();
+  }
+
+  void defer_until_startup_ready(Command command) {
+    std::scoped_lock lock(mutex_);
+    startup_deferred_commands_.push_back(std::move(command));
+  }
+
+  void release_startup_commands() {
+    {
+      std::scoped_lock lock(mutex_);
+      while (!startup_deferred_commands_.empty()) {
+        commands_.push_back(std::move(startup_deferred_commands_.front()));
+        startup_deferred_commands_.pop_front();
       }
     }
     condition_.notify_one();
@@ -1126,7 +1147,6 @@ private:
             *navigation = std::move(*decoded);
             refresh_navigation(navigation_model, navigation,
                                std::string(handle->get_search_text()));
-            save_navigation();
             bool selection_changed = false;
             for (std::size_t index = 0; index < navigation->size(); ++index) {
               auto &item = (*navigation)[index];
@@ -1229,6 +1249,14 @@ private:
         auto handle = *locked;
         handle->set_daemon_state(state);
       }
+    });
+  }
+
+  void update_status_text(const slint::SharedString &status) {
+    auto window = window_;
+    (void)slint::invoke_from_event_loop([window, status] {
+      if (auto locked = window.lock())
+        (*locked)->set_status_text(status);
     });
   }
 
@@ -1498,6 +1526,13 @@ private:
         (void)activate_workspace(command.text);
         continue;
       }
+      // Only daemon lifecycle/status requests are valid while its
+      // configuration worker is opening or reconciling the runtime. Preserve
+      // all other work and release it after the first authoritative `ready`.
+      if (!startup_loaded_ && command.kind != "config-validate") {
+        defer_until_startup_ready(std::move(command));
+        continue;
+      }
       if (command.kind == "new-session" || command.kind == "open-session") {
         if (const auto *expected =
                 tokmon::cbor::find(command.payload, "workspace");
@@ -1550,8 +1585,11 @@ private:
           continue;
         active_ray_ = command.text;
       }
-      if (command.kind == "chat" || command.kind == "slash-command")
+      if ((command.kind == "chat" || command.kind == "slash-command") &&
+          !command.projected) {
         publish_pending(command.text);
+        command.projected = true;
+      }
       // A session without a Ray is persisted by navigation-save. Once a Ray
       // exists, mirror the title into its immutable session metadata below.
       if (command.kind == "rename-session" && active_ray_.empty())
@@ -1652,6 +1690,21 @@ private:
         const auto *message = tokmon::cbor::find(response->payload, "message");
         const auto error_message = message ? std::string(message->as_string())
                                            : std::string("后台服务拒绝了请求");
+        const auto *code = tokmon::cbor::find(response->payload, "code");
+        const auto *retryable = tokmon::cbor::find(response->payload, "retryable");
+        if (code && code->as_string() == "invalid_state" && retryable &&
+            retryable->as_bool()) {
+          startup_loaded_ = false;
+          defer_until_startup_ready(std::move(command));
+          {
+            std::scoped_lock lock(mutex_);
+            commands_.push_front(Command{"config-validate", {}});
+          }
+          condition_.notify_one();
+          update_daemon_state("正在检查配置");
+          update_status_text("正在检查配置");
+          continue;
+        }
         if (error_message != last_error_) {
           last_error_ = error_message;
           show_error(error_message);
@@ -1670,6 +1723,7 @@ private:
                                        : std::string_view("ready");
         if (state == "starting") {
           update_daemon_state("正在检查配置");
+          update_status_text("正在检查配置");
           continue;
         }
         if (state == "failed") {
@@ -1678,6 +1732,7 @@ private:
               ? std::string(error->as_string())
               : std::string("daemon 配置校验未通过");
           update_daemon_state("配置错误");
+          update_status_text("配置错误");
           if (message != last_error_) {
             last_error_ = message;
             show_error(message);
@@ -1686,10 +1741,12 @@ private:
         }
         last_error_.clear();
         update_daemon_state("后台服务已连接");
+        update_status_text("等待输入");
         if (!startup_loaded_) {
           startup_loaded_ = true;
           load_settings(true);
           load_providers();
+          release_startup_commands();
         }
         continue;
       }
@@ -1825,6 +1882,7 @@ private:
   std::condition_variable_any condition_;
   std::deque<Command> commands_;
   std::deque<Command> deferred_user_commands_;
+  std::deque<Command> startup_deferred_commands_;
   bool initializing_{true};
   bool backend_connected_{false};
   bool startup_loaded_{false};

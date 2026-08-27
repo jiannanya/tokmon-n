@@ -94,7 +94,8 @@ tokmon::SnowMessage snow_error(const tokmon::SnowMessage& request,
       .request_id = request.request_id, .cursor = request.cursor,
       .payload = tokmon::cbor::object({
           {"code", std::string(tokmon::to_string(error.code))},
-          {"message", error.describe()}})};
+          {"message", error.describe()},
+          {"retryable", error.retryable}})};
 }
 
 tokmon::Result<tokmon::cbor::Value> editable_yaml(
