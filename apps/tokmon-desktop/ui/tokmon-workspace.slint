@@ -1,7 +1,7 @@
 import { LineEdit, ScrollView } from "std-widgets.slint";
 import { ModelChoice, TimelineItem, SlashCommandItem, ProjectFile, GanttSegment, TraceEvent, ChatBlock } from "tokmon-models.slint";
 import { Palette, Icons } from "tokmon-theme.slint";
-import { ToolIcon, MenuOption, WorkflowStepRow, ThoughtProcessCard, ChatBlockRow } from "tokmon-components.slint";
+import { ToolIcon, MenuOption, WorkflowStepRow, ThoughtProcessCard, ChatBlockRow, LineSpacedText } from "tokmon-components.slint";
 import { TrajectoryPanel } from "tokmon-trajectory.slint";
 import { EnvironmentPanel } from "tokmon-environment-panel.slint";
 import { SessionEmptyState, ComposerContextTab } from "tokmon-session-initial.slint";
@@ -543,12 +543,12 @@ export component WorkspacePanel inherits Rectangle {
                                             VerticalLayout {
                                                 padding: 14px;
                                                 spacing: 6px;
-                                                Text {
-                                                    text: root.last-message;
-                                                    font-size: 13px;
-                                                    font-weight: 500;
-                                                    color: Palette.ink;
-                                                    wrap: word-wrap;
+                                                LineSpacedText {
+                                                    value: root.last-message;
+                                                    text-size: 13.5px;
+                                                    text-weight: 400;
+                                                    text-color: Palette.ink;
+                                                    line-gap: 4px;
                                                 }
                                             }
                                         }
@@ -563,13 +563,12 @@ export component WorkspacePanel inherits Rectangle {
                                             block: blk;
                                         }
                                     }
-                                    if root.assistant-text != "" && root.assistant-blocks.length == 0 : Text {
-                                        text: root.assistant-text;
-                                        font-size: 13.5px;
-                                        color: Palette.body;
-                                        wrap: word-wrap;
-                                        vertical-alignment: top;
-                                        vertical-stretch: 0;
+                                    if root.assistant-text != "" && root.assistant-blocks.length == 0 : LineSpacedText {
+                                        value: root.assistant-text;
+                                        text-size: 13.5px;
+                                        text-weight: 400;
+                                        text-color: Palette.body;
+                                        line-gap: 4px;
                                     }
                                     if root.conversation-workflow.length > 0 : Rectangle {
                                         border-radius: 12px;
