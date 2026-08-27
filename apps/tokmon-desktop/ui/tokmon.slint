@@ -120,7 +120,7 @@ component ErrorDialogPanel inherits Rectangle {
                         height: parent.height - 24px;
                         text: root.dialog-message;
                         color: Palette.body;
-                        font-family: "Consolas";
+                        font-family: "MiSans VF";
                         font-size: 11.5px;
                         wrap: word-wrap;
                         overflow: elide;
@@ -187,7 +187,7 @@ export component MainWindow inherits Window {
     // Slint currently resolves one family here without the browser's CSS
     // fallback chain. YaHei UI keeps Chinese glyph coverage while retaining
     // Windows-native UI metrics for mixed Chinese/Latin labels.
-    default-font-family: "Microsoft YaHei UI";
+    default-font-family: "MiSans VF";
 
     in property <[NavigationItem]> navigation;
     in property <[TimelineItem]> timeline;

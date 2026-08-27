@@ -165,6 +165,9 @@ if(TOKMON_BUILD_DESKTOP)
       "Slint C++ SDK. See scripts/bootstrap-slint.ps1.")
   endif()
 
+  include(MiSans)
+  tokmon_prepare_misans_font(TOKMON_MISANS_FONT_FILE)
+
   add_executable(tokmon-desktop WIN32
     apps/tokmon-desktop/main.cpp
     apps/tokmon-desktop/src/desktop_application.cpp
@@ -198,7 +201,12 @@ if(TOKMON_BUILD_DESKTOP)
   add_custom_command(TARGET tokmon-desktop POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
       "${CMAKE_CURRENT_SOURCE_DIR}/apps/tokmon-desktop/assets"
-      "$<TARGET_FILE_DIR:tokmon-desktop>/assets")
+      "$<TARGET_FILE_DIR:tokmon-desktop>/assets"
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+      "$<TARGET_FILE_DIR:tokmon-desktop>/assets/fonts"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${TOKMON_MISANS_FONT_FILE}"
+      "$<TARGET_FILE_DIR:tokmon-desktop>/assets/fonts/MiSansVF.ttf")
   if(WIN32)
     add_custom_command(TARGET tokmon-desktop POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -234,6 +242,11 @@ if(TOKMON_BUILD_DESKTOP)
     endif()
     add_test(NAME tokmon-desktop-title-edit
       COMMAND tokmon-desktop-title-edit-tests)
+    add_test(NAME tokmon-desktop-font-policy
+      COMMAND ${CMAKE_COMMAND}
+        "-DUI_DIRECTORY=${CMAKE_CURRENT_SOURCE_DIR}/apps/tokmon-desktop/ui"
+        "-DFONT_PATH=$<TARGET_FILE_DIR:tokmon-desktop>/assets/fonts/MiSansVF.ttf"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/desktop/font_policy_test.cmake")
   endif()
 endif()
 
@@ -258,6 +271,7 @@ install(TARGETS ${TOKMON_RUNTIME_TARGETS} RUNTIME DESTINATION bin)
 if(TARGET tokmon-desktop)
   install(TARGETS tokmon-desktop RUNTIME DESTINATION bin)
   install(DIRECTORY apps/tokmon-desktop/assets/ DESTINATION bin/assets)
+  install(FILES "${TOKMON_MISANS_FONT_FILE}" DESTINATION bin/assets/fonts)
   if(WIN32)
     install(FILES $<TARGET_RUNTIME_DLLS:tokmon-desktop> DESTINATION bin)
   endif()

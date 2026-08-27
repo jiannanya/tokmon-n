@@ -153,7 +153,7 @@ export component TrajectoryPanel inherits Rectangle {
                             alignment: space-between;
                             for tick in root.trace-ticks : Text {
                                 text: tick;
-                                font-family: "Consolas";
+                                font-family: "MiSans VF";
                                 font-size: 11px;
                                 color: Palette.faint;
                             }
@@ -490,29 +490,29 @@ export component TrajectoryPanel inherits Rectangle {
                                 spacing: 8px;
                                 if root.request-tab == 0 : VerticalLayout {
                                     spacing: 8px;
-                                    HorizontalLayout { spacing: 8px; Text { text: "Provider"; width: 84px; horizontal-stretch: 0; font-size: 12px; color: Palette.dim; vertical-alignment: center; } Text { text: root.trace-provider; font-family: "Consolas"; font-size: 12px; color: Palette.body; overflow: elide; vertical-alignment: center; } }
-                                    HorizontalLayout { spacing: 8px; Text { text: "Model"; width: 84px; horizontal-stretch: 0; font-size: 12px; color: Palette.dim; vertical-alignment: center; } Text { text: root.trace-model; font-family: "Consolas"; font-size: 12px; color: Palette.body; overflow: elide; vertical-alignment: center; } }
-                                    HorizontalLayout { spacing: 8px; Text { text: "Tool calls"; width: 84px; horizontal-stretch: 0; font-size: 12px; color: Palette.dim; vertical-alignment: center; } Text { text: root.trace-calls; font-family: "Consolas"; font-size: 12px; color: Palette.body; vertical-alignment: center; } }
+                                    HorizontalLayout { spacing: 8px; Text { text: "Provider"; width: 84px; horizontal-stretch: 0; font-size: 12px; color: Palette.dim; vertical-alignment: center; } Text { text: root.trace-provider; font-family: "MiSans VF"; font-size: 12px; color: Palette.body; overflow: elide; vertical-alignment: center; } }
+                                    HorizontalLayout { spacing: 8px; Text { text: "Model"; width: 84px; horizontal-stretch: 0; font-size: 12px; color: Palette.dim; vertical-alignment: center; } Text { text: root.trace-model; font-family: "MiSans VF"; font-size: 12px; color: Palette.body; overflow: elide; vertical-alignment: center; } }
+                                    HorizontalLayout { spacing: 8px; Text { text: "Tool calls"; width: 84px; horizontal-stretch: 0; font-size: 12px; color: Palette.dim; vertical-alignment: center; } Text { text: root.trace-calls; font-family: "MiSans VF"; font-size: 12px; color: Palette.body; vertical-alignment: center; } }
                                     HorizontalLayout { spacing: 8px; Text { text: "Result"; width: 84px; horizontal-stretch: 0; font-size: 12px; color: Palette.dim; vertical-alignment: top; } Text { text: root.assistant-text == "" ? "-" : root.assistant-text; font-size: 12px; color: Palette.body; wrap: word-wrap; overflow: elide; } }
                                 }
                                 if root.request-tab == 1 : VerticalLayout {
                                     spacing: 8px;
                                     HorizontalLayout { spacing: 8px; Text { text: "权限模式"; width: 84px; horizontal-stretch: 0; font-size: 12px; color: Palette.dim; vertical-alignment: center; } Text { text: root.access-mode; font-size: 12px; color: Palette.body; vertical-alignment: center; } }
                                     HorizontalLayout { spacing: 8px; Text { text: "推理力度"; width: 84px; horizontal-stretch: 0; font-size: 12px; color: Palette.dim; vertical-alignment: center; } Text { text: root.effort; font-size: 12px; color: Palette.body; vertical-alignment: center; } }
-                                    HorizontalLayout { spacing: 8px; Text { text: "会话模型"; width: 84px; horizontal-stretch: 0; font-size: 12px; color: Palette.dim; vertical-alignment: center; } Text { text: root.model-name; font-family: "Consolas"; font-size: 12px; color: Palette.body; overflow: elide; vertical-alignment: center; } }
+                                    HorizontalLayout { spacing: 8px; Text { text: "会话模型"; width: 84px; horizontal-stretch: 0; font-size: 12px; color: Palette.dim; vertical-alignment: center; } Text { text: root.model-name; font-family: "MiSans VF"; font-size: 12px; color: Palette.body; overflow: elide; vertical-alignment: center; } }
                                     HorizontalLayout { spacing: 8px; Text { text: "命令审批"; width: 84px; horizontal-stretch: 0; font-size: 12px; color: Palette.dim; vertical-alignment: center; } Text { text: root.setting-command-approval; font-size: 12px; color: Palette.body; vertical-alignment: center; } }
                                 }
                                 if root.request-tab == 2 : VerticalLayout {
                                     spacing: 8px;
-                                    HorizontalLayout { spacing: 8px; Text { text: "Prompt"; width: 84px; horizontal-stretch: 0; font-size: 12px; color: Palette.dim; vertical-alignment: center; } Text { text: root.trace-prompt-label; font-family: "Consolas"; font-size: 12px; color: Palette.body; vertical-alignment: center; } }
-                                    HorizontalLayout { spacing: 8px; Text { text: "Completion"; width: 84px; horizontal-stretch: 0; font-size: 12px; color: Palette.dim; vertical-alignment: center; } Text { text: root.trace-completion-label; font-family: "Consolas"; font-size: 12px; color: Palette.body; vertical-alignment: center; } }
-                                    HorizontalLayout { spacing: 8px; Text { text: "Total"; width: 84px; horizontal-stretch: 0; font-size: 12px; color: Palette.dim; vertical-alignment: center; } Text { text: root.trace-total-label; font-family: "Consolas"; font-size: 12px; color: Palette.body; vertical-alignment: center; } }
+                                    HorizontalLayout { spacing: 8px; Text { text: "Prompt"; width: 84px; horizontal-stretch: 0; font-size: 12px; color: Palette.dim; vertical-alignment: center; } Text { text: root.trace-prompt-label; font-family: "MiSans VF"; font-size: 12px; color: Palette.body; vertical-alignment: center; } }
+                                    HorizontalLayout { spacing: 8px; Text { text: "Completion"; width: 84px; horizontal-stretch: 0; font-size: 12px; color: Palette.dim; vertical-alignment: center; } Text { text: root.trace-completion-label; font-family: "MiSans VF"; font-size: 12px; color: Palette.body; vertical-alignment: center; } }
+                                    HorizontalLayout { spacing: 8px; Text { text: "Total"; width: 84px; horizontal-stretch: 0; font-size: 12px; color: Palette.dim; vertical-alignment: center; } Text { text: root.trace-total-label; font-family: "MiSans VF"; font-size: 12px; color: Palette.body; vertical-alignment: center; } }
                                 }
                                 if root.request-tab == 3 : VerticalLayout {
                                     spacing: 8px;
-                                    HorizontalLayout { spacing: 8px; Text { text: "Duration"; width: 84px; horizontal-stretch: 0; font-size: 12px; color: Palette.dim; vertical-alignment: center; } Text { text: root.trace-duration; font-family: "Consolas"; font-size: 12px; color: Palette.body; vertical-alignment: center; } }
-                                    HorizontalLayout { spacing: 8px; Text { text: "Turns"; width: 84px; horizontal-stretch: 0; font-size: 12px; color: Palette.dim; vertical-alignment: center; } Text { text: root.trace-turns; font-family: "Consolas"; font-size: 12px; color: Palette.body; vertical-alignment: center; } }
-                                    HorizontalLayout { spacing: 8px; Text { text: "Calls"; width: 84px; horizontal-stretch: 0; font-size: 12px; color: Palette.dim; vertical-alignment: center; } Text { text: root.trace-calls; font-family: "Consolas"; font-size: 12px; color: Palette.body; vertical-alignment: center; } }
+                                    HorizontalLayout { spacing: 8px; Text { text: "Duration"; width: 84px; horizontal-stretch: 0; font-size: 12px; color: Palette.dim; vertical-alignment: center; } Text { text: root.trace-duration; font-family: "MiSans VF"; font-size: 12px; color: Palette.body; vertical-alignment: center; } }
+                                    HorizontalLayout { spacing: 8px; Text { text: "Turns"; width: 84px; horizontal-stretch: 0; font-size: 12px; color: Palette.dim; vertical-alignment: center; } Text { text: root.trace-turns; font-family: "MiSans VF"; font-size: 12px; color: Palette.body; vertical-alignment: center; } }
+                                    HorizontalLayout { spacing: 8px; Text { text: "Calls"; width: 84px; horizontal-stretch: 0; font-size: 12px; color: Palette.dim; vertical-alignment: center; } Text { text: root.trace-calls; font-family: "MiSans VF"; font-size: 12px; color: Palette.body; vertical-alignment: center; } }
                                 }
                             }
                         }

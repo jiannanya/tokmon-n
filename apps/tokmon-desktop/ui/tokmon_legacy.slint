@@ -187,7 +187,7 @@ component SidebarRow inherits Rectangle {
         Text {
             text: item.title;
             color: item.selected ? #8b5229 : #44403c;
-            font-family: "Microsoft YaHei UI";
+            font-family: "MiSans VF";
             font-size: 12px;
             font-weight: item.selected ? 700 : 500;
             vertical-alignment: center;
@@ -373,7 +373,7 @@ export component MainWindow inherits Window {
     min-width: 1040px;
     min-height: 680px;
     background: #f5f5f4;
-    default-font-family: "Microsoft YaHei UI";
+    default-font-family: "MiSans VF";
 
     in property <[NavigationItem]> navigation;
     in property <[TimelineItem]> timeline;
@@ -560,7 +560,7 @@ export component MainWindow inherits Window {
                     Text {
                         text: "Tokmon";
                         color: #1c1917;
-                        font-family: "Microsoft YaHei UI";
+                        font-family: "MiSans VF";
                         font-size: 18px;
                         font-weight: 700;
                         vertical-alignment: center;
@@ -701,7 +701,7 @@ export component MainWindow inherits Window {
                             if !root.title-editing: Text {
                                 text: root.session-title;
                                 color: #292524;
-                                font-family: "Microsoft YaHei UI";
+                                font-family: "MiSans VF";
                                 font-size: 13px;
                                 font-weight: 700;
                                 vertical-alignment: center;
@@ -1272,14 +1272,14 @@ export component MainWindow inherits Window {
                                 width: 31px;
                                 text: line.number;
                                 color: #d6d3d1;
-                                font-family: "Consolas";
+                                font-family: "MiSans VF";
                                 font-size: 10px;
                                 horizontal-alignment: right;
                             }
                             Text {
                                 text: line.text;
                                 color: line.tone == "keyword" ? #8200db : line.tone == "string" ? #007a55 : line.tone == "comment" ? #99a1af : #1e2939;
-                                font-family: "Consolas";
+                                font-family: "MiSans VF";
                                 font-size: 11px;
                                 overflow: elide;
                             }
@@ -1292,7 +1292,7 @@ export component MainWindow inherits Window {
                     Text {
                         x: 22px; y: 22px; width: parent.width - 44px;
                         text: root.assistant-text == "" ? "当前会话尚无可预览结果。" : root.assistant-text;
-                        color: #44403c; font-family: "Microsoft YaHei UI"; font-size: 12px;
+                        color: #44403c; font-family: "MiSans VF"; font-size: 12px;
                     }
                 }
                 Rectangle {

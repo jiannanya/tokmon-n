@@ -80,7 +80,7 @@ export component ChangeWorkspaceOverlay inherits Rectangle {
                                     width: parent.width - 22px;
                                     height: parent.height;
                                     vertical-alignment: center;
-                                    font-family: "Consolas";
+                                    font-family: "MiSans VF";
                                     font-size: 12px;
                                     color: Palette.ink;
                                     text <=> root.change-workspace-path;
@@ -117,7 +117,7 @@ export component ChangeWorkspaceOverlay inherits Rectangle {
                                 padding-right: 10px;
                                 alignment: space-between;
                                 Text { text: preset.name; font-size: 11.5px; font-weight: 500; color: Palette.ink; vertical-alignment: center; }
-                                Text { text: preset.path; font-family: "Consolas"; font-size: 10px; color: Palette.dim; overflow: elide; vertical-alignment: center; }
+                                Text { text: preset.path; font-family: "MiSans VF"; font-size: 10px; color: Palette.dim; overflow: elide; vertical-alignment: center; }
                             }
                             TouchArea {
                                 clicked => { root.change-workspace-path = preset.path }

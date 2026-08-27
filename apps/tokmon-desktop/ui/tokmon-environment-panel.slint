@@ -41,7 +41,7 @@ component EnvironmentRow inherits Rectangle {
         width: parent.width - 126px;
         height: parent.height;
         text: root.detail;
-        font-family: "Consolas";
+        font-family: "MiSans VF";
         font-size: 10.5px;
         font-weight: 600;
         color: root.enabled ? Palette.ink : Palette.faint;
@@ -315,8 +315,8 @@ export component EnvironmentPanel inherits Rectangle {
                             height: 30px;
                             border-radius: 7px;
                             background: file-touch.has-hover ? #F1EEE9 : transparent;
-                            Text { x: 8px; width: 16px; height: parent.height; text: "M"; font-family: "Consolas"; font-size: 9.5px; font-weight: 700; color: Palette.amber; vertical-alignment: center; }
-                            Text { x: 28px; width: parent.width - 36px; height: parent.height; text: file.name; font-family: "Consolas"; font-size: 10px; color: Palette.strong; overflow: elide; vertical-alignment: center; }
+                            Text { x: 8px; width: 16px; height: parent.height; text: "M"; font-family: "MiSans VF"; font-size: 9.5px; font-weight: 700; color: Palette.amber; vertical-alignment: center; }
+                            Text { x: 28px; width: parent.width - 36px; height: parent.height; text: file.name; font-family: "MiSans VF"; font-size: 10px; color: Palette.strong; overflow: elide; vertical-alignment: center; }
                             file-touch := TouchArea {
                                 clicked => { root.dropdown = 0; root.open-project-file(index); }
                             }
@@ -451,7 +451,7 @@ export component EnvironmentPanel inherits Rectangle {
                     width: parent.width - 6px;
                     height: 18px;
                     text: root.workspace-path;
-                    font-family: "Consolas";
+                    font-family: "MiSans VF";
                     font-size: 9.5px;
                     color: Palette.dim;
                     overflow: elide;

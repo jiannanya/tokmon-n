@@ -874,7 +874,7 @@ export component WorkspacePanel inherits Rectangle {
                                                             spacing: 6px;
                                                             Text {
                                                                 text: root.setting-provider + " · " + root.model-name;
-                                                                font-family: "Consolas";
+                                                                font-family: "MiSans VF";
                                                                 font-size: 12px;
                                                                 font-weight: 500;
                                                                 color: Palette.strong;
@@ -1089,7 +1089,7 @@ export component WorkspacePanel inherits Rectangle {
                                                         x: 10px;
                                                         y: 5px;
                                                         text: "/" + cmd.command + "  " + cmd.usage;
-                                                        font-family: "Consolas";
+                                                        font-family: "MiSans VF";
                                                         font-weight: 600;
                                                         font-size: 12.5px;
                                                         color: Palette.accent-text;
@@ -1139,7 +1139,7 @@ export component WorkspacePanel inherits Rectangle {
                                                     }
                                                     Text {
                                                         text: root.trace-total-label + " tokens";
-                                                        font-family: "Consolas";
+                                                        font-family: "MiSans VF";
                                                         font-size: 11.5px;
                                                         color: Palette.dim;
                                                         vertical-alignment: center;
@@ -1167,7 +1167,7 @@ export component WorkspacePanel inherits Rectangle {
                                                             Rectangle { width: 8px; height: 8px; border-radius: 999px; background: #3B82F6; y: (parent.height - 8px) / 2; }
                                                             Text { text: "消息 / Prompt"; font-size: 12px; color: Palette.body; vertical-alignment: center; }
                                                         }
-                                                        Text { text: root.trace-input-tokens + " (" + root.prompt-share() + "%)"; font-family: "Consolas"; font-size: 12px; font-weight: 500; color: Palette.ink; vertical-alignment: center; }
+                                                        Text { text: root.trace-input-tokens + " (" + root.prompt-share() + "%)"; font-family: "MiSans VF"; font-size: 12px; font-weight: 500; color: Palette.ink; vertical-alignment: center; }
                                                     }
                                                     HorizontalLayout {
                                                         alignment: space-between;
@@ -1176,7 +1176,7 @@ export component WorkspacePanel inherits Rectangle {
                                                             Rectangle { width: 8px; height: 8px; border-radius: 999px; background: #60A5FA; y: (parent.height - 8px) / 2; }
                                                             Text { text: "模型生成 / Completion"; font-size: 12px; color: Palette.body; vertical-alignment: center; }
                                                         }
-                                                        Text { text: root.trace-output-tokens + " (" + root.completion-share() + "%)"; font-family: "Consolas"; font-size: 12px; font-weight: 500; color: Palette.ink; vertical-alignment: center; }
+                                                        Text { text: root.trace-output-tokens + " (" + root.completion-share() + "%)"; font-family: "MiSans VF"; font-size: 12px; font-weight: 500; color: Palette.ink; vertical-alignment: center; }
                                                     }
                                                     HorizontalLayout {
                                                         alignment: space-between;
@@ -1185,7 +1185,7 @@ export component WorkspacePanel inherits Rectangle {
                                                             Rectangle { width: 8px; height: 8px; border-radius: 999px; background: #93C5FD; y: (parent.height - 8px) / 2; }
                                                             Text { text: "对话轮次"; font-size: 12px; color: Palette.body; vertical-alignment: center; }
                                                         }
-                                                        Text { text: root.trace-turns + " 轮"; font-family: "Consolas"; font-size: 12px; font-weight: 500; color: Palette.ink; vertical-alignment: center; }
+                                                        Text { text: root.trace-turns + " 轮"; font-family: "MiSans VF"; font-size: 12px; font-weight: 500; color: Palette.ink; vertical-alignment: center; }
                                                     }
                                                     HorizontalLayout {
                                                         alignment: space-between;
@@ -1194,7 +1194,7 @@ export component WorkspacePanel inherits Rectangle {
                                                             Rectangle { width: 8px; height: 8px; border-radius: 999px; background: #BFDBFE; y: (parent.height - 8px) / 2; }
                                                             Text { text: "模型调用"; font-size: 12px; color: Palette.body; vertical-alignment: center; }
                                                         }
-                                                        Text { text: root.trace-calls + " 次"; font-family: "Consolas"; font-size: 12px; font-weight: 500; color: Palette.ink; vertical-alignment: center; }
+                                                        Text { text: root.trace-calls + " 次"; font-family: "MiSans VF"; font-size: 12px; font-weight: 500; color: Palette.ink; vertical-alignment: center; }
                                                     }
                                                     HorizontalLayout {
                                                         alignment: space-between;
@@ -1203,7 +1203,7 @@ export component WorkspacePanel inherits Rectangle {
                                                             Rectangle { width: 8px; height: 8px; border-radius: 999px; background: #DBEAFE; y: (parent.height - 8px) / 2; }
                                                             Text { text: "透镜事件"; font-size: 12px; color: Palette.body; vertical-alignment: center; }
                                                         }
-                                                        Text { text: root.trace-total + " 条"; font-family: "Consolas"; font-size: 12px; font-weight: 500; color: Palette.ink; vertical-alignment: center; }
+                                                        Text { text: root.trace-total + " 条"; font-family: "MiSans VF"; font-size: 12px; font-weight: 500; color: Palette.ink; vertical-alignment: center; }
                                                     }
                                                     HorizontalLayout {
                                                         alignment: space-between;
@@ -1212,14 +1212,14 @@ export component WorkspacePanel inherits Rectangle {
                                                             Rectangle { width: 8px; height: 8px; border-radius: 999px; background: #E5E7EB; y: (parent.height - 8px) / 2; }
                                                             Text { text: "缓存命中"; font-size: 12px; color: Palette.body; vertical-alignment: center; }
                                                         }
-                                                        Text { text: "模型未提供"; font-family: "Consolas"; font-size: 11px; color: Palette.dim; vertical-alignment: center; }
+                                                        Text { text: "模型未提供"; font-family: "MiSans VF"; font-size: 11px; color: Palette.dim; vertical-alignment: center; }
                                                     }
                                                 }
                                                 Rectangle { height: 0.67px; background: Palette.sep; }
                                                 HorizontalLayout {
                                                     alignment: space-between;
                                                     Text { text: "当前模型"; font-size: 12px; color: Palette.mid; vertical-alignment: center; }
-                                                    Text { text: root.model-name; font-family: "Consolas"; font-size: 11px; font-weight: 600; color: Palette.ink; overflow: elide; vertical-alignment: center; }
+                                                    Text { text: root.model-name; font-family: "MiSans VF"; font-size: 11px; font-weight: 600; color: Palette.ink; overflow: elide; vertical-alignment: center; }
                                                 }
                                                 Rectangle { height: 0.67px; background: Palette.sep; }
                                                 VerticalLayout {

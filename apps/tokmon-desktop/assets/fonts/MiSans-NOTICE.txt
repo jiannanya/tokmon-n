@@ -1,0 +1,14 @@
+Tokmon Desktop uses the MiSans VF font.
+
+Copyright (c) 2020-2025 Beijing Xiaomi Mobile Software Co., Ltd.
+All Rights Reserved.
+
+The unchanged MiSansVF.ttf file is obtained from Xiaomi's official MiSans
+archive during the build and is distributed only as part of Tokmon Desktop.
+
+Official font page:
+https://hyperos.mi.com/font/zh/details/sc/
+
+Official download and license page:
+https://hyperos.mi.com/font/zh/download/
+

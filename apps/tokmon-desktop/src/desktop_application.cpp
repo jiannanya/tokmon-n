@@ -123,7 +123,31 @@ int run_application(int argc, char **argv) {
       }
     }
   }
+
+  std::error_code path_error;
+  auto executable = argc > 0 ? std::filesystem::absolute(argv[0], path_error)
+                             : std::filesystem::current_path();
+#if defined(_WIN32)
+  std::wstring module(32'768, L'\0');
+  const auto module_size = GetModuleFileNameW(
+      nullptr, module.data(), static_cast<DWORD>(module.size()));
+  if (module_size > 0 && module_size < module.size()) {
+    module.resize(module_size);
+    executable = std::filesystem::path(module);
+  }
+#endif
+
   auto window = MainWindow::create();
+  const auto misans_font =
+      executable.parent_path() / "assets" / "fonts" / "MiSansVF.ttf";
+  if (const auto font_error =
+          window->window().window_handle().register_font_from_path(
+              display_string(path_to_utf8(misans_font)))) {
+    return run_fatal_desktop_error(
+        window, "Tokmon 字体资源错误",
+        "无法加载 MiSans 字体资源：" + std::string(font_error->data(),
+                                                     font_error->size()));
+  }
   const auto default_ui_scale_percent =
       default_ui_scale_percent_for_primary_display();
   window->set_default_ui_scale_percent(default_ui_scale_percent);
@@ -150,18 +174,6 @@ int run_application(int argc, char **argv) {
   make_current_process_window_frameless();
 #endif
 
-  std::error_code path_error;
-  auto executable = argc > 0 ? std::filesystem::absolute(argv[0], path_error)
-                             : std::filesystem::current_path();
-#if defined(_WIN32)
-  std::wstring module(32'768, L'\0');
-  const auto module_size = GetModuleFileNameW(
-      nullptr, module.data(), static_cast<DWORD>(module.size()));
-  if (module_size > 0 && module_size < module.size()) {
-    module.resize(module_size);
-    executable = std::filesystem::path(module);
-  }
-#endif
   const auto endpoint =
       tokmon::workspace_snow_endpoint(paths->run, paths->project.parent_path());
 #if defined(_WIN32)
