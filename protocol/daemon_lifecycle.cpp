@@ -260,7 +260,45 @@ Result<DaemonConnection> ensure_daemon(const DaemonLaunchOptions& options) {
       return DaemonConnection{.started = true, .process_id = *process};
   }
   return tl::unexpected(make_error(ErrorCode::timeout,
-                                   "Tokmon daemon did not become ready before the startup deadline"));
+                                   "Tokmon daemon endpoint did not become reachable before the startup deadline"));
+}
+
+Result<DaemonStatus> daemon_status(const std::filesystem::path& endpoint,
+                                   const std::chrono::milliseconds timeout) {
+  auto response = lifecycle_request(endpoint,
+      cbor::object({{"action", "daemon.status"}}), timeout);
+  if (!response) return tl::unexpected(response.error());
+  const auto* state = cbor::find(response->payload, "state");
+  if (!state)
+    return tl::unexpected(make_error(ErrorCode::protocol_error,
+                                     "Tokmon daemon status omitted state"));
+  DaemonStatus result;
+  if (state->as_string() == "ready")
+    result.state = DaemonStartupState::ready;
+  else if (state->as_string() == "failed")
+    result.state = DaemonStartupState::failed;
+  else if (state->as_string() != "starting")
+    return tl::unexpected(make_error(ErrorCode::protocol_error,
+                                     "Tokmon daemon returned an unknown state"));
+  if (const auto* code = cbor::find(response->payload, "error_code"))
+    result.error_code = std::string(code->as_string());
+  if (const auto* error = cbor::find(response->payload, "error"))
+    result.error = std::string(error->as_string());
+  return result;
+}
+
+Result<DaemonStatus> wait_for_daemon_ready(
+    const std::filesystem::path& endpoint,
+    const std::chrono::milliseconds timeout) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    auto status = daemon_status(endpoint);
+    if (!status) return tl::unexpected(status.error());
+    if (status->state != DaemonStartupState::starting) return status;
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+  }
+  return tl::unexpected(make_error(
+      ErrorCode::timeout, "Tokmon daemon configuration check timed out"));
 }
 
 Result<void> shutdown_daemon(const std::filesystem::path& endpoint,

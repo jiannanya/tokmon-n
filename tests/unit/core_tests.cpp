@@ -555,15 +555,34 @@ TEST_CASE("Photon store is hash chained and physically append-only") {
 
   sqlite3* connection = nullptr;
   REQUIRE(sqlite3_open(database.string().c_str(), &connection) == SQLITE_OK);
+  sqlite3_stmt* checkpoint = nullptr;
+  REQUIRE(sqlite3_prepare_v2(connection,
+      "SELECT sequence FROM photon_verification_state WHERE singleton=1",
+      -1, &checkpoint, nullptr) == SQLITE_OK);
+  REQUIRE(sqlite3_step(checkpoint) == SQLITE_ROW);
+  REQUIRE(sqlite3_column_int64(checkpoint, 0) == 2);
+  sqlite3_finalize(checkpoint);
   char* error = nullptr;
-  REQUIRE(sqlite3_exec(connection, "UPDATE photons SET kind='tampered' WHERE seq=1",
+  REQUIRE(sqlite3_exec(connection, "UPDATE photons SET kind='tampered' WHERE sequence=1",
                        nullptr, nullptr, &error) != SQLITE_OK);
   sqlite3_free(error); error = nullptr;
-  REQUIRE(sqlite3_exec(connection, "DELETE FROM photons WHERE seq=1",
+  REQUIRE(sqlite3_exec(connection, "DELETE FROM photons WHERE sequence=1",
                        nullptr, nullptr, &error) != SQLITE_OK);
   sqlite3_free(error);
   sqlite3_close(connection);
+  auto third = store.append(tokmon::PhotonDraft{.ray = ray, .kind = "test.third",
+      .schema = "tokmon.test.v1", .payload = tokmon::cbor::object({{"value", 3}}),
+      .epoch = 1});
+  REQUIRE(third);
   REQUIRE(store.verify());
+  REQUIRE(sqlite3_open(database.string().c_str(), &connection) == SQLITE_OK);
+  REQUIRE(sqlite3_prepare_v2(connection,
+      "SELECT sequence FROM photon_verification_state WHERE singleton=1",
+      -1, &checkpoint, nullptr) == SQLITE_OK);
+  REQUIRE(sqlite3_step(checkpoint) == SQLITE_ROW);
+  REQUIRE(sqlite3_column_int64(checkpoint, 0) == 3);
+  sqlite3_finalize(checkpoint);
+  sqlite3_close(connection);
 }
 
 TEST_CASE("LightPath publication only exposes complete immutable epochs") {
@@ -758,10 +777,13 @@ TEST_CASE("calculator executes the complete Fact Lens Act photon loop") {
   REQUIRE(continued_photons->back().sequence > first_tail);
   REQUIRE_FALSE(runtime.submit_to("ray-does-not-exist", "orphan input"));
   const auto first_epoch = runtime.light_path()->epoch;
+  auto before_reconcile = runtime.history_all();
+  REQUIRE(before_reconcile);
   REQUIRE(runtime.reconcile());
-  REQUIRE(runtime.light_path()->epoch == first_epoch + 1);
+  REQUIRE(runtime.light_path()->epoch == first_epoch);
   auto all = runtime.history_all();
   REQUIRE(all);
+  REQUIRE(all->size() == before_reconcile->size());
   const auto system_has_kind = [&all](const std::string_view kind) {
     return std::any_of(all->begin(), all->end(),
         [kind](const tokmon::Photon& photon) { return photon.kind == kind; });
@@ -769,8 +791,6 @@ TEST_CASE("calculator executes the complete Fact Lens Act photon loop") {
   REQUIRE(system_has_kind("config.light-path-observed"));
   REQUIRE(system_has_kind("lens.candidate-verified"));
   REQUIRE(system_has_kind("mount.epoch-committed"));
-  REQUIRE(system_has_kind("lens.afterglow-started"));
-  REQUIRE(system_has_kind("lens.afterglow-completed"));
   REQUIRE(runtime.verify());
 }
 
@@ -1155,7 +1175,7 @@ TEST_CASE("model configuration rejects plaintext keys and insecure remote endpoi
   REQUIRE(invalid_environment.error().code == tokmon::ErrorCode::schema_mismatch);
 }
 
-TEST_CASE("CLI reports configuration errors before attempting daemon startup") {
+TEST_CASE("CLI reports the daemon authoritative configuration error") {
   const auto root = temporary_directory("cli-config-error");
   UserProfileGuard profile(root / "home");
   const auto workspace = root / "workspace";

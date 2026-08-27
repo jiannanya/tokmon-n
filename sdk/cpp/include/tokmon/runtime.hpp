@@ -44,6 +44,7 @@ class TokmonRuntime {
   LightPath path_;
   BeamRegistry beams_;
   std::unique_ptr<RayTracingEngine> engine_;
+  std::string reconciled_configuration_hash_;
   bool open_{false};
 };
 

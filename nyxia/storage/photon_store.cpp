@@ -137,6 +137,11 @@ CREATE TRIGGER IF NOT EXISTS photons_no_update
 BEFORE UPDATE ON photons BEGIN SELECT RAISE(ABORT, 'committed photons are immutable'); END;
 CREATE TRIGGER IF NOT EXISTS photons_no_delete
 BEFORE DELETE ON photons BEGIN SELECT RAISE(ABORT, 'committed photons cannot be deleted'); END;
+CREATE TABLE IF NOT EXISTS photon_verification_state(
+  singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+  sequence INTEGER NOT NULL,
+  hash TEXT NOT NULL
+);
 )SQL");
 }
 
@@ -232,6 +237,34 @@ Result<std::vector<Photon>> PhotonStore::read_all(const std::uint64_t after_sequ
   return read_query(sql.c_str(), nullptr, after_sequence, limit);
 }
 
+Result<std::optional<Photon>> PhotonStore::read_latest_kind(
+    const std::string_view kind) const {
+  std::scoped_lock lock(mutex_);
+  if (!database_)
+    return tl::unexpected(make_error(ErrorCode::invalid_state,
+                                     "PhotonStore is not open"));
+  const std::string sql = std::string("SELECT ") + select_columns +
+      " FROM photons WHERE kind=? ORDER BY sequence DESC LIMIT 1";
+  sqlite3_stmt* statement = nullptr;
+  if (sqlite3_prepare_v2(database_, sql.c_str(), -1, &statement, nullptr) != SQLITE_OK)
+    return tl::unexpected(sqlite_error(database_, "prepare latest Photon kind query"));
+  sqlite3_bind_text(statement, 1, kind.data(), static_cast<int>(kind.size()), SQLITE_TRANSIENT);
+  const auto step = sqlite3_step(statement);
+  if (step == SQLITE_DONE) {
+    sqlite3_finalize(statement);
+    return std::optional<Photon>{};
+  }
+  if (step != SQLITE_ROW) {
+    const auto error = sqlite_error(database_, "read latest Photon kind query");
+    sqlite3_finalize(statement);
+    return tl::unexpected(error);
+  }
+  auto photon = row_to_photon(statement);
+  sqlite3_finalize(statement);
+  if (!photon) return tl::unexpected(photon.error());
+  return std::optional<Photon>{std::move(*photon)};
+}
+
 Result<std::vector<Photon>> PhotonStore::read_query(const char* sql, const std::string* ray,
                                                      const std::uint64_t after_sequence,
                                                      const std::size_t limit) const {
@@ -263,22 +296,94 @@ Result<std::vector<Photon>> PhotonStore::read_query(const char* sql, const std::
 }
 
 Result<void> PhotonStore::verify() const {
-  auto photons = read_all(0, 100'000);
-  if (!photons) return tl::unexpected(photons.error());
+  std::scoped_lock lock(mutex_);
+  if (!database_)
+    return tl::unexpected(make_error(ErrorCode::invalid_state,
+                                     "PhotonStore is not open"));
+
   std::string previous;
   std::uint64_t expected_sequence = 1;
-  for (const auto& photon : *photons) {
+  sqlite3_stmt* checkpoint = nullptr;
+  if (sqlite3_prepare_v2(database_,
+          "SELECT sequence,hash FROM photon_verification_state WHERE singleton=1",
+          -1, &checkpoint, nullptr) != SQLITE_OK)
+    return tl::unexpected(sqlite_error(database_, "prepare verification checkpoint"));
+  if (sqlite3_step(checkpoint) == SQLITE_ROW) {
+    const auto verified_sequence = static_cast<std::uint64_t>(
+        sqlite3_column_int64(checkpoint, 0));
+    previous = column_text(checkpoint, 1);
+    expected_sequence = verified_sequence + 1u;
+    if (verified_sequence != 0) {
+      sqlite3_stmt* anchor = nullptr;
+      if (sqlite3_prepare_v2(database_, "SELECT hash FROM photons WHERE sequence=?",
+                            -1, &anchor, nullptr) != SQLITE_OK) {
+        sqlite3_finalize(checkpoint);
+        return tl::unexpected(sqlite_error(database_, "prepare verification anchor"));
+      }
+      sqlite3_bind_int64(anchor, 1, static_cast<sqlite3_int64>(verified_sequence));
+      const auto anchored = sqlite3_step(anchor) == SQLITE_ROW &&
+          column_text(anchor, 0) == previous;
+      sqlite3_finalize(anchor);
+      if (!anchored) {
+        sqlite3_finalize(checkpoint);
+        return tl::unexpected(make_error(ErrorCode::integrity_error,
+                                         "Photon verification anchor mismatch"));
+      }
+    }
+  }
+  sqlite3_finalize(checkpoint);
+
+  const std::string sql = std::string("SELECT ") + select_columns +
+      " FROM photons WHERE sequence>=? ORDER BY sequence";
+  sqlite3_stmt* statement = nullptr;
+  if (sqlite3_prepare_v2(database_, sql.c_str(), -1, &statement, nullptr) != SQLITE_OK)
+    return tl::unexpected(sqlite_error(database_, "prepare incremental Photon verification"));
+  sqlite3_bind_int64(statement, 1, static_cast<sqlite3_int64>(expected_sequence));
+  std::uint64_t verified_sequence = expected_sequence - 1u;
+  for (;;) {
+    const auto step = sqlite3_step(statement);
+    if (step == SQLITE_DONE) break;
+    if (step != SQLITE_ROW) {
+      const auto error = sqlite_error(database_, "read incremental Photon verification");
+      sqlite3_finalize(statement);
+      return tl::unexpected(error);
+    }
+    auto decoded = row_to_photon(statement);
+    if (!decoded) {
+      sqlite3_finalize(statement);
+      return tl::unexpected(decoded.error());
+    }
+    const auto& photon = *decoded;
     if (photon.sequence != expected_sequence++)
-      return tl::unexpected(make_error(ErrorCode::integrity_error,
-                                       "Photon sequence gap or reuse"));
-    if (photon.previous_hash != previous)
+      { sqlite3_finalize(statement); return tl::unexpected(make_error(
+          ErrorCode::integrity_error, "Photon sequence gap or reuse")); }
+    if (photon.previous_hash != previous) {
+      sqlite3_finalize(statement);
       return tl::unexpected(make_error(ErrorCode::integrity_error,
                                        "Photon previous hash mismatch"));
-    if (photon.hash != sha256_hex(hash_material(photon)))
+    }
+    if (photon.hash != sha256_hex(hash_material(photon))) {
+      sqlite3_finalize(statement);
       return tl::unexpected(make_error(ErrorCode::integrity_error,
                                        "Photon content hash mismatch"));
+    }
     previous = photon.hash;
+    verified_sequence = photon.sequence;
   }
+  sqlite3_finalize(statement);
+
+  sqlite3_stmt* save = nullptr;
+  if (sqlite3_prepare_v2(database_,
+          "INSERT INTO photon_verification_state(singleton,sequence,hash) VALUES(1,?,?) "
+          "ON CONFLICT(singleton) DO UPDATE SET sequence=excluded.sequence,hash=excluded.hash",
+          -1, &save, nullptr) != SQLITE_OK)
+    return tl::unexpected(sqlite_error(database_, "prepare verification checkpoint update"));
+  sqlite3_bind_int64(save, 1, static_cast<sqlite3_int64>(verified_sequence));
+  sqlite3_bind_text(save, 2, previous.c_str(), -1, SQLITE_TRANSIENT);
+  const auto saved = sqlite3_step(save);
+  sqlite3_finalize(save);
+  if (saved != SQLITE_DONE)
+    return tl::unexpected(sqlite_error(database_, "update verification checkpoint"));
   return {};
 }
 

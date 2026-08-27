@@ -370,11 +370,21 @@ int tokmon::app::cli_main(int argc, char** argv) {
   if (daemon_command && arguments.size() > 1 && arguments[1] == "status") {
     auto available = tokmon::daemon_available(endpoint);
     if (!available) { print_error(available.error()); return 1; }
-    if (output_format == OutputFormat::human)
-      *output << (*available ? "running" : "stopped") << "\nendpoint="
-              << endpoint.string() << '\n';
-    else write_value(*output, tokmon::cbor::object({{"running", *available},
-        {"endpoint", endpoint.string()},
+    std::string state = "stopped";
+    std::string error;
+    if (*available) {
+      auto status = tokmon::daemon_status(endpoint);
+      if (!status) { print_error(status.error()); return 1; }
+      state = status->state == tokmon::DaemonStartupState::ready ? "ready"
+          : status->state == tokmon::DaemonStartupState::failed ? "failed"
+                                                                 : "starting";
+      error = status->error;
+    }
+    if (output_format == OutputFormat::human) {
+      *output << state << "\nendpoint=" << endpoint.string() << '\n';
+      if (!error.empty()) *output << "configuration_error=" << error << '\n';
+    } else write_value(*output, tokmon::cbor::object({{"running", *available},
+        {"state", state}, {"error", error}, {"endpoint", endpoint.string()},
         {"workspace", paths->project.parent_path().generic_string()}}), output_format);
     return *available ? 0 : 1;
   }
@@ -405,6 +415,14 @@ int tokmon::app::cli_main(int argc, char** argv) {
   if (daemon_command && arguments.size() > 1 && arguments[1] == "start") {
     auto pinned = tokmon::pin_daemon(endpoint);
     if (!pinned) { print_error(pinned.error()); return 1; }
+    auto status = tokmon::wait_for_daemon_ready(endpoint);
+    if (!status) { print_error(status.error()); return 1; }
+    if (status->state == tokmon::DaemonStartupState::failed) {
+      print_error(tokmon::make_error(tokmon::ErrorCode::schema_mismatch,
+          status->error.empty() ? "configuration rejected by Tokmon daemon"
+                                : status->error));
+      return 2;
+    }
     if (output_format == OutputFormat::human)
       *output << (connection->started ? "Tokmon daemon started"
                                       : "Tokmon daemon already running")
@@ -429,22 +447,15 @@ int tokmon::app::cli_main(int argc, char** argv) {
       .lease_ttl = std::chrono::seconds(6)});
   if (!client_lease) { print_error(client_lease.error()); return 1; }
 
-  // Surface the daemon's authoritative configuration verdict once attached;
-  // a still-booting daemon simply reports booting=true and we proceed so the
-  // eventual per-intent reload attempts surface errors on their own terms.
-  {
-    const auto config_state =
-        intent(client, tokmon::cbor::object({{"action", "config.validate"}}));
-    if (!config_state) { print_error(config_state.error()); return 1; }
-    const auto *valid = tokmon::cbor::find(config_state->payload, "valid");
-    const auto *booting = tokmon::cbor::find(config_state->payload, "booting");
-    if (valid && !valid->as_bool() && !(booting && booting->as_bool())) {
-      const auto *error = tokmon::cbor::find(config_state->payload, "error");
-      print_error(tokmon::make_error(tokmon::ErrorCode::schema_mismatch,
-          error ? std::string(error->as_string())
-                : std::string("configuration rejected by Tokmon daemon")));
-      return 2;
-    }
+  // Attach starts daemon-owned validation. The CLI only waits for and renders
+  // that authoritative verdict; it never parses the configuration itself.
+  auto status = tokmon::wait_for_daemon_ready(endpoint);
+  if (!status) { print_error(status.error()); return 1; }
+  if (status->state == tokmon::DaemonStartupState::failed) {
+    print_error(tokmon::make_error(tokmon::ErrorCode::schema_mismatch,
+        status->error.empty() ? "configuration rejected by Tokmon daemon"
+                              : status->error));
+    return 2;
   }
 
   if (arguments[0] == "stdio") return run_stdio(client);

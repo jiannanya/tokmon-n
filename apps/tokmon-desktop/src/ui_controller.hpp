@@ -14,6 +14,7 @@ class UiController {
 public:
   virtual ~UiController() = default;
 
+  virtual void backend_connected() = 0;
   virtual void chat(std::string text, std::string provider, std::string model,
                     std::string access_mode, std::string effort) = 0;
   virtual void slash_command(std::string text, std::string provider,

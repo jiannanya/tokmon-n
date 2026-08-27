@@ -4,7 +4,9 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "tokmon/error.hpp"
@@ -30,6 +32,9 @@ class PhotonStore {
                                        std::size_t limit = 4096) const;
   Result<std::vector<Photon>> read_all(std::uint64_t after_sequence = 0,
                                        std::size_t limit = 4096) const;
+  Result<std::optional<Photon>> read_latest_kind(std::string_view kind) const;
+  // Verifies only the immutable tail after the last durable checkpoint. The
+  // first call performs a complete verification and establishes that anchor.
   Result<void> verify() const;
   Result<void> checkpoint() const;
   void subscribe(Observer observer);

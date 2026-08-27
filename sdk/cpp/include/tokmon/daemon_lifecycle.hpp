@@ -25,6 +25,14 @@ struct DaemonConnection {
   std::optional<std::uint64_t> process_id;
 };
 
+enum class DaemonStartupState : std::uint8_t { starting, ready, failed };
+
+struct DaemonStatus {
+  DaemonStartupState state{DaemonStartupState::starting};
+  std::string error_code;
+  std::string error;
+};
+
 struct DaemonClientOptions {
   std::filesystem::path endpoint;
   std::string client_id;
@@ -65,6 +73,14 @@ class DaemonClientLease final {
 
 [[nodiscard]] Result<DaemonConnection> ensure_daemon(
     const DaemonLaunchOptions& options);
+
+[[nodiscard]] Result<DaemonStatus> daemon_status(
+    const std::filesystem::path& endpoint,
+    std::chrono::milliseconds timeout = std::chrono::milliseconds(500));
+
+[[nodiscard]] Result<DaemonStatus> wait_for_daemon_ready(
+    const std::filesystem::path& endpoint,
+    std::chrono::milliseconds timeout = std::chrono::seconds(30));
 
 [[nodiscard]] Result<void> shutdown_daemon(
     const std::filesystem::path& endpoint,

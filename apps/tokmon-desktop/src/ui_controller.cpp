@@ -60,6 +60,14 @@ public:
     condition_.notify_all();
   }
 
+  void backend_connected() override {
+    {
+      std::scoped_lock lock(mutex_);
+      backend_connected_ = true;
+    }
+    condition_.notify_all();
+  }
+
   void chat(std::string text, std::string provider, std::string model,
             std::string access_mode, std::string effort) {
     Command command{"chat", std::move(text)};
@@ -1347,12 +1355,6 @@ private:
       show_workspace_error("无法创建工作空间：" + directory_error.message());
       return false;
     }
-    auto validated_config = tokmon::load_config(*target);
-    if (!validated_config) {
-      show_workspace_error("配置文件无效：" +
-                           validated_config.error().describe());
-      return false;
-    }
     if (same_workspace(*target, current_workspace_)) {
       auto window = window_;
       const auto display = display_string(path_to_utf8(*target));
@@ -1414,6 +1416,7 @@ private:
     active_ray_.clear();
     photons_.clear();
     last_error_.clear();
+    startup_loaded_ = false;
     {
       std::scoped_lock lock(files_mutex_);
       session_files_.clear();
@@ -1450,12 +1453,20 @@ private:
           }
         });
     publish_workspace_info();
-    load_settings(false);
-    load_providers();
+    {
+      std::scoped_lock lock(mutex_);
+      commands_.push_front(Command{"config-validate", {}});
+    }
+    condition_.notify_one();
     return true;
   }
 
   void run(const std::stop_token stop) {
+    {
+      std::unique_lock lock(mutex_);
+      condition_.wait(lock, stop, [this] { return backend_connected_; });
+      if (stop.stop_requested()) return;
+    }
     while (!stop.stop_requested()) {
       Command command;
       {
@@ -1653,6 +1664,35 @@ private:
         }
         continue;
       }
+      if (command.kind == "config-validate") {
+        const auto *state_field = tokmon::cbor::find(response->payload, "state");
+        const auto state = state_field ? state_field->as_string()
+                                       : std::string_view("ready");
+        if (state == "starting") {
+          update_daemon_state("正在检查配置");
+          continue;
+        }
+        if (state == "failed") {
+          const auto *error = tokmon::cbor::find(response->payload, "error");
+          const auto message = error && !error->as_string().empty()
+              ? std::string(error->as_string())
+              : std::string("daemon 配置校验未通过");
+          update_daemon_state("配置错误");
+          if (message != last_error_) {
+            last_error_ = message;
+            show_error(message);
+          }
+          continue;
+        }
+        last_error_.clear();
+        update_daemon_state("后台服务已连接");
+        if (!startup_loaded_) {
+          startup_loaded_ = true;
+          load_settings(true);
+          load_providers();
+        }
+        continue;
+      }
       last_error_.clear();
       update_daemon_state("后台服务已连接");
       if (command.kind != "navigation-save")
@@ -1669,8 +1709,6 @@ private:
         apply_providers(response->payload);
         continue;
       }
-      if (command.kind == "config-validate")
-        continue;
       if (command.kind == "settings-save") {
         auto window = window_;
         (void)slint::invoke_from_event_loop([window] {
@@ -1694,11 +1732,11 @@ private:
         auto window = window_;
         const auto status =
             command.kind == "provider-configure"
-                ? slint::SharedString("平台 YAML 已原子保存并完成热重载")
+                ? slint::SharedString("平台 YAML 已原子保存；后台校验中")
             : command.kind == "provider-secret"
                 ? slint::SharedString(
                       "API Key 已写入系统凭据库；未进入 YAML/Photon/日志")
-                : slint::SharedString("默认模型平台已切换并完成热重载");
+                : slint::SharedString("默认模型平台已切换；后台校验中");
         (void)slint::invoke_from_event_loop([window, status] {
           if (auto locked = window.lock())
             (*locked)->set_settings_status(status);
@@ -1788,6 +1826,8 @@ private:
   std::deque<Command> commands_;
   std::deque<Command> deferred_user_commands_;
   bool initializing_{true};
+  bool backend_connected_{false};
+  bool startup_loaded_{false};
   std::uint64_t cursor_{0};
   tokmon::RayId active_ray_;
   std::vector<tokmon::Photon> photons_;

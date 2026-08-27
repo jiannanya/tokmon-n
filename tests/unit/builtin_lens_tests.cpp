@@ -466,11 +466,16 @@ TEST_CASE("Snow CLI stdio carries concurrent stream events and closes in order")
           return tokmon::SnowMessage{.kind = tokmon::SnowMessageKind::closed,
               .request_id = request.request_id, .cursor = request.cursor,
               .payload = tokmon::cbor::object({{"ordered", true}})};
-        if (request.kind == tokmon::SnowMessageKind::ping)
-          return tokmon::SnowMessage{.kind = tokmon::SnowMessageKind::pong,
-              .request_id = request.request_id, .cursor = request.cursor,
-              .payload = tokmon::cbor::object({{"healthy", true}})};
-        std::this_thread::sleep_for(100ms);
+         if (request.kind == tokmon::SnowMessageKind::ping)
+           return tokmon::SnowMessage{.kind = tokmon::SnowMessageKind::pong,
+               .request_id = request.request_id, .cursor = request.cursor,
+               .payload = tokmon::cbor::object({{"healthy", true}})};
+         if (const auto* action = tokmon::cbor::find(request.payload, "action");
+             action && action->as_string() == "daemon.status")
+           return tokmon::SnowMessage{.kind = tokmon::SnowMessageKind::intent_result,
+               .request_id = request.request_id, .cursor = request.cursor,
+               .payload = tokmon::cbor::object({{"state", "ready"}})};
+         std::this_thread::sleep_for(100ms);
         tokmon::Photon photon{.sequence = 9, .id = "stdio-photon", .ray = "stdio-ray",
             .kind = "assistant.message", .schema = "tokmon.assistant.message.v1",
             .payload = tokmon::cbor::object({{"text", "streamed"}}),
