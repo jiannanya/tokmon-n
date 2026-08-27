@@ -210,6 +210,9 @@ export component MainWindow inherits Window {
     in-out property <string> composer-text;
     in-out property <string> last-message;
     in-out property <string> assistant-text;
+    // Aggregated chain-of-thought text for the current turn, shown by the
+    // collapsible thought-process card above the assistant reply.
+    in-out property <string> thought-text;
     in-out property <string> daemon-state: "正在连接后台服务";
     in-out property <string> search-text;
     in-out property <string> chat-time;
@@ -517,6 +520,7 @@ export component MainWindow inherits Window {
                 composer-text <=> root.composer-text;
                 last-message: root.last-message;
                 assistant-text: root.assistant-text;
+                thought-text: root.thought-text;
                 chat-time: root.chat-time;
                 trace-duration: root.trace-duration;
                 workflow-duration: root.workflow-duration;

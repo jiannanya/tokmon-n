@@ -34,7 +34,8 @@ TimelineItem timeline_item(const tokmon::Photon &photon);
 std::string bounded_detail(std::string value, std::size_t capacity = 220u);
 std::string act_field(const tokmon::Photon &photon, std::string_view key);
 std::vector<TimelineItem>
-conversation_workflow_from(const std::vector<tokmon::Photon> &photons);
+conversation_workflow_from(const std::vector<tokmon::Photon> &photons,
+                           std::string *thought_text = nullptr);
 TraceSummary trace_summary_from(const std::vector<tokmon::Photon> &photons);
 std::vector<CodeLine>
 code_lines_from(const std::vector<tokmon::Photon> &photons);

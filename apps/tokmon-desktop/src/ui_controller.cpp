@@ -663,6 +663,7 @@ private:
             handle->set_slash_menu_visible(false);
             handle->set_last_message(message);
             handle->set_assistant_text("");
+            handle->set_thought_text("");
             handle->set_status_text("正在提交请求");
             handle->set_chat_empty(false);
             handle->set_workspace_locked(true);
@@ -836,7 +837,8 @@ private:
     items.reserve(photons_.size());
     for (const auto &photon : photons_)
       items.push_back(timeline_item(photon));
-    auto workflow_items = conversation_workflow_from(photons_);
+    std::string turn_thought_text;
+    auto workflow_items = conversation_workflow_from(photons_, &turn_thought_text);
     const bool workflow_complete =
         std::ranges::any_of(workflow_items, [](const TimelineItem &item) {
           return std::string(item.kind) == "task.completed";
@@ -946,6 +948,7 @@ private:
          trace, assistant = std::move(assistant),
          user_message = std::move(user_message),
          current_turn_time = std::move(current_turn_time),
+         turn_thought_text = std::move(turn_thought_text),
          state = std::move(state), workflow_complete, replace]() mutable {
           timeline->clear();
           for (auto &item : items)
@@ -960,6 +963,7 @@ private:
             auto handle = *locked;
             if (replace || !assistant.empty())
               handle->set_assistant_text(display_string(assistant));
+            handle->set_thought_text(display_string(turn_thought_text));
             if (replace || !user_message.empty())
               handle->set_last_message(display_string(user_message));
             handle->set_status_text(display_string(state));
@@ -1422,6 +1426,7 @@ private:
             auto handle = *locked;
             handle->set_assistant_text("");
             handle->set_last_message("");
+            handle->set_thought_text("");
             handle->set_status_text("等待输入");
             handle->set_chat_empty(true);
             handle->set_chat_time("");
@@ -1504,6 +1509,7 @@ private:
                 auto handle = *locked;
                 handle->set_assistant_text("");
                 handle->set_last_message("");
+                handle->set_thought_text("");
                 handle->set_chat_time("");
                 handle->set_status_text("等待输入");
                 handle->set_chat_empty(true);

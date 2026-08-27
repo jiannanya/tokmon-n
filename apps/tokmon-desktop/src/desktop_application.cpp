@@ -294,6 +294,7 @@ int run_application(int argc, char **argv) {
     conversation_workflow_model->clear();
     window->set_last_message(text);
     window->set_assistant_text("");
+    window->set_thought_text("");
     window->set_status_text("正在提交请求");
     window->set_chat_empty(false);
     window->set_workspace_locked(true);

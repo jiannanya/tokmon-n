@@ -243,7 +243,8 @@ conversation_workflow_item(const tokmon::Photon &photon) {
 }
 
 std::vector<TimelineItem>
-conversation_workflow_from(const std::vector<tokmon::Photon> &photons) {
+conversation_workflow_from(const std::vector<tokmon::Photon> &photons,
+                           std::string *thought_text) {
   std::uint64_t turn_start = 0;
   for (auto iterator = photons.rbegin(); iterator != photons.rend(); ++iterator)
     if (iterator->kind == "user.input" || iterator->kind == "user.message") {
@@ -257,32 +258,15 @@ conversation_workflow_from(const std::vector<tokmon::Photon> &photons) {
   int tool_calls = 0;
   int verified_actions = 0;
   std::string reasoning_text;
-  std::int64_t reasoning_time = 0;
-  const auto flush_reasoning = [&] {
-    if (reasoning_text.empty())
-      return;
-    TimelineItem reasoning;
-    reasoning.time = time_label(reasoning_time);
-    reasoning.kind = "model.reasoning-summary";
-    reasoning.title = "Agent 正在分析与规划";
-    reasoning.detail =
-        display_string(bounded_detail(std::move(reasoning_text)));
-    reasoning.tone = "warning";
-    reasoning.progress = -1;
-    result.push_back(std::move(reasoning));
-    reasoning_text.clear();
-    reasoning_time = 0;
-  };
   for (const auto &photon : photons) {
     if (photon.sequence < turn_start)
       continue;
+    // Reasoning chunks feed the dedicated thought-process card above the
+    // assistant reply instead of the workflow step timeline.
     if (photon.kind == "model.reasoning-chunk") {
-      if (reasoning_time == 0)
-        reasoning_time = photon.committed_at_ms;
       reasoning_text.append(payload_text(photon.payload, "text"));
       continue;
     }
-    flush_reasoning();
     if (photon.kind == "assistant.message")
       assistant = &photon;
     if (photon.kind == "model.tool-call")
@@ -297,7 +281,8 @@ conversation_workflow_from(const std::vector<tokmon::Photon> &photons) {
     if (auto item = conversation_workflow_item(photon))
       result.push_back(std::move(*item));
   }
-  flush_reasoning();
+  if (thought_text)
+    *thought_text = bounded_detail(std::move(reasoning_text), 8'192u);
   const bool verified_complete =
       assistant && tool_calls > 0 && latest_tool_result &&
       assistant->sequence > latest_tool_result->sequence;
