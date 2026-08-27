@@ -5,6 +5,7 @@
 #include <map>
 
 #include "tokmon/hash.hpp"
+#include "lenses/common/utf8.hpp"
 
 namespace tokmon::builtin {
 namespace {
@@ -210,8 +211,7 @@ Result<void> JanusLens::view(const OpticalInput& photons, WavefrontBuilder& surf
       const bool command_output = photon.kind == "process.stdout" ||
           photon.kind == "process.stderr";
       if (!requested_tool && !verified_result && !command_output) continue;
-      auto entry = cbor::diagnostic(photon.payload);
-      if (entry.size() > 2'048u) entry.resize(2'048u);
+      auto entry = bounded_utf8(cbor::diagnostic(photon.payload), 2'048u);
       evidence.append("\n- ");
       evidence.append(requested_tool ? "Agent requested " :
           verified_result ? "Tokmon verified " : "Command output ");
@@ -219,13 +219,15 @@ Result<void> JanusLens::view(const OpticalInput& photons, WavefrontBuilder& surf
       evidence.append(": ");
       evidence.append(entry);
       if (evidence.size() > 24'576u) {
-        evidence.resize(24'576u);
+        evidence = bounded_utf8(evidence, 24'576u);
         evidence.append(" [ledger truncated]");
         break;
       }
     }
     if (process_output && evidence.find("Command output") == std::string::npos)
-      evidence.append("\n- Command output: " + cbor::diagnostic(process_output->payload));
+      evidence.append("\n- Command output: " +
+          bounded_utf8(cbor::diagnostic(process_output->payload), 2'048u));
+    evidence = bounded_utf8(evidence, 24'576u);
     messages.push_back(cbor::object({{"role", "system"},
         {"content", evidence +
             "\nUse this ledger as authoritative state. Do not redo a successful entry. Continue the original task by calling the next missing tool, or give the final answer only when every requested action and verification is complete."}}));

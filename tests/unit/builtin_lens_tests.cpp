@@ -16,6 +16,7 @@
 #include "tokmon/tokmon.hpp"
 #include "lenses/common/http_client.hpp"
 #include "lenses/common/process_runner.hpp"
+#include "lenses/common/utf8.hpp"
 #include "lenses/common/secret_store.hpp"
 
 namespace {
@@ -271,6 +272,47 @@ TEST_CASE("Janus carries the verified Agent action ledger into the next model tu
   REQUIRE(diagnostic.find("read_file") != std::string::npos);
   REQUIRE(diagnostic.find("fs.read-completed") != std::string::npos);
   REQUIRE(diagnostic.find("Do not redo a successful entry") != std::string::npos);
+}
+
+TEST_CASE("Janus keeps truncated action ledger entries valid UTF-8") {
+  const auto lens = tokmon::make_builtin_lens("janus");
+  const auto make = [](std::uint64_t sequence, std::string id, std::string kind,
+                       tokmon::cbor::Value payload) {
+    return tokmon::Photon{.sequence = sequence, .id = std::move(id),
+        .ray = "ray-utf8-ledger", .kind = std::move(kind), .schema = "tokmon.test.v1",
+        .payload = std::move(payload), .epoch = 2, .hash = std::string(64, 'c')};
+  };
+  auto input = make(1, "input", "user.input",
+      tokmon::cbor::object({{"text", "continue after writing"}}));
+  std::string long_text;
+  while (long_text.size() < 3'000u) long_text.append("哲");
+  auto call = make(2, "write-call", "model.tool-call",
+      tokmon::cbor::object({{"tool", "write_file"}, {"arguments",
+          tokmon::cbor::object({{"path", "result.txt"},
+              {"content", std::move(long_text)}})}}));
+  auto written = make(3, "written", "fs.changed",
+      tokmon::cbor::object({{"path", "result.txt"}, {"write_verified", true}}));
+  auto viewed = tokmon::tests::view_lens_once(lens,
+      tokmon::PhotonWindow({input, call, written}));
+  REQUIRE(viewed);
+  const auto* messages = tokmon::cbor::find(
+      viewed->surface.proposals.front().parameters, "messages");
+  REQUIRE(messages != nullptr);
+  REQUIRE(messages->as_array()->size() == 3u);
+  const auto* content = tokmon::cbor::find(messages->as_array()->back(), "content");
+  REQUIRE(content != nullptr);
+  REQUIRE(tokmon::builtin::valid_utf8(content->as_string()));
+}
+
+TEST_CASE("UTF-8 bounding never splits a multi-byte code point") {
+  const std::string text = "ab中文cd";
+  const auto bounded = tokmon::builtin::bounded_utf8(text, 6u);
+  REQUIRE(bounded == "ab中");
+  REQUIRE(tokmon::builtin::valid_utf8(bounded));
+  const std::string malformed{"ok\xe4\\tail", 8u};
+  const auto repaired = tokmon::builtin::repair_utf8(malformed);
+  REQUIRE(tokmon::builtin::valid_utf8(repaired));
+  REQUIRE(repaired.find("\\tail") != std::string::npos);
 }
 
 TEST_CASE("Rhea rejects dynamic parameters that would replace runtime-owned fields") {
@@ -614,10 +656,15 @@ TEST_CASE("Rhea streams an OpenAI-compatible provider and retries transient fail
 
   const auto lens = tokmon::make_builtin_lens("rhea");
   RecordingHost host;
+  std::string malformed_message = "hello ";
+  malformed_message.push_back(static_cast<char>(0xe4));
+  malformed_message.append("\\tail");
   auto result = refract(lens, "model.call", "tokmon.model.call.v1",
       tokmon::cbor::object({{"provider", "fixture-cloud"},
           {"protocol", "openai-compatible"}, {"model", "fixture-model"},
           {"prompt", "hello"},
+          {"messages", tokmon::cbor::Value::Array{tokmon::cbor::object({
+              {"role", "user"}, {"content", std::move(malformed_message)}})}},
           {"endpoint", "http://127.0.0.1:" + port + "/v1/chat/completions"},
           {"allow_anonymous", true}, {"max_attempts", 2},
           {"retry_backoff_ms", 1},
@@ -673,7 +720,14 @@ TEST_CASE("Rhea streams an OpenAI-compatible provider and retries transient fail
       "json_object");
   REQUIRE(tokmon::cbor::find(*request_body, "stop")->as_array()->size() == 2);
   REQUIRE(tokmon::cbor::find(*request_body, "model")->as_string() == "fixture-model");
-  REQUIRE(tokmon::cbor::find(*request_body, "messages") != nullptr);
+  const auto* captured_messages = tokmon::cbor::find(*request_body, "messages");
+  REQUIRE(captured_messages != nullptr);
+  REQUIRE(captured_messages->as_array()->size() == 1u);
+  const auto* captured_content = tokmon::cbor::find(
+      captured_messages->as_array()->front(), "content");
+  REQUIRE(captured_content != nullptr);
+  REQUIRE(captured_content->as_string() == "hello �\\tail");
+  REQUIRE(tokmon::builtin::valid_utf8(captured_content->as_string()));
 }
 
 TEST_CASE("Rhea performs five retries before publishing a terminal model failure") {

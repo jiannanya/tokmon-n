@@ -5,6 +5,7 @@
 #include <map>
 #include <set>
 
+#include "lenses/common/utf8.hpp"
 #include "tokmon/hash.hpp"
 
 namespace tokmon::builtin {
@@ -227,7 +228,7 @@ Result<RefractionResult> TextusLens::refract(const PhotonWindow& photons, const 
     if (summary.size() < max_chars) {
       if (!summary.empty()) summary.insert(0, "\n");
       const auto remaining = max_chars - summary.size();
-      if (content.size() > remaining) content.resize(remaining);
+      if (content.size() > remaining) content = bounded_utf8(content, remaining);
       summary.insert(0, content);
     }
     sources.push_back(iterator->id);

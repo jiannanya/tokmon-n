@@ -11,6 +11,7 @@
 
 #include "lenses/common/http_client.hpp"
 #include "lenses/common/secret_store.hpp"
+#include "lenses/common/utf8.hpp"
 #include "tokmon/json.hpp"
 #include "tokmon/hash.hpp"
 #include "tokmon/logging.hpp"
@@ -151,7 +152,20 @@ Result<std::string> credential(const ProviderPlan& plan, const bool allow_anonym
 
 cbor::Value request_messages(const cbor::Value& parameters, const std::string& prompt) {
   if (const auto* messages = cbor::find(parameters, "messages");
-      messages && messages->as_array()) return *messages;
+      messages && messages->as_array()) {
+    auto repaired = *messages;
+    auto* repaired_messages = std::get_if<cbor::Value::Array>(&repaired.data);
+    for (auto& message : *repaired_messages) {
+      auto* map = message.as_map();
+      if (!map) continue;
+      auto content = map->find("content");
+      if (content != map->end()) {
+        if (auto* text = std::get_if<std::string>(&content->second.data))
+          *text = repair_utf8(*text);
+      }
+    }
+    return repaired;
+  }
   return cbor::Value::Array{cbor::object({{"role", "user"}, {"content", prompt}})};
 }
 
