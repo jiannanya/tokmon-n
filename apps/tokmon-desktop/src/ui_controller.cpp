@@ -96,6 +96,12 @@ public:
   void chat(std::string text, std::string name, std::string model,
             std::string access_mode, std::string effort) {
     generation_interrupted_ = false;
+    // Invalidate any paint callback still queued for the previous turn before
+    // the UI thread clears the old answer. Token streams can otherwise leave
+    // hundreds of full projections in Slint's event queue; a late, stale
+    // projection would then overwrite the new turn with old reasoning and no
+    // final answer.
+    projection_serial_->fetch_add(1, std::memory_order_acq_rel);
     Command command{"chat", std::move(text)};
     command.payload =
         tokmon::cbor::object({{"name", std::move(name)},
@@ -107,6 +113,7 @@ public:
   void slash_command(std::string text, std::string name, std::string model,
                      std::string access_mode, std::string effort) {
     generation_interrupted_ = false;
+    projection_serial_->fetch_add(1, std::memory_order_acq_rel);
     Command command{"slash-command", std::move(text)};
     command.payload =
         tokmon::cbor::object({{"name", std::move(name)},
@@ -123,12 +130,14 @@ public:
   void reconcile() { enqueue(Command{"reconcile", {}}); }
   void refresh_workspace() { enqueue(Command{"workspace-refresh", {}}); }
   void new_session(std::string workspace = {}) {
+    projection_serial_->fetch_add(1, std::memory_order_acq_rel);
     Command command{"new-session", {}};
     command.payload =
         tokmon::cbor::object({{"workspace", std::move(workspace)}});
     enqueue(std::move(command));
   }
   void open_session(std::string ray, std::string workspace = {}) {
+    projection_serial_->fetch_add(1, std::memory_order_acq_rel);
     Command command{"open-session", std::move(ray)};
     command.payload =
         tokmon::cbor::object({{"workspace", std::move(workspace)}});
@@ -694,6 +703,9 @@ private:
   }
 
   void publish_pending(const std::string &text) {
+    const auto projection_serial =
+        projection_serial_->fetch_add(1, std::memory_order_acq_rel) + 1;
+    auto projection_clock = projection_serial_;
     TimelineItem item;
     item.time =
         time_label(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -709,8 +721,12 @@ private:
     auto window = window_;
     (void)slint::invoke_from_event_loop(
         [timeline, workflow, blocks = assistant_blocks_, window,
+         projection_clock, projection_serial,
          item = std::move(item),
          message = display_string(text)]() mutable {
+          if (projection_clock->load(std::memory_order_acquire) !=
+              projection_serial)
+            return;
           workflow->clear();
           timeline->push_back(std::move(item));
           if (auto locked = window.lock()) {
@@ -749,8 +765,14 @@ private:
   // happened so the composer always reverts to the send button.
   void finish_generation_ui() {
     const bool interrupted = generation_interrupted_.exchange(false);
+    const auto projection_serial =
+        projection_serial_->load(std::memory_order_acquire);
+    auto projection_clock = projection_serial_;
     auto window = window_;
-    (void)slint::invoke_from_event_loop([window, interrupted] {
+    (void)slint::invoke_from_event_loop(
+        [window, interrupted, projection_clock, projection_serial] {
+      if (projection_clock->load(std::memory_order_acquire) != projection_serial)
+        return;
       if (auto locked = window.lock()) {
         auto handle = *locked;
         handle->set_generation_active(false);
@@ -913,6 +935,14 @@ private:
   }
 
   void apply_photons(std::vector<tokmon::Photon> incoming, const bool replace) {
+    // Every stream batch supersedes the previous full projection. Keeping the
+    // serial outside the Slint callback turns a burst of token updates into
+    // coalesced paints: obsolete callbacks become cheap no-ops, while the
+    // terminal assistant.message projection is guaranteed to be the one that
+    // lands last.
+    const auto projection_serial =
+        projection_serial_->fetch_add(1, std::memory_order_acq_rel) + 1;
+    auto projection_clock = projection_serial_;
     if (replace)
       photons_.clear();
     for (auto &photon : incoming) {
@@ -1049,6 +1079,7 @@ private:
         std::memory_order_relaxed);
     (void)slint::invoke_from_event_loop(
         [timeline, workflow, blocks = assistant_blocks_, code, window, interrupted,
+         projection_clock, projection_serial,
          items = std::move(items),
          workflow_items = std::move(workflow_items), lines = std::move(lines),
          trace, assistant = std::move(assistant),
@@ -1057,6 +1088,9 @@ private:
          turn_thought_text = std::move(turn_thought_text),
          blocks_in = std::move(chat_block_items),
          state = std::move(state), workflow_complete, replace]() mutable {
+          if (projection_clock->load(std::memory_order_acquire) !=
+              projection_serial)
+            return;
           timeline->clear();
           for (auto &item : items)
             timeline->push_back(std::move(item));
@@ -1993,6 +2027,10 @@ private:
   std::shared_ptr<slint::VectorModel<TimelineItem>> timeline_;
   std::shared_ptr<slint::VectorModel<TimelineItem>> conversation_workflow_;
   std::shared_ptr<slint::VectorModel<ChatBlock>> assistant_blocks_;
+  // Shared with queued Slint callbacks so they can reject stale projections
+  // without capturing the controller's lifetime.
+  std::shared_ptr<std::atomic_uint64_t> projection_serial_{
+      std::make_shared<std::atomic_uint64_t>(0)};
   std::shared_ptr<slint::VectorModel<CodeLine>> code_;
   std::shared_ptr<slint::VectorModel<TraceEvent>> trace_events_;
   std::shared_ptr<slint::VectorModel<GanttSegment>> gantt_;

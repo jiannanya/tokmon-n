@@ -550,7 +550,7 @@ export component WorkspacePanel inherits Rectangle {
                                     width: parent.width;
                                     spacing: 24px;
                                     padding-top: 20px;
-                                    padding-bottom: 160px;
+                                    padding-bottom: 168px;
                                     padding-left: 24px;
                                     padding-right: 24px;
                                     // The scroll viewport imposes its own minimum
@@ -792,11 +792,11 @@ export component WorkspacePanel inherits Rectangle {
                                 }
                             }
                             composer := Rectangle {
-                                // Keep an 8px bottom breathing space (half of the
-                                // previous 16px gap) without changing input height.
-                                y: parent.height - 156px;
+                                // Keep a real 16px bottom breathing space without
+                                // changing the 100px composer-card thickness.
+                                y: parent.height - 164px;
                                 width: parent.width;
-                                height: 156px;
+                                height: 164px;
                                 background: @linear-gradient(0deg, rgba(250, 250, 249, 1) 0%, rgba(250, 250, 249, 0.92) 55%, rgba(250, 250, 249, 0) 100%);
                                     HorizontalLayout {
                                         alignment: center;
@@ -819,7 +819,7 @@ export component WorkspacePanel inherits Rectangle {
                                                 can-change-workspace: root.chat-empty && !root.workspace-locked;
                                                 change-workspace => { root.open-change-workspace(); }
                                             }
-                                            Rectangle {
+                                            composer-card := Rectangle {
                                                 // Keep the composer surface above the workspace badge.
                                                 // A menu's z value cannot escape its parent's stacking
                                                 // context, which previously let the badge cover it.
@@ -841,8 +841,10 @@ export component WorkspacePanel inherits Rectangle {
                                                 drop-shadow-blur: 20px;
                                                 VerticalLayout {
                                                     padding: 12px;
+                                                    alignment: space-between;
                                                     Rectangle {
                                                         height: 34px;
+                                                        vertical-stretch: 0;
                                                         composer-edit := TextInput {
                                                             width: parent.width;
                                                             height: parent.height;
@@ -870,8 +872,9 @@ export component WorkspacePanel inherits Rectangle {
                                                         }
                                                     }
 
-                                            HorizontalLayout {
-                                                padding-top: 4px;
+                                            composer-toolbar := HorizontalLayout {
+                                                height: 28px;
+                                                vertical-stretch: 0;
                                                 alignment: space-between;
                                                 HorizontalLayout {
                                                     spacing: 6px;
@@ -1078,7 +1081,11 @@ export component WorkspacePanel inherits Rectangle {
                                             z: 20;
                                             x: Math.max(0px, Math.min(parent.width - self.width,
                                                 access-button.absolute-position.x - parent.absolute-position.x));
-                                            y: access-button.absolute-position.y - parent.absolute-position.y - self.height - 8px;
+                                            // The popup is already a child of composer-card, so
+                                            // composer-toolbar.y is in the exact coordinate space
+                                            // required here. Adding composer-card.y again would
+                                            // double-count the card offset and cover the buttons.
+                                            y: composer-toolbar.y - self.height - 8px;
                                             width: 144px;
                                             height: 98px;
                                             background: Palette.white;
@@ -1108,9 +1115,10 @@ export component WorkspacePanel inherits Rectangle {
                                             }
                                         }
                                         if root.effort-menu-open : Rectangle {
+                                            z: 20;
                                             x: Math.max(0px, Math.min(parent.width - self.width,
                                                 effort-button.absolute-position.x - parent.absolute-position.x + effort-button.width - self.width));
-                                            y: effort-button.absolute-position.y - parent.absolute-position.y - self.height - 8px;
+                                            y: composer-toolbar.y - self.height - 8px;
                                             width: 128px;
                                             height: 154px;
                                             background: Palette.white;
@@ -1149,9 +1157,10 @@ export component WorkspacePanel inherits Rectangle {
                                             }
                                         }
                                         if root.model-menu-open : Rectangle {
+                                            z: 20;
                                             x: Math.max(0px, Math.min(parent.width - self.width,
                                                 model-button.absolute-position.x - parent.absolute-position.x + model-button.width - self.width));
-                                            y: model-button.absolute-position.y - parent.absolute-position.y - self.height - 8px;
+                                            y: composer-toolbar.y - self.height - 8px;
                                             width: 224px;
                                             height: Math.min(root.model-choices.length * 30px + 34px, 200px);
                                             background: Palette.white;
@@ -1238,9 +1247,10 @@ export component WorkspacePanel inherits Rectangle {
                                             TouchArea { clicked => { root.slash-menu-visible = false } }
                                         }
                                         if root.context-popover-open : Rectangle {
+                                            z: 20;
                                             x: Math.max(0px, Math.min(parent.width - self.width,
                                                 context-button.absolute-position.x - parent.absolute-position.x + context-button.width - self.width));
-                                            y: context-button.absolute-position.y - parent.absolute-position.y - self.height - 8px;
+                                            y: composer-toolbar.y - self.height - 8px;
                                             width: 320px;
                                             height: 353px;
                                             background: Palette.white;
