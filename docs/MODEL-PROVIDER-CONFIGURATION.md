@@ -46,7 +46,7 @@ tokmon model configure deepseek `
 tokmon model secret set deepseek
 ```
 
-终端会关闭输入回显。Tokmon 不接受 `--api-key` 参数，Key 不会出现在命令历史、进程参数、YAML、Photon 或日志中。Key 根据平台写入 Windows Credential Manager、macOS Keychain 或 Linux Secret Service；YAML 只包含 `secret_ref: model-provider/deepseek`。Linux 构建要求 `libsecret-1 >= 0.20`，运行时要求用户会话中存在可用的 Secret Service（如 GNOME Keyring 或 KWallet Secret Service）。
+终端会关闭输入回显。Tokmon 不接受 `--api-key` 参数，Key 不会出现在命令历史、进程参数、YAML、Photon 或日志中。Key 根据平台写入 Windows Credential Manager、macOS Keychain 或 Linux Secret Service；用户配置不包含内部密钥 ID。Linux 构建要求 `libsecret-1 >= 0.20`，运行时要求用户会话中存在可用的 Secret Service（如 GNOME Keyring 或 KWallet Secret Service）。
 
 执行真实连通性测试：
 
@@ -139,7 +139,6 @@ models:
       protocol: openai-compatible
       endpoint: https://models.example.com/v1/chat/completions
       model: company-coder
-      secret_ref: model-provider/company-gateway
       secret_env: COMPANY_GATEWAY_API_KEY
       auth: bearer
       enabled: true
@@ -162,11 +161,11 @@ models:
         type: json_object
 ```
 
-`secret_env` 是可选的非交互式引导来源，不是保存 Key 的位置。名称必须是大写环境变量格式（例如 `OPENCODE_API_KEY`），YAML 仍必须提供严格命名空间化的 `secret_ref`。`tokmond` 启动时先读取当前进程环境；Windows 还会读取当前用户和本机环境变量注册表，以支持在 Desktop/终端启动之后才写入的变量。读取成功后立即导入操作系统凭据库，后续调用只使用 `secret_ref`，临时明文缓冲区会被覆写。环境变量不存在时不会降低为匿名调用。
+`secret_env` 是可选的备用来源，不是保存 Key 的位置。名称必须是大写环境变量格式（例如 `OPENCODE_API_KEY`）。每个新请求先读取内部 ID `model-secret-library/<配置名称>` 对应的系统保险库记录；不存在时才调用 `getenv()` 读取 daemon 当前进程中的 `secret_env`。环境变量不会被导入保险库，也不会覆盖用户从 Desktop/CLI 保存的 Key；两处都不存在时明确拒绝鉴权请求。外部进程无法跨平台修改已运行进程的环境，因此修改系统环境变量仍需重启 daemon，而通过 Desktop/CLI 更新 Key 无需重启。
 
 配置项分成两类：
 
-- Tokmon 固定字段负责配置选择、传输、安全、重试和超时，例如 map key 对应的内部 `name`，以及 `protocol`、`endpoint`、`model`、`secret_ref`、`auth`、`stream`、`thinking`、`reasoning_effort`、`max_output_tokens`、`max_attempts`、`retry_backoff_ms`、`first_token_timeout_ms`、`idle_timeout_ms`；
+- Tokmon 固定字段负责配置选择、传输、安全、重试和超时，例如 map key 对应的内部 `name`，以及 `protocol`、`endpoint`、`model`、`secret_env`、`auth`、`stream`、`thinking`、`reasoning_effort`、`max_output_tokens`、`max_attempts`、`retry_backoff_ms`、`first_token_timeout_ms`、`idle_timeout_ms`；
 - 固定字段之外的任意 YAML 字段都作为模型请求参数原样保留，可使用字符串、整数、浮点数、布尔值、null、数组和嵌套对象。Rhea 会把它们合并到厂商请求 JSON 中，因此无需为 `temperature`、`top_p`、`seed`、`response_format` 或未来厂商参数修改、重新编译 Tokmon。
 
 OpenRouter 的 `provider` 偏好可以直接写在配置项下，或放进 `request_parameters`；两者都会生成相同的上游 JSON：
@@ -179,7 +178,7 @@ models:
       protocol: openai-compatible
       endpoint: https://openrouter.ai/api/v1/chat/completions
       model: openai/gpt-5
-      secret_ref: model-provider/openrouter-fast
+      secret_env: OPENROUTER_API_KEY
       auth: bearer
       provider:
         order: [Cerebras, Groq]
@@ -209,7 +208,6 @@ models:
       protocol: openai-compatible
       endpoint: https://opencode.ai/zen/v1/chat/completions
       model: x-preview-f-free
-      secret_ref: model-provider/opencode
       secret_env: OPENCODE_API_KEY
       auth: bearer
       enabled: true
@@ -223,9 +221,9 @@ models:
 
 `x-preview-f-free` 不接受 `medium`，应使用 `low`、`high` 或 `max`。本次 Windows 现场验收使用 `high`。远程模型默认执行 1 次初始请求和 5 次重试，确定性等待为 5 秒、10 秒、20 秒、40 秒、60 秒；只有五次重试都失败后才追加最终 `model.failed`。每次等待前追加 `model.retry-scheduled`，对话页显示人类可读状态，轨迹页保留完整 Photon。完整 CLI/Desktop 记录见 [OPENCODE-DESKTOP-ACCEPTANCE-REPORT.md](OPENCODE-DESKTOP-ACCEPTANCE-REPORT.md)。
 
-用户级 `~/.tokmon/config.yaml` 与项目级 `<workspace>/.tokmon/config.yaml` 使用同一 schema。先合并用户级，再按配置名称合并项目级；项目可以覆盖 model、endpoint 或预算，但 SecretRef 必须严格等于自己的 `model-provider/<name>`，不能引用其他配置或其他透镜的凭据。`models.default` 必须指向存在且启用的配置名称。
+用户级 `~/.tokmon/config.yaml` 与项目级 `<workspace>/.tokmon/config.yaml` 使用同一 schema。先合并用户级，再按配置名称合并项目级；项目可以覆盖 model、endpoint、`secret_env` 或预算。内部密钥 ID 始终从配置名称推导，不能由 YAML 指向其他配置或其他透镜的凭据。`models.default` 必须指向存在且启用的配置名称；旧模型字段 `secret_ref` 会直接被拒绝，不提供兼容分支。
 
-配置由 `tokmond` 使用临时文件和原子替换发布。daemon 监视用户级和项目级配置文件，外部编辑后会重新读取、完整验证并锁存失败状态；非法固定字段、非 HTTPS 远程地址、越权 SecretRef、受保护的动态参数或越界预算会拒绝整个候选配置。
+配置由 `tokmond` 使用临时文件和原子替换发布。daemon 监视用户级和项目级配置文件，外部编辑后会重新读取、完整验证并锁存失败状态；非法固定字段、非 HTTPS 远程地址、已删除的 `secret_ref`、受保护的动态参数或越界预算会拒绝整个候选配置。
 
 Desktop 和 CLI 都会在启动后台服务前预检配置。Desktop 先创建标准主窗口，再在窗口内以与应用主题一致的 Slint 模态层显示具体文件和原因，不使用系统原生消息框；它还会在空闲状态持续读取 daemon 的配置健康状态。CLI 向标准错误输出相同诊断并返回非零退出码。运行中热重载失败时 Desktop 会主动显示同一模态层，后续非生命周期请求会被失败锁存阻止，直到修复后的配置通过完整 reconcile。配置错误不会再表现为 daemon 启动超时，不会沿用旧配置，也不会静默回退。
 
@@ -234,8 +232,8 @@ Desktop 和 CLI 都会在启动后台服务前预检配置。Desktop 先创建�
 打开“设置 → 智能体与模型”：
 
 1. 填写配置名称、协议适配器、HTTPS Endpoint、模型和鉴权方式；
-2. 点击“保存平台配置”，Desktop 通过 Snow 交给 `tokmond` 原子保存并热重载；
-3. 在密码输入框填写 Key，点击“安全保存 Key”；输入框立即清空，Key 只写入系统凭据库；
+2. 填写可选的备用环境变量名，点击“保存模型配置”，Desktop 通过 Snow 交给 `tokmond` 原子保存并热重载；
+3. 在密码输入框填写 Key，点击“保存密钥”；输入框立即清空，Key 通过 Cista 只写入系统凭据库；
 4. 点击“测试真实连接”，结果会同时显示在对话区和轨迹区；
 5. 后续新会话自动使用这个 `models.default` 配置名称。
 
@@ -254,15 +252,15 @@ tokmon run --name <configuration> <message>
 tokmon chat --name <configuration>
 ```
 
-`model list` 只报告 `ready`/`missing`，绝不读取或显示 Key。轮换 Key 只需再次执行 `model secret set <name>`；删除使用 `model secret delete <name>`。
+`model list` 只报告 `ready`/`missing`，绝不读取或显示 Key。`model configure` 可用 `--secret-env NAME` 设置备用环境变量名、用 `--no-secret-env` 清除它。轮换 Key 只需再次执行 `model secret set <name>`；删除使用 `model secret delete <name>`。
 
 ## 9. 安全与因果不变量
 
-- API Key 明文只存在于短生命周期的本地 Snow 请求和 Rhea 请求缓冲区；CLI 原始输入与 Rhea 专用缓冲区在使用后主动覆写，通用传输对象在请求结束后立即销毁。
+- API Key 明文只存在于短生命周期的本地 Snow 请求、可清零输入缓冲区和 Rhea 请求缓冲区；daemon 先生成一次性 `input_handle`，`secret.rotate` Act 与审计 Photon 不携带明文，Cista 消费句柄后立即失效。
 - Cista 从操作系统凭据库创建与 `act_hash + target + generation + epoch` 精确绑定、最多两分钟有效的一次性凭据绑定；Rhea消费后立即失效。
-- YAML、Photon、Act、Surface、日志和 CLI 响应仅携带 SecretRef、`credential_present` 或 `opaque-binding`，不携带 Key。
+- YAML、Photon、Act、Surface、日志和 CLI 响应仅携带配置名称、`secret_env` 名称、`credential_present`、来源状态或不透明句柄，不携带 Key 或内部密钥 ID。
 - 配置拒绝 `api_key`、`secret_value` 等未知明文字段；Rhea 再次拒绝携带明文凭据的 Act。
-- SecretRef 被配置名称命名空间约束，项目配置不能借模型调用读取其他秘密。
+- 内部 ID 固定为 `model-secret-library/<配置名称>`，项目配置不能借模型调用读取其他秘密。
 - endpoint 在配置层与 Rhea 层双重验证：远程只允许 HTTPS，HTTP 仅允许 loopback。
 - 模型调用的请求、流式 chunk、usage、完成或失败均追加为新 Photon；历史 Photon 从不编辑、撤销或覆盖。
 
@@ -279,10 +277,10 @@ tokmon model test <name>
 常见结果：
 
 - `credential missing`：执行 `tokmon model secret set <name>`；
-- `secret reference was not found`：系统凭据库中没有对应条目，或当前 Windows 用户不同；
+- `model API credential is not configured`：系统凭据库和 daemon 当前进程的 `secret_env` 都没有可用 Key；
 - `401/403`：Key、鉴权 header 或平台账户权限错误；
 - `404`：endpoint 路径或 model id 错误；
 - `429/5xx`：Rhea 会按配置重试，最终仍失败时追加 `model.failed`；
 - `model endpoint must use HTTPS or loopback HTTP`：远程地址使用了明文 HTTP；
-- `SecretRef must be scoped to its own id`：手写 YAML 引用了其他命名空间；
+- `model request parameter 'secret_ref' is controlled by Tokmon`：YAML 仍包含已删除的旧模型字段，请直接移除；
 - 没有 `assistant.message` 但有 `model.failed`：检查对应 Photon 的已脱敏错误、HTTP 状态和 attempt。

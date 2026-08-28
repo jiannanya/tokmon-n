@@ -39,6 +39,7 @@ export component SettingsOverlay inherits Rectangle {
     in-out property <string> setting-provider-endpoint;
     in-out property <string> setting-provider-protocol;
     in-out property <string> setting-provider-secret;
+    in-out property <string> setting-provider-secret-env;
     in-out property <bool> setting-provider-thinking;
     in-out property <string> setting-quiet-hours;
     in-out property <string> setting-reasoning;
@@ -52,6 +53,7 @@ export component SettingsOverlay inherits Rectangle {
     pure callback approval-selected() -> int;
     callback cancel-settings();
     callback choose-attachment(bool) -> string;
+    callback configure-provider(string, string, string, string, string, string, bool, string);
     pure callback effort-selected() -> int;
     callback reset-settings();
     callback save-settings();
@@ -273,7 +275,7 @@ export component SettingsOverlay inherits Rectangle {
                                             label: "协议";
                                             SelectBox {
                                                 value: root.setting-provider-protocol;
-                                                options: ["openai-compatible", "anthropic", "responses"];
+                                                options: ["openai-compatible", "anthropic", "gemini"];
                                                 selected(i, o) => { root.setting-provider-protocol = o }
                                             }
                                         }
@@ -289,7 +291,7 @@ export component SettingsOverlay inherits Rectangle {
                                             label: "鉴权方式";
                                             SelectBox {
                                                 value: root.setting-provider-auth;
-                                                options: ["bearer", "api-key", "none"];
+                                                options: ["protocol-default", "bearer", "x-api-key", "x-goog-api-key", "none"];
                                                 selected(i, o) => { root.setting-provider-auth = o }
                                             }
                                         }
@@ -309,6 +311,15 @@ export component SettingsOverlay inherits Rectangle {
                                         }
                                     }
                                     if root.provider-kind == "自定义" : RowShell {
+                                        label: "备用环境变量";
+                                        LineEdit {
+                                            width: 280px;
+                                            text <=> root.setting-provider-secret-env;
+                                            placeholder-text: "例如 OPENROUTER_API_KEY";
+                                            font-size: 12px;
+                                        }
+                                    }
+                                    if root.provider-kind == "自定义" : RowShell {
                                         label: "API Key";
                                         HorizontalLayout {
                                             spacing: 8px;
@@ -316,6 +327,7 @@ export component SettingsOverlay inherits Rectangle {
                                                 width: 200px;
                                                 text <=> root.setting-provider-secret;
                                                 placeholder-text: root.setting-provider-credential;
+                                                input-type: password;
                                                 font-size: 12px;
                                             }
                                             Rectangle {
@@ -330,7 +342,12 @@ export component SettingsOverlay inherits Rectangle {
                                                     Text { text: "保存密钥"; font-size: 11.5px; font-weight: 500; color: Palette.accent-text; vertical-alignment: center; }
                                                 }
                                                 TouchArea {
-                                                    clicked => { root.store-provider-secret(root.setting-name, root.setting-provider-secret) }
+                                                    clicked => {
+                                                        if (root.setting-provider-secret != "") {
+                                                            root.store-provider-secret(root.setting-name, root.setting-provider-secret);
+                                                            root.setting-provider-secret = "";
+                                                        }
+                                                    }
                                                     mouse-cursor: pointer;
                                                 }
                                             }
@@ -352,6 +369,34 @@ export component SettingsOverlay inherits Rectangle {
                                         ToggleSwitch {
                                             checked <=> root.setting-provider-thinking;
                                             toggled(v) => { root.setting-provider-thinking = v }
+                                        }
+                                    }
+                                    RowShell {
+                                        label: "模型配置";
+                                        Rectangle {
+                                            height: 30px;
+                                            border-radius: 10px;
+                                            background: Palette.accent-bg;
+                                            border-width: 0.67px;
+                                            border-color: Palette.accent-border;
+                                            HorizontalLayout {
+                                                padding-left: 12px;
+                                                padding-right: 12px;
+                                                Text { text: "保存模型配置"; font-size: 11.5px; font-weight: 500; color: Palette.accent-text; vertical-alignment: center; }
+                                            }
+                                            TouchArea {
+                                                clicked => {
+                                                    root.configure-provider(root.setting-name,
+                                                        root.setting-provider-protocol,
+                                                        root.setting-provider-endpoint,
+                                                        root.setting-main-model,
+                                                        root.setting-provider-auth,
+                                                        root.setting-provider-secret-env,
+                                                        root.setting-provider-thinking,
+                                                        root.setting-reasoning);
+                                                }
+                                                mouse-cursor: pointer;
+                                            }
                                         }
                                     }
                                     RowShell {

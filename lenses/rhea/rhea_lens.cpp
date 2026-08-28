@@ -24,7 +24,7 @@ struct ProviderPlan {
   std::string protocol;
   std::string model;
   std::string endpoint;
-  std::string secret_ref;
+  std::string secret_env;
   std::string auth{"protocol-default"};
 };
 
@@ -101,8 +101,8 @@ Result<ProviderPlan> provider_plan(const cbor::Value& value,
   if (const auto model = string_field(value, "model"); !model.empty()) plan.model = model;
   if (const auto endpoint = string_field(value, "endpoint"); !endpoint.empty())
     plan.endpoint = endpoint;
-  if (const auto reference = string_field(value, "secret_ref"); !reference.empty())
-    plan.secret_ref = reference;
+  if (const auto environment = string_field(value, "secret_env"); !environment.empty())
+    plan.secret_env = environment;
   if (const auto auth = string_field(value, "auth"); !auth.empty()) plan.auth = auth;
   if (plan.name.empty() || plan.model.empty())
     return tl::unexpected(make_error(ErrorCode::schema_mismatch,
@@ -131,19 +131,12 @@ Result<std::string> credential(const ProviderPlan& plan, const bool allow_anonym
         string_field(act.parameters, "secret_purpose", "model-api"),
         act_secret_scope_hash(act), act.target, act.generation, act.epoch);
   }
-  if (!plan.secret_ref.empty()) {
-    if (plan.secret_ref != "model-provider/" + plan.name)
-      return tl::unexpected(make_error(ErrorCode::permission_denied,
-          "model provider SecretRef is outside its platform scope"));
-    auto binding = create_secret_binding(plan.secret_ref, "model-api",
-        act_secret_scope_hash(act), act.target, act.generation, act.epoch,
-        std::chrono::minutes(2));
-    if (!binding) return tl::unexpected(binding.error());
-    return resolve_secret_binding(*binding, "model-api", act_secret_scope_hash(act),
-                                  act.target, act.generation, act.epoch);
-  }
-  return tl::unexpected(make_error(ErrorCode::permission_denied,
-      "model provider credentials require a one-shot Cista Secret binding"));
+  auto binding = create_model_secret_binding(plan.name, plan.secret_env, "model-api",
+      act_secret_scope_hash(act), act.target, act.generation, act.epoch,
+      std::chrono::minutes(2));
+  if (!binding) return tl::unexpected(binding.error());
+  return resolve_secret_binding(*binding, "model-api", act_secret_scope_hash(act),
+                                act.target, act.generation, act.epoch);
 }
 
 cbor::Value request_messages(const cbor::Value& parameters, const std::string& prompt) {
@@ -441,7 +434,7 @@ Result<void> RheaLens::view(const OpticalInput& photons, WavefrontBuilder& surfa
   const auto* failure = photons.latest("model.failed");
   const auto* usage = photons.latest("model.usage");
   return identify(surface, "diagnostic.model", cbor::object({
-      {"providers", providers}, {"credential", "SecretRef/binding only"},
+      {"providers", providers}, {"credential", "Cista one-shot binding only"},
       {"last_failure", failure ? failure->payload : cbor::Value(nullptr)},
       {"last_usage", usage ? usage->payload : cbor::Value(nullptr)},
       {"streaming", true}, {"transport", "chhttp"}, {"provider_broker", true}}));

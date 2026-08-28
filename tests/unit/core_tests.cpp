@@ -10,6 +10,7 @@
 #include "tests/support/test_framework.hpp"
 #include "tests/support/optical_harness.hpp"
 #include "lenses/common/process_runner.hpp"
+#include "lenses/common/secret_store.hpp"
 #include <sqlite3.h>
 
 #include "tokmon/tokmon.hpp"
@@ -1224,7 +1225,7 @@ TEST_CASE("unknown YAML fields are rejected without publishing a path") {
   REQUIRE(config.error().code == tokmon::ErrorCode::schema_mismatch);
 }
 
-TEST_CASE("model platforms merge by id while credentials remain SecretRefs") {
+TEST_CASE("model configurations merge by name while credentials use internal ids") {
   const auto root = temporary_directory("model-config");
   UserProfileGuard profile(root / "home");
   const auto workspace = root / "workspace";
@@ -1239,7 +1240,6 @@ TEST_CASE("model platforms merge by id while credentials remain SecretRefs") {
             "      protocol: openai-compatible\n"
             "      endpoint: https://models.example.test/v1/chat/completions\n"
             "      model: base-model\n"
-            "      secret_ref: model-provider/private-cloud\n"
             "      secret_env: PRIVATE_CLOUD_API_KEY\n"
             "      auth: bearer\n"
             "      temperature: 0.25\n"
@@ -1271,8 +1271,9 @@ TEST_CASE("model platforms merge by id while credentials remain SecretRefs") {
   REQUIRE(provider.protocol == "openai-compatible");
   REQUIRE(provider.model == "project-model");
   REQUIRE(provider.endpoint == "https://models.example.test/v1/chat/completions");
-  REQUIRE(provider.secret_ref == "model-provider/private-cloud");
   REQUIRE(provider.secret_env == "PRIVATE_CLOUD_API_KEY");
+  REQUIRE(tokmon::builtin::model_credential_id(provider.name) ==
+          "model-secret-library/private-cloud");
   REQUIRE_FALSE(provider.stream);
   REQUIRE(provider.thinking);
   const auto* request_parameters = provider.request_parameters.as_map();
@@ -1297,12 +1298,12 @@ TEST_CASE("model context keeps configuration name and configured model inseparab
   config.model_providers.emplace("opencode", tokmon::ModelProviderConfig{
       .name = "opencode", .protocol = "openai-compatible",
       .endpoint = "https://opencode.example/v1/chat/completions",
-      .model = "x-preview-f-free", .secret_ref = "model-provider/opencode",
+      .model = "x-preview-f-free", .secret_env = "OPENCODE_API_KEY",
       .auth = "bearer"});
   config.model_providers.emplace("deepseek", tokmon::ModelProviderConfig{
       .name = "deepseek", .protocol = "openai-compatible",
       .endpoint = "https://api.deepseek.com/chat/completions",
-      .model = "deepseek-v4-flash", .secret_ref = "model-provider/deepseek",
+      .model = "deepseek-v4-flash", .secret_env = "DEEPSEEK_API_KEY",
       .auth = "bearer", .stream = false, .thinking = true,
       .reasoning_effort = "high",
       .request_parameters = tokmon::cbor::object({
@@ -1319,6 +1320,9 @@ TEST_CASE("model context keeps configuration name and configured model inseparab
           "deepseek-v4-flash");
   REQUIRE(tokmon::cbor::find(*selected, "endpoint")->as_string() ==
           "https://api.deepseek.com/chat/completions");
+  REQUIRE(tokmon::cbor::find(*selected, "secret_env")->as_string() ==
+          "DEEPSEEK_API_KEY");
+  REQUIRE(tokmon::cbor::find(*selected, "secret_ref") == nullptr);
   REQUIRE_FALSE(tokmon::cbor::find(*selected, "stream")->as_bool());
   const auto* selected_parameters =
       tokmon::cbor::find(*selected, "request_parameters");
@@ -1360,10 +1364,20 @@ TEST_CASE("model configuration rejects plaintext keys and insecure remote endpoi
   REQUIRE(plaintext.error().code == tokmon::ErrorCode::permission_denied);
   {
     std::ofstream output(file, std::ios::trunc);
+    output << "models:\n  goes:\n    legacy:\n"
+              "      protocol: openai-compatible\n"
+              "      endpoint: https://models.example.test/v1/chat/completions\n"
+              "      model: test\n      secret_ref: model-provider/legacy\n";
+  }
+  auto legacy_reference = tokmon::load_config(workspace);
+  REQUIRE_FALSE(legacy_reference);
+  REQUIRE(legacy_reference.error().code == tokmon::ErrorCode::permission_denied);
+  {
+    std::ofstream output(file, std::ios::trunc);
     output << "models:\n  goes:\n    unsafe:\n"
               "      protocol: openai-compatible\n"
               "      endpoint: http://models.example.test/v1/chat/completions\n"
-              "      model: test\n      secret_ref: model-provider/unsafe\n";
+              "      model: test\n";
   }
   auto insecure = tokmon::load_config(workspace);
   REQUIRE_FALSE(insecure);
@@ -1373,7 +1387,7 @@ TEST_CASE("model configuration rejects plaintext keys and insecure remote endpoi
     output << "models:\n  goes:\n    unsafe:\n"
               "      protocol: openai-compatible\n"
               "      endpoint: https://models.example.test/v1/chat/completions\n"
-              "      model: test\n      secret_ref: model-provider/unsafe\n"
+              "      model: test\n"
               "      secret_env: unsafeApiKey\n";
   }
   auto invalid_environment = tokmon::load_config(workspace);

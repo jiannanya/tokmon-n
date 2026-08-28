@@ -1,5 +1,7 @@
 #include <algorithm>
 #include <array>
+#include <cctype>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -212,7 +214,7 @@ TEST_CASE("Janus forwards a platform-neutral protocol envelope to Rhea") {
       .payload = tokmon::cbor::object({{"text", "hello"},
           {"name", "private-cloud"}, {"protocol", "openai-compatible"},
           {"endpoint", "https://models.example.test/v1/chat/completions"},
-          {"model", "custom-model"}, {"secret_ref", "model-provider/private-cloud"},
+          {"model", "custom-model"}, {"secret_env", "PRIVATE_CLOUD_API_KEY"},
           {"auth", "bearer"}, {"stream", false}, {"thinking", true},
           {"max_output_tokens", 8192},
           {"max_attempts", 6}, {"retry_backoff_ms", 5'000},
@@ -228,8 +230,9 @@ TEST_CASE("Janus forwards a platform-neutral protocol envelope to Rhea") {
   REQUIRE(tokmon::cbor::find(parameters, "protocol")->as_string() ==
           "openai-compatible");
   REQUIRE(tokmon::cbor::find(parameters, "model")->as_string() == "custom-model");
-  REQUIRE(tokmon::cbor::find(parameters, "secret_ref")->as_string() ==
-          "model-provider/private-cloud");
+  REQUIRE(tokmon::cbor::find(parameters, "secret_env")->as_string() ==
+          "PRIVATE_CLOUD_API_KEY");
+  REQUIRE(tokmon::cbor::find(parameters, "secret_ref") == nullptr);
   REQUIRE_FALSE(tokmon::cbor::find(parameters, "stream")->as_bool());
   REQUIRE(tokmon::cbor::find(parameters, "api_key") == nullptr);
   const auto* request_parameters =
@@ -1658,6 +1661,109 @@ TEST_CASE("Cista OS credential binding is exact one-shot and leaves no plaintext
     REQUIRE_FALSE(unavailable);
     REQUIRE(unavailable.error().code == tokmon::ErrorCode::unsupported);
   }
+}
+
+TEST_CASE("model credentials prefer the vault and hot-rotate through Cista") {
+  if (!tokmon::builtin::keyring_supported()) return;
+  auto suffix = tokmon::make_id("credential");
+  std::ranges::transform(suffix, suffix.begin(), [](const unsigned char character) {
+    return character == '-' ? '_' : static_cast<char>(std::toupper(character));
+  });
+  const auto name = "TOKMON_TEST_" + suffix;
+  const auto environment_name = name + "_API_KEY";
+  const auto credential_id = tokmon::builtin::model_credential_id(name);
+  struct Cleanup {
+    std::string id;
+    std::string environment;
+    std::optional<std::string> previous;
+    ~Cleanup() {
+      (void)tokmon::builtin::keyring_delete(id);
+#if defined(_WIN32)
+      _putenv_s(environment.c_str(), previous ? previous->c_str() : "");
+#else
+      if (previous) setenv(environment.c_str(), previous->c_str(), 1);
+      else unsetenv(environment.c_str());
+#endif
+    }
+  } cleanup{credential_id, environment_name,
+      std::getenv(environment_name.c_str())
+          ? std::optional<std::string>(std::getenv(environment_name.c_str()))
+          : std::nullopt};
+  (void)tokmon::builtin::keyring_delete(credential_id);
+#if defined(_WIN32)
+  REQUIRE(_putenv_s(environment_name.c_str(), "environment-credential") == 0);
+#else
+  REQUIRE(setenv(environment_name.c_str(), "environment-credential", 1) == 0);
+#endif
+
+  constexpr auto purpose = "model-api";
+  const auto scope = std::string(64, 'c');
+  constexpr auto target = "org.tokmon.lens.rhea";
+  constexpr tokmon::GenerationId generation = 9002;
+  constexpr tokmon::MountEpoch epoch = 10;
+  auto environment_binding = tokmon::builtin::create_model_secret_binding(
+      name, environment_name, purpose, scope, target, generation, epoch,
+      std::chrono::seconds(30));
+#if defined(__APPLE__) || defined(__linux__)
+  if (!environment_binding) {
+    INFO(environment_binding.error().describe());
+    REQUIRE(environment_binding.error().code == tokmon::ErrorCode::io_error);
+    return;
+  }
+#endif
+  REQUIRE(environment_binding);
+  auto environment_value = tokmon::builtin::resolve_secret_binding(
+      *environment_binding, purpose, scope, target, generation, epoch);
+  REQUIRE(environment_value);
+  REQUIRE(*environment_value == "environment-credential");
+  std::fill(environment_value->begin(), environment_value->end(), '\0');
+
+  const auto lens = tokmon::make_builtin_lens("cista");
+  RecordingHost host;
+  auto first_input = tokmon::builtin::create_secret_input_handle(
+      "vault-credential-old", std::chrono::seconds(30));
+  REQUIRE(first_input);
+  auto first_rotation = refract(lens, "secret.rotate", "tokmon.secret.rotate.v1",
+      tokmon::cbor::object({{"name", name}, {"purpose", purpose},
+                            {"input_handle", *first_input}}), host);
+  REQUIRE(first_rotation);
+  REQUIRE_FALSE(tokmon::builtin::consume_secret_input_handle(*first_input));
+  auto old_binding = tokmon::builtin::create_model_secret_binding(
+      name, environment_name, purpose, scope, target, generation, epoch,
+      std::chrono::seconds(30));
+  REQUIRE(old_binding);
+
+  auto second_input = tokmon::builtin::create_secret_input_handle(
+      "vault-credential-new", std::chrono::seconds(30));
+  REQUIRE(second_input);
+  auto second_rotation = refract(lens, "secret.rotate", "tokmon.secret.rotate.v1",
+      tokmon::cbor::object({{"name", name}, {"purpose", purpose},
+                            {"input_handle", *second_input}}), host);
+  REQUIRE(second_rotation);
+  auto old_value = tokmon::builtin::resolve_secret_binding(
+      *old_binding, purpose, scope, target, generation, epoch);
+  REQUIRE(old_value);
+  REQUIRE(*old_value == "vault-credential-old");
+  std::fill(old_value->begin(), old_value->end(), '\0');
+
+  auto new_binding = tokmon::builtin::create_model_secret_binding(
+      name, environment_name, purpose, scope, target, generation, epoch,
+      std::chrono::seconds(30));
+  REQUIRE(new_binding);
+  auto new_value = tokmon::builtin::resolve_secret_binding(
+      *new_binding, purpose, scope, target, generation, epoch);
+  REQUIRE(new_value);
+  REQUIRE(*new_value == "vault-credential-new");
+  std::fill(new_value->begin(), new_value->end(), '\0');
+
+  const auto& metadata = host.drafts.back().payload;
+  REQUIRE(tokmon::cbor::find(metadata, "name")->as_string() == name);
+  REQUIRE(tokmon::cbor::find(metadata, "id") == nullptr);
+  const auto diagnostic = tokmon::cbor::diagnostic(metadata);
+  REQUIRE(diagnostic.find(credential_id) == std::string::npos);
+  REQUIRE(diagnostic.find("environment-credential") == std::string::npos);
+  REQUIRE(diagnostic.find("vault-credential-old") == std::string::npos);
+  REQUIRE(diagnostic.find("vault-credential-new") == std::string::npos);
 }
 
 TEST_CASE("Enso progressively discovers and loads a real bounded SKILL document") {

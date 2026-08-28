@@ -25,6 +25,26 @@
 namespace tokmon::desktop {
 namespace {
 
+void wipe_secret_field(tokmon::cbor::Value& value) {
+  auto* map = value.as_map();
+  if (!map) return;
+  const auto found = map->find("secret");
+  if (found == map->end()) return;
+  if (auto* secret = std::get_if<std::string>(&found->second.data))
+    std::fill(secret->begin(), secret->end(), '\0');
+}
+
+struct SecretRequestWiper {
+  tokmon::cbor::Value* queued{};
+  tokmon::cbor::Value* request{};
+  bool enabled{false};
+  ~SecretRequestWiper() {
+    if (!enabled) return;
+    if (queued) wipe_secret_field(*queued);
+    if (request) wipe_secret_field(*request);
+  }
+};
+
 class UiControllerImpl final : public UiController {
 public:
   UiControllerImpl(
@@ -1288,14 +1308,17 @@ private:
       handle->set_setting_provider_protocol(string_field("protocol"));
       handle->set_setting_provider_endpoint(string_field("endpoint"));
       handle->set_setting_provider_auth(string_field("auth"));
+      handle->set_setting_provider_secret_env(string_field("secret_env"));
       handle->set_setting_main_model(string_field("model"));
       handle->set_model_name(string_field("model"));
       const auto *thinking = tokmon::cbor::find(chosen, "thinking");
       handle->set_setting_provider_thinking(thinking && thinking->as_bool());
-      const auto *credential = tokmon::cbor::find(chosen, "credential_present");
-      handle->set_setting_provider_credential(
-          credential && credential->as_bool() ? "凭据已安全保存（输入可轮换）"
-                                              : "尚未配置 API Key");
+      const auto source = string_field("credential_source");
+      handle->set_setting_provider_credential(source == "vault"
+          ? "凭据已保存到系统保险库（输入可轮换）"
+          : source == "environment" ? "当前使用备用环境变量"
+          : source == "not-required" ? "当前配置无需 API Key"
+                                      : "尚未配置 API Key");
       handle->set_settings_status("模型配置已由后台服务验证并载入");
     });
   }
@@ -1735,6 +1758,8 @@ private:
           request.payload =
               tokmon::cbor::object({{"action", "lens.reconcile"}});
       }
+      SecretRequestWiper secret_wiper{
+          &command.payload, &request.payload, command.kind == "provider-secret"};
       const auto &request_endpoint =
           command.kind == "navigation-save" ? navigation_endpoint_ : endpoint_;
       tokmon::SnowClient client(request_endpoint);
@@ -1891,7 +1916,7 @@ private:
                 ? slint::SharedString("平台 YAML 已原子保存；后台校验中")
             : command.kind == "provider-secret"
                 ? slint::SharedString(
-                      "API Key 已写入系统凭据库；未进入 YAML/Photon/日志")
+                      "API Key 已更新，下次请求立即生效")
                 : slint::SharedString("默认模型平台已切换；后台校验中");
         (void)slint::invoke_from_event_loop([window, status] {
           if (auto locked = window.lock())

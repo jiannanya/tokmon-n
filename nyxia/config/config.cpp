@@ -186,7 +186,7 @@ Result<RuntimeProfile> parse_runtime_profile(const std::string_view text) {
 
 const std::set<std::string>& fixed_model_provider_fields() {
   static const std::set<std::string> fields{
-      "protocol", "endpoint", "model", "secret_ref", "secret_env", "auth", "enabled",
+      "protocol", "endpoint", "model", "secret_env", "auth", "enabled",
       "allow_anonymous", "stream", "thinking", "reasoning_effort", "max_output_tokens",
       "max_attempts", "retry_backoff_ms", "first_token_timeout_ms", "idle_timeout_ms",
       "request_parameters"};
@@ -199,6 +199,7 @@ Result<void> merge_model_request_parameter(
     const std::filesystem::path& source) {
   static const std::set<std::string> protected_fields{
       "api_key", "secret", "secret_value", "secret_binding", "secret_purpose",
+      "secret_ref",
       "authorization", "name", "protocol", "endpoint", "model", "messages",
       "contents", "tools", "prompt", "stream", "stream_options", "thinking",
       "reasoning_effort", "max_tokens", "max_output_tokens", "request_body", "fallbacks",
@@ -241,7 +242,7 @@ Result<void> parse_model_providers(RuntimeConfig& config, const cbor::Value& mod
     if (!std::regex_match(id, id_pattern) || !value.as_map())
       return tl::unexpected(make_error(ErrorCode::schema_mismatch,
           source.string() + ": invalid model provider id or definition: " + id));
-    for (const auto* key : {"protocol", "endpoint", "model", "secret_ref", "secret_env",
+    for (const auto* key : {"protocol", "endpoint", "model", "secret_env",
                             "auth", "reasoning_effort"})
       if (auto result = require_type<std::string>(value, key, "a string", source); !result)
         return result;
@@ -267,7 +268,6 @@ Result<void> parse_model_providers(RuntimeConfig& config, const cbor::Value& mod
     read_string("protocol", provider.protocol);
     read_string("endpoint", provider.endpoint);
     read_string("model", provider.model);
-    read_string("secret_ref", provider.secret_ref);
     read_string("secret_env", provider.secret_env);
     read_string("auth", provider.auth);
     read_string("reasoning_effort", provider.reasoning_effort);
@@ -322,21 +322,9 @@ Result<void> parse_model_providers(RuntimeConfig& config, const cbor::Value& mod
         provider.auth != "none")
       return tl::unexpected(make_error(ErrorCode::permission_denied,
           source.string() + ": anonymous remote providers must explicitly use auth: none"));
-    if (provider.auth != "none" && provider.protocol != "local" &&
-        !provider.allow_anonymous && provider.secret_ref.empty())
-      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
-          source.string() + ": secret_ref is required for provider " + id));
-    if (provider.protocol != "local" && provider.auth != "none" &&
-        provider.secret_ref != "model-provider/" + id)
-      return tl::unexpected(make_error(ErrorCode::permission_denied,
-          source.string() + ": provider SecretRef must be scoped to its own id"));
-    if (provider.secret_ref.find('\0') != std::string::npos || provider.secret_ref.size() > 240)
-      return tl::unexpected(make_error(ErrorCode::schema_mismatch,
-          source.string() + ": invalid SecretRef for provider " + id));
     static const std::regex environment_name("^[A-Z_][A-Z0-9_]{0,127}$");
     if (!provider.secret_env.empty() &&
-        (!std::regex_match(provider.secret_env, environment_name) ||
-         provider.secret_ref.empty()))
+        !std::regex_match(provider.secret_env, environment_name))
       return tl::unexpected(make_error(ErrorCode::schema_mismatch,
           source.string() + ": invalid secret_env for provider " + id));
     if (provider.max_output_tokens <= 0 || provider.max_output_tokens > 1'000'000 ||
@@ -879,7 +867,8 @@ Result<cbor::Value> resolve_model_provider_context(
   auto context = cbor::object({
       {"name", provider.name}, {"protocol", provider.protocol},
       {"endpoint", provider.endpoint}, {"model", provider.model},
-      {"auth", provider.auth}, {"allow_anonymous", provider.allow_anonymous},
+      {"secret_env", provider.secret_env}, {"auth", provider.auth},
+      {"allow_anonymous", provider.allow_anonymous},
       {"stream", provider.stream}, {"thinking", provider.thinking},
       {"reasoning_effort", normalized_effort},
       {"max_output_tokens", provider.max_output_tokens},
@@ -895,8 +884,6 @@ Result<cbor::Value> resolve_model_provider_context(
       {"effort", cbor::find(request, "effort")
           ? std::string(cbor::find(request, "effort")->as_string())
           : std::string("标准")}});
-  if (!provider.secret_ref.empty())
-    (*context.as_map())["secret_ref"] = provider.secret_ref;
   return context;
 }
 

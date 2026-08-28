@@ -765,7 +765,8 @@ int run_application(int argc, char **argv) {
       [&controller](
           const slint::SharedString &name, const slint::SharedString &protocol,
           const slint::SharedString &endpoint, const slint::SharedString &model,
-          const slint::SharedString &auth, bool thinking,
+          const slint::SharedString &auth, const slint::SharedString &secret_env,
+          bool thinking,
           const slint::SharedString &effort) {
         const auto effort_value = std::string(effort) == "低"     ? "low"
                                   : std::string(effort) == "标准" ? "medium"
@@ -777,6 +778,7 @@ int run_application(int argc, char **argv) {
                                   {"endpoint", std::string(endpoint)},
                                   {"model", std::string(model)},
                                   {"auth", std::string(auth)},
+                                  {"secret_env", std::string(secret_env)},
                                   {"thinking", thinking},
                                   {"default", true},
                                   {"reasoning_effort", effort_value},

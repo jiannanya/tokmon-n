@@ -65,7 +65,6 @@ models:
       protocol: openai-compatible
       endpoint: https://opencode.ai/zen/v1/chat/completions
       model: x-preview-f-free
-      secret_ref: model-provider/opencode
       secret_env: OPENCODE_API_KEY
       auth: bearer
       enabled: true
@@ -77,7 +76,7 @@ models:
       retry_backoff_ms: 5000
 ```
 
-没有写入 `api_key` 或 `secret` 字段。Windows 启动时按“进程环境 → 当前用户环境 → 本机环境”读取 `secret_env`，导入 Credential Manager 后仅使用 `secret_ref`。这样从较早启动的 Codex/Desktop 进程也能发现后来写入的本机 `OPENCODE_API_KEY`。
+没有写入 `api_key`、`secret` 或模型 `secret_ref` 字段。当前实现对每个新请求优先读取内部 ID `model-secret-library/opencode` 对应的 Credential Manager 记录，不存在时才读取 daemon 当前进程中的 `OPENCODE_API_KEY`；环境变量不会自动导入或覆盖保险库。Desktop/CLI 更新 Key 后下一次请求立即生效，外部修改系统环境变量仍需重启 daemon 才能改变其进程环境。
 
 模型拒绝 `medium` 推理强度并返回 HTTP 400 后，配置改为该模型支持的 `high`；Desktop 的中文“低/标准/高/最高”在提交前统一归一化为 `low/medium/high/max`。
 
@@ -254,7 +253,7 @@ YAML_PLAINTEXT_KEY_FIELD=False
 SECRET_ENV_REF=True
 ```
 
-模型轨迹中的 credential 显示为 `<redacted>`。配置和 provider 列表只公开 `secret_ref`、`secret_env` 名称与 `credential_present/ready`，不公开值。
+模型轨迹中的 credential 显示为 `<redacted>`。配置和 provider 列表只公开 `secret_env` 名称、`credential_present` 和 `credential_source`，不公开值或内部密钥 ID。
 
 ## 9. UI 证据
 

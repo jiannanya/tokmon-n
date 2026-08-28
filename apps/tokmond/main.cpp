@@ -256,80 +256,10 @@ tokmon::Result<void> update_project_navigation(const std::filesystem::path& file
   return publish_yaml(file, root, "desktop navigation");
 }
 
-std::string provider_secret_ref(const std::string_view id) {
-  return "model-provider/" + std::string(id);
-}
-
-std::optional<std::string> secret_environment_value(const std::string& name) {
-  if (name.empty()) return std::nullopt;
-  if (const auto* value = std::getenv(name.c_str()); value && *value != '\0')
-    return std::string(value);
-#if defined(_WIN32)
-  const auto wide_name = std::wstring(name.begin(), name.end());
-  const auto read_registry = [&wide_name](HKEY root, const wchar_t* path)
-      -> std::optional<std::string> {
-    DWORD type = 0;
-    DWORD bytes = 0;
-    if (RegGetValueW(root, path, wide_name.c_str(), RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ,
-                     &type, nullptr, &bytes) != ERROR_SUCCESS || bytes <= sizeof(wchar_t))
-      return std::nullopt;
-    std::wstring wide(bytes / sizeof(wchar_t), L'\0');
-    if (RegGetValueW(root, path, wide_name.c_str(), RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ,
-                     &type, wide.data(), &bytes) != ERROR_SUCCESS)
-      return std::nullopt;
-    while (!wide.empty() && wide.back() == L'\0') wide.pop_back();
-    if (wide.empty()) return std::nullopt;
-    const auto required = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide.data(),
-                                               static_cast<int>(wide.size()), nullptr, 0,
-                                               nullptr, nullptr);
-    if (required <= 0) return std::nullopt;
-    std::string value(static_cast<std::size_t>(required), '\0');
-    if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide.data(),
-                            static_cast<int>(wide.size()), value.data(), required,
-                            nullptr, nullptr) != required)
-      return std::nullopt;
-    return value;
-  };
-  if (auto value = read_registry(HKEY_CURRENT_USER, L"Environment")) return value;
-  return read_registry(HKEY_LOCAL_MACHINE,
-      L"SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment");
-#else
-  return std::nullopt;
-#endif
-}
-
-tokmon::Result<void> bootstrap_environment_credentials(
-    const tokmon::RuntimeConfig& config) {
-  for (const auto& [id, provider] : config.model_providers) {
-    (void)id;
-    if (provider.secret_env.empty() || provider.secret_ref.empty() || !provider.enabled)
-      continue;
-    auto secret = secret_environment_value(provider.secret_env);
-    if (!secret) continue;
-    bool unchanged = false;
-    auto existing = tokmon::builtin::keyring_read(provider.secret_ref);
-    if (existing) {
-      unchanged = existing->size() == secret->size();
-      unsigned difference = 0;
-      if (unchanged)
-        for (std::size_t index = 0; index < existing->size(); ++index)
-          difference |= static_cast<unsigned>(
-              static_cast<unsigned char>((*existing)[index]) ^
-              static_cast<unsigned char>((*secret)[index]));
-      unchanged = unchanged && difference == 0;
-      std::fill(existing->begin(), existing->end(), '\0');
-    } else if (existing.error().code != tokmon::ErrorCode::not_found) {
-      std::fill(secret->begin(), secret->end(), '\0');
-      return tl::unexpected(existing.error());
-    }
-    tokmon::Result<void> stored;
-    if (!unchanged)
-      stored = tokmon::builtin::keyring_write(
-          provider.secret_ref, "model-api", *secret);
-    std::fill(secret->begin(), secret->end(), '\0');
-    if (!stored) return tl::unexpected(stored.error());
-  }
-  return {};
+bool environment_secret_present(const std::string& name) {
+  if (name.empty()) return false;
+  const auto* value = std::getenv(name.c_str());
+  return value && *value != '\0';
 }
 
 tokmon::Result<void> update_project_model_provider(const std::filesystem::path& file,
@@ -339,27 +269,62 @@ tokmon::Result<void> update_project_model_provider(const std::filesystem::path& 
     return field ? std::string(field->as_string(fallback)) : std::string(fallback);
   };
   const auto name = read("name");
-  const auto protocol = read("protocol", "openai-compatible");
-  const auto endpoint = read("endpoint");
-  const auto model = read("model");
-  const auto auth = read("auth", "protocol-default");
   static const std::regex id_pattern("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$");
+  static const std::regex environment_pattern("^[A-Z_][A-Z0-9_]*$");
   static const std::set<std::string> protocols{
       "openai-compatible", "anthropic", "gemini"};
   static const std::set<std::string> auth_modes{
       "protocol-default", "bearer", "x-api-key", "x-goog-api-key", "none"};
-  const bool allow_anonymous = tokmon::cbor::find(payload, "allow_anonymous") &&
-      tokmon::cbor::find(payload, "allow_anonymous")->as_bool();
+  if (!std::regex_match(name, id_pattern) || name == "local")
+    return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::invalid_argument,
+        "model configuration requires a valid non-local name"));
+  auto loaded = editable_yaml(file);
+  if (!loaded) return tl::unexpected(loaded.error());
+  auto root = std::move(*loaded);
+  auto& models = map_at(root, "models");
+  auto& goes_value = models["goes"];
+  if (!goes_value.is_map()) goes_value = tokmon::cbor::Value::Map{};
+  auto& goes = *goes_value.as_map();
+  auto& entry_value = goes[name];
+  if (!entry_value.is_map()) entry_value = tokmon::cbor::Value::Map{};
+  auto& entry = *entry_value.as_map();
+  const auto current_string = [&entry](const char* key, const std::string_view fallback = {}) {
+    const auto found = entry.find(key);
+    return found == entry.end() ? std::string(fallback)
+                                : std::string(found->second.as_string(fallback));
+  };
+  const auto current_bool = [&entry](const char* key, const bool fallback) {
+    const auto found = entry.find(key);
+    return found == entry.end() ? fallback : found->second.as_bool(fallback);
+  };
+  const auto current_integer = [&entry](const char* key, const std::int64_t fallback) {
+    const auto found = entry.find(key);
+    return found == entry.end() ? fallback : found->second.as_integer(fallback);
+  };
+  const auto protocol = read("protocol", current_string("protocol", "openai-compatible"));
+  const auto endpoint = read("endpoint", current_string("endpoint"));
+  const auto model = read("model", current_string("model"));
+  const auto auth = read("auth", current_string("auth", "protocol-default"));
+  const auto secret_env = read("secret_env", current_string("secret_env"));
+  const bool allow_anonymous = tokmon::cbor::find(payload, "allow_anonymous")
+      ? tokmon::cbor::find(payload, "allow_anonymous")->as_bool()
+      : current_bool("allow_anonymous", false);
   const auto max_output_tokens = tokmon::cbor::find(payload, "max_output_tokens")
-      ? tokmon::cbor::find(payload, "max_output_tokens")->as_integer(4096) : 4096;
+      ? tokmon::cbor::find(payload, "max_output_tokens")->as_integer(4096)
+      : current_integer("max_output_tokens", 4096);
   const auto max_attempts = tokmon::cbor::find(payload, "max_attempts")
-      ? tokmon::cbor::find(payload, "max_attempts")->as_integer(6) : 6;
+      ? tokmon::cbor::find(payload, "max_attempts")->as_integer(6)
+      : current_integer("max_attempts", 6);
   const auto retry_backoff_ms = tokmon::cbor::find(payload, "retry_backoff_ms")
-      ? tokmon::cbor::find(payload, "retry_backoff_ms")->as_integer(5'000) : 5'000;
-  if (!std::regex_match(name, id_pattern) || name == "local" || !protocols.contains(protocol) ||
+      ? tokmon::cbor::find(payload, "retry_backoff_ms")->as_integer(5'000)
+      : current_integer("retry_backoff_ms", 5'000);
+  if (!protocols.contains(protocol) ||
       !auth_modes.contains(auth) || endpoint.empty() || model.empty())
     return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::invalid_argument,
         "model configuration requires a valid name, protocol, HTTPS endpoint, model and auth mode"));
+  if (!secret_env.empty() && !std::regex_match(secret_env, environment_pattern))
+    return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::invalid_argument,
+        "secret_env must be an uppercase environment variable name"));
   if (!endpoint.starts_with("https://") && !loopback_endpoint(endpoint))
     return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::permission_denied,
         "provider endpoint must use HTTPS or loopback HTTP"));
@@ -371,31 +336,30 @@ tokmon::Result<void> update_project_model_provider(const std::filesystem::path& 
       retry_backoff_ms < 0 || retry_backoff_ms > 60'000)
     return tl::unexpected(tokmon::make_error(tokmon::ErrorCode::invalid_argument,
         "provider retry/token limits are outside the allowed range"));
-  auto loaded = editable_yaml(file);
-  if (!loaded) return tl::unexpected(loaded.error());
-  auto root = std::move(*loaded);
-  auto& models = map_at(root, "models");
-  auto& goes_value = models["goes"];
-  if (!goes_value.is_map()) goes_value = tokmon::cbor::Value::Map{};
-  auto& goes = *goes_value.as_map();
-  auto& entry_value = goes[name];
-  if (!entry_value.is_map()) entry_value = tokmon::cbor::Value::Map{};
-  auto& entry = *entry_value.as_map();
     entry["protocol"] = protocol;
     entry["endpoint"] = endpoint;
     entry["model"] = model;
-    entry["secret_ref"] = provider_secret_ref(name);
     entry["auth"] = auth;
-    entry["enabled"] = !tokmon::cbor::find(payload, "enabled") ||
-        tokmon::cbor::find(payload, "enabled")->as_bool();
+    if (const auto* clear = tokmon::cbor::find(payload, "clear_secret_env");
+        clear && clear->as_bool())
+      entry.erase("secret_env");
+    else if (tokmon::cbor::find(payload, "secret_env")) {
+      if (secret_env.empty()) entry.erase("secret_env");
+      else entry["secret_env"] = secret_env;
+    }
+    entry["enabled"] = tokmon::cbor::find(payload, "enabled")
+        ? tokmon::cbor::find(payload, "enabled")->as_bool()
+        : current_bool("enabled", true);
     entry["allow_anonymous"] = allow_anonymous;
     if (const auto* stream = tokmon::cbor::find(payload, "stream"))
       entry["stream"] = stream->as_bool();
     else if (!entry.contains("stream"))
       entry["stream"] = true;
-    entry["thinking"] = tokmon::cbor::find(payload, "thinking") &&
-        tokmon::cbor::find(payload, "thinking")->as_bool();
-    entry["reasoning_effort"] = read("reasoning_effort");
+    entry["thinking"] = tokmon::cbor::find(payload, "thinking")
+        ? tokmon::cbor::find(payload, "thinking")->as_bool()
+        : current_bool("thinking", false);
+    entry["reasoning_effort"] = read(
+        "reasoning_effort", current_string("reasoning_effort"));
     entry["max_output_tokens"] = max_output_tokens;
     entry["max_attempts"] = max_attempts;
     entry["retry_backoff_ms"] = retry_backoff_ms;
@@ -414,7 +378,7 @@ tokmon::Result<void> select_project_model_provider(const std::filesystem::path& 
 }
 
 tokmon::cbor::Value provider_value(const tokmon::ModelProviderConfig& provider,
-                                   const bool credential_present) {
+                                   const std::string_view credential_source) {
   tokmon::cbor::Value::Array request_parameter_keys;
   if (const auto* parameters = provider.request_parameters.as_map())
     for (const auto& [key, _] : *parameters) request_parameter_keys.emplace_back(key);
@@ -431,9 +395,9 @@ tokmon::cbor::Value provider_value(const tokmon::ModelProviderConfig& provider,
       {"first_token_timeout_ms", provider.first_token_timeout_ms},
       {"idle_timeout_ms", provider.idle_timeout_ms},
       {"request_parameter_keys", std::move(request_parameter_keys)},
-      {"credential_present", credential_present},
-      {"credential_source", provider.secret_env.empty() ? "operating-system-vault"
-                                                          : "environment-to-vault"}});
+      {"secret_env", provider.secret_env},
+      {"credential_present", credential_source != "missing"},
+      {"credential_source", std::string(credential_source)}});
 }
 
 tokmon::Result<tokmon::cbor::Value> resolved_model_context(
@@ -929,9 +893,6 @@ int tokmon::app::daemon_main(int argc, char** argv) {
     if (auto opened = runtime->open(workspace, "tokmond"); !opened) {
       std::cerr << opened.error().describe() << '\n'; return 2;
     }
-    if (auto imported = bootstrap_environment_credentials(runtime->config()); !imported) {
-      std::cerr << imported.error().describe() << '\n'; return 2;
-    }
     return runtime->verify() ? 0 : 1;
   }
 
@@ -955,9 +916,6 @@ int tokmon::app::daemon_main(int argc, char** argv) {
   };
 
   std::mutex runtime_mutex;
-  std::mutex credential_mutex;
-  std::condition_variable_any credential_condition;
-  std::optional<tokmon::RuntimeConfig> pending_credential_config;
   std::mutex request_mutex;
   std::set<std::uint64_t> cancelled_requests;
   std::unordered_map<std::uint64_t, tokmon::SnowMessage> completed_requests;
@@ -1030,7 +988,7 @@ int tokmon::app::daemon_main(int argc, char** argv) {
                                         &startup_state, &startup_error,
                                         &boot_mutex, &request_validation,
                                         &startup_payload, &early_paths,
-                                        &boot_condition, &credential_condition,
+                                        &boot_condition,
                                         &stream_mutex, &live_streams](
       const tokmon::SnowMessage& request,
       const tokmon::SnowServer::StreamSender& send_stream) -> tokmon::SnowMessage {
@@ -1173,7 +1131,6 @@ int tokmon::app::daemon_main(int argc, char** argv) {
     if (early_action == "daemon.shutdown") {
       running.store(false, std::memory_order_release);
       boot_condition.notify_all();
-      credential_condition.notify_all();
       return tokmon::SnowMessage{.kind = tokmon::SnowMessageKind::intent_result,
           .request_id = request.request_id, .cursor = request.cursor,
           .payload = tokmon::cbor::object({{"stopping", true},
@@ -1284,9 +1241,13 @@ int tokmon::app::daemon_main(int argc, char** argv) {
       std::ranges::sort(ids);
       for (const auto& id : ids) {
         const auto& provider = runtime->config().model_providers.at(id);
-        providers.push_back(provider_value(provider,
-            provider.auth == "none" || provider.allow_anonymous ||
-            credentials.contains(provider.secret_ref)));
+        const auto source = provider.auth == "none" || provider.allow_anonymous
+            ? std::string("not-required")
+            : credentials.contains(tokmon::builtin::model_credential_id(provider.name))
+                ? std::string("vault")
+                : environment_secret_present(provider.secret_env)
+                    ? std::string("environment") : std::string("missing");
+        providers.push_back(provider_value(provider, source));
       }
       return remember(tokmon::SnowMessage{.kind = tokmon::SnowMessageKind::intent_result,
           .request_id = request.request_id, .cursor = request.cursor,
@@ -1330,23 +1291,39 @@ int tokmon::app::daemon_main(int argc, char** argv) {
       if (found == runtime->config().model_providers.end() || name == "local")
         return snow_error(request, tokmon::make_error(tokmon::ErrorCode::not_found,
                                                        "model provider is not configured"));
-      tokmon::Result<void> changed;
+      tokmon::Result<tokmon::RefractionResult> changed;
       if (action == "model.provider.secret.set") {
         const auto* secret = tokmon::cbor::find(request.payload, "secret");
         if (!secret || secret->as_string().empty())
           return snow_error(request, tokmon::make_error(tokmon::ErrorCode::invalid_argument,
                                                          "API secret is required"));
-        changed = tokmon::builtin::keyring_write(found->second.secret_ref, "model-api",
-                                                  secret->as_string());
+        auto input_handle = tokmon::builtin::create_secret_input_handle(
+            secret->as_string(), std::chrono::seconds(30));
+        if (!input_handle) return snow_error(request, input_handle.error());
+        changed = invoke_lens(*runtime,
+            "credential-ray-" + std::to_string(request.request_id),
+            "secret.rotate", "tokmon.secret.rotate.v1", "org.tokmon.lens.cista",
+            tokmon::cbor::object({{"name", name}, {"purpose", "model-api"},
+                                  {"input_handle", *input_handle}}),
+            tokmon::RiskClass::reversible);
+        tokmon::builtin::revoke_secret_input_handle(*input_handle);
       } else {
-        changed = tokmon::builtin::keyring_delete(found->second.secret_ref);
+        changed = invoke_lens(*runtime,
+            "credential-ray-" + std::to_string(request.request_id),
+            "secret.delete", "tokmon.secret.delete.v1", "org.tokmon.lens.cista",
+            tokmon::cbor::object({{"name", name}}),
+            tokmon::RiskClass::reversible);
       }
       if (!changed) return snow_error(request, changed.error());
+      const auto source = action.ends_with(".set") ? std::string("vault")
+          : environment_secret_present(found->second.secret_env)
+              ? std::string("environment") : std::string("missing");
       return remember(tokmon::SnowMessage{.kind = tokmon::SnowMessageKind::intent_result,
           .request_id = request.request_id, .cursor = request.cursor,
           .payload = tokmon::cbor::object({
-              {"name", name}, {"credential_present", action.ends_with(".set")},
-              {"storage", "operating-system-credential-manager"}})});
+              {"name", name}, {"credential_present", source != "missing"},
+              {"credential_source", source}, {"secret_env", found->second.secret_env},
+              {"storage", std::string(tokmon::builtin::keyring_backend())}})});
     }
     if (action == "command.execute") {
       auto command_payload = request.payload;
@@ -1575,23 +1552,6 @@ int tokmon::app::daemon_main(int argc, char** argv) {
   }
   tokmon::log_info("Snow endpoint listening at {}", endpoint.string());
 
-  std::jthread credential_worker([&](const std::stop_token stop) {
-    while (!stop.stop_requested()) {
-      std::optional<tokmon::RuntimeConfig> config;
-      {
-        std::unique_lock lock(credential_mutex);
-        credential_condition.wait(lock, stop,
-            [&] { return pending_credential_config.has_value(); });
-        if (stop.stop_requested()) return;
-        config = std::move(pending_credential_config);
-        pending_credential_config.reset();
-      }
-      if (auto imported = bootstrap_environment_credentials(*config); !imported)
-        tokmon::log_error("asynchronous credential import failed: {}",
-                          imported.error().describe());
-    }
-  });
-
   std::jthread configuration_worker([&](const std::stop_token stop) {
     bool runtime_opened = false;
     while (!stop.stop_requested()) {
@@ -1622,11 +1582,6 @@ int tokmon::app::daemon_main(int argc, char** argv) {
           // the runtime so a corrected configuration can be retried cleanly.
           runtime = std::make_unique<tokmon::TokmonRuntime>();
           runtime->store().subscribe(stream_observer);
-        }
-        if (checked) {
-          std::scoped_lock credential_lock(credential_mutex);
-          pending_credential_config = runtime->config();
-          credential_condition.notify_all();
         }
       }
 
@@ -1708,12 +1663,9 @@ int tokmon::app::daemon_main(int argc, char** argv) {
     std::this_thread::sleep_for(std::chrono::milliseconds(250));
   }
   configuration_worker.request_stop();
-  credential_worker.request_stop();
   boot_condition.notify_all();
-  credential_condition.notify_all();
   snow.stop();
   configuration_worker.join();
-  credential_worker.join();
   runtime->stop();
   return 0;
 }

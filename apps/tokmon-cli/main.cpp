@@ -149,7 +149,8 @@ Usage:
   tokmon config paths            Print resolved .tokmon directories
   tokmon model list              List configured platforms (credentials redacted)
   tokmon model configure <name> --protocol <wire> --endpoint <url> --model <model>
-                                [--auth <mode>] [--default] [--thinking] [--no-stream]
+                                [--auth <mode>] [--secret-env <NAME>|--no-secret-env]
+                                [--default] [--thinking] [--no-stream]
   tokmon model use <name>        Select the project default configuration
   tokmon model secret set <name> Read a key with terminal echo disabled
   tokmon model secret delete <name>
@@ -330,7 +331,7 @@ void print_providers(const tokmon::SnowMessage& response, std::ostream& output) 
   const auto* providers = tokmon::cbor::find(response.payload, "providers");
   const auto* selected = tokmon::cbor::find(response.payload, "default");
   if (!providers || !providers->as_array()) return;
-  output << "DEFAULT\tNAME\tPROTOCOL\tMODEL\tCREDENTIAL\tENDPOINT\n";
+  output << "DEFAULT\tNAME\tPROTOCOL\tMODEL\tCREDENTIAL\tSOURCE\tSECRET_ENV\tENDPOINT\n";
   for (const auto& provider : *providers->as_array()) {
     const auto text = [&provider](const char* key) {
       const auto* field = tokmon::cbor::find(provider, key);
@@ -341,6 +342,7 @@ void print_providers(const tokmon::SnowMessage& response, std::ostream& output) 
     output << (selected && selected->as_string() == name ? "*" : "") << '\t'
            << name << '\t' << text("protocol") << '\t' << text("model") << '\t'
            << (credential && credential->as_bool() ? "ready" : "missing") << '\t'
+           << text("credential_source") << '\t' << text("secret_env") << '\t'
            << text("endpoint") << '\n';
   }
 }
@@ -533,8 +535,29 @@ int tokmon::app::cli_main(int argc, char** argv) {
   if (arguments[0] == "model" && arguments.size() > 2 && arguments[1] == "configure") {
     const auto endpoint_option = option_value(arguments, "--endpoint");
     const auto model_option = option_value(arguments, "--model");
+    const auto secret_environment = option_value(arguments, "--secret-env");
+    const auto clear_secret_environment = has_option(arguments, "--no-secret-env");
+    if (secret_environment && clear_secret_environment) {
+      std::cerr << "--secret-env and --no-secret-env are mutually exclusive\n"; return 2;
+    }
     if (!endpoint_option || !model_option) {
-      std::cerr << "model configure requires --endpoint and --model\n"; return 2;
+      if (endpoint_option || model_option || (!secret_environment && !clear_secret_environment)) {
+        std::cerr << "model configure requires --endpoint and --model, except for a standalone "
+                     "--secret-env/--no-secret-env update\n";
+        return 2;
+      }
+      tokmon::cbor::Value environment_payload = tokmon::cbor::object({
+          {"action", "model.provider.configure"}, {"name", arguments[2]}});
+      if (secret_environment)
+        (*environment_payload.as_map())["secret_env"] = *secret_environment;
+      if (clear_secret_environment)
+        (*environment_payload.as_map())["clear_secret_env"] = true;
+      auto response = intent(client, std::move(environment_payload));
+      if (!response) { print_error(response.error()); return 1; }
+      if (output_format == OutputFormat::human)
+        *output << "updated secret_env for model profile " << arguments[2] << '\n';
+      else write_value(*output, response->payload, output_format);
+      return 0;
     }
     tokmon::cbor::Value payload = tokmon::cbor::object({
         {"action", "model.provider.configure"}, {"name", arguments[2]},
@@ -546,6 +569,8 @@ int tokmon::app::cli_main(int argc, char** argv) {
         {"stream", !has_option(arguments, "--no-stream")},
         {"thinking", has_option(arguments, "--thinking")},
         {"reasoning_effort", option_value(arguments, "--reasoning-effort").value_or("")}});
+    if (secret_environment) (*payload.as_map())["secret_env"] = *secret_environment;
+    if (clear_secret_environment) (*payload.as_map())["clear_secret_env"] = true;
     const auto integer_option = [&arguments, &payload](const char* option, const char* field,
                                                        const std::int64_t fallback) -> bool {
       const auto value = option_value(arguments, option);
@@ -589,10 +614,19 @@ int tokmon::app::cli_main(int argc, char** argv) {
     auto response = intent(client, std::move(payload));
     std::fill(secret_value.begin(), secret_value.end(), '\0');
     if (!response) { print_error(response.error()); return 1; }
-    if (output_format == OutputFormat::human)
-      *output << (arguments[2] == "set" ? "credential stored in the operating-system vault\n"
-                                        : "credential deleted\n");
-    else write_value(*output, response->payload, output_format);
+    if (output_format == OutputFormat::human) {
+      if (arguments[2] == "set") {
+        *output << "API Key updated; the next request will use it immediately\n";
+      } else {
+        const auto* source = tokmon::cbor::find(response->payload, "credential_source");
+        const auto* environment = tokmon::cbor::find(response->payload, "secret_env");
+        if (source && source->as_string() == "environment")
+          *output << "vault credential deleted; authentication still uses "
+                  << (environment ? environment->as_string() : std::string_view{}) << '\n';
+        else
+          *output << "vault credential deleted; no credential source remains\n";
+      }
+    } else write_value(*output, response->payload, output_format);
     return 0;
   }
   if (arguments[0] == "model" && arguments.size() > 2 && arguments[1] == "test") {

@@ -2398,7 +2398,7 @@ models:
       protocol: openai-compatible
       endpoint: https://api.deepseek.com/chat/completions
       model: deepseek-chat
-      secret_ref: model-provider/deepseek
+      secret_env: DEEPSEEK_API_KEY
       auth: bearer
       enabled: true
       thinking: false
@@ -2412,7 +2412,7 @@ ui:
   max_terminal_buffer_bytes: 8388608
 ```
 
-`models.default` 必须指向 `models.goes` 中存在且启用的配置名称。协议可为 `local`、`openai-compatible`、`anthropic` 或 `gemini`；远端 endpoint 必须使用 HTTPS（loopback 可用 HTTP），凭据只通过严格匹配 `model-provider/<name>` 的 `SecretRef` 进入 Cista/系统凭据库。`secret_env` 只允许首次引导凭据库，环境变量值不会进入 YAML、Photon、Act、日志或进程参数。配置名称通过内部 `name` 字段传播；动态请求参数 `provider` 原样进入上游 HTTP body，二者不复用字段。
+`models.default` 必须指向 `models.goes` 中存在且启用的配置名称。协议可为 `local`、`openai-compatible`、`anthropic` 或 `gemini`；远端 endpoint 必须使用 HTTPS（loopback 可用 HTTP）。Cista 从配置名称推导内部 ID `model-secret-library/<name>`：每个新请求优先读取系统保险库，不存在时读取 daemon 当前进程中的可选 `secret_env`，但不会把环境变量导入或反向覆盖保险库。用户配置不接受模型 `secret_ref`。配置名称通过内部 `name` 字段传播；动态请求参数 `provider` 原样进入上游 HTTP body，二者不复用字段。
 
 CLI 与 Desktop 使用同一个已折叠 `RuntimeConfig`，没有独立的硬编码模型选择。`tokmon-desktop` 通过 Snow RPC 读取配置列表和 `models.default`；设置页的“保存平台配置”和“设为默认”分别调用 `model.provider.configure`、`model.provider.use`，由 daemon 原子更新项目级 `.tokmon/config.yaml`、重新加载配置，再把选定 `name`/model 绑定到 Rhea 的 `model.call` Act。每次新建会话重新应用 daemon 返回的默认配置名称，不继承旧 Ray 的临时选择。
 

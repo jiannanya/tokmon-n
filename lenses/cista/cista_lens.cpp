@@ -46,7 +46,10 @@ Result<void> CistaLens::view(const OpticalInput& photons, WavefrontBuilder& surf
   for (const auto& photon : photons.photons()) {
     if (photon.kind != "secret.ref-observed" && photon.kind != "secret.created" &&
         photon.kind != "secret.rotated" && photon.kind != "secret.deleted") continue;
-    const auto id = field(photon.payload, "id", field(photon.payload, "ref"));
+    const auto name = field(photon.payload, "name");
+    const auto id = name.empty()
+        ? field(photon.payload, "id")
+        : model_credential_id(name);
     if (id.empty()) continue;
     if (photon.kind == "secret.deleted") { references.erase(id); continue; }
     references[id] = cbor::object({{"backend", backend}, {"id", id},
@@ -92,30 +95,39 @@ Result<RefractionResult> CistaLens::refract(const PhotonWindow&, const Act& act,
                 cbor::object({{"items", std::move(items)}}));
   }
 
-  const auto id = field(act.parameters, "id", field(act.parameters, "secret_ref"));
+  const auto model_name = field(act.parameters, "name");
+  const auto id = model_name.empty()
+      ? field(act.parameters, "id")
+      : model_credential_id(model_name);
   if (id.empty())
     return tl::unexpected(make_error(ErrorCode::schema_mismatch,
-                                     "secret operation requires id/secret_ref"));
+                                     "secret operation requires name or id"));
   if (act.kind == "secret.create" || act.kind == "secret.rotate") {
     const auto purpose = field(act.parameters, "purpose");
-    const auto* supplied = cbor::find(act.parameters, "value");
-    if (purpose.empty() || !supplied || !std::holds_alternative<std::string>(supplied->data))
+    const auto input_handle = field(act.parameters, "input_handle");
+    if (purpose.empty() || input_handle.empty())
       return tl::unexpected(make_error(ErrorCode::schema_mismatch,
-                                       "secret write requires purpose and string value"));
-    WipedText value{std::string(supplied->as_string())};
+                                       "secret write requires purpose and input_handle"));
+    auto supplied = consume_secret_input_handle(input_handle);
+    if (!supplied) return tl::unexpected(supplied.error());
+    WipedText value{std::move(*supplied)};
     if (auto stored = keyring_write(id, purpose, value.value); !stored)
       return tl::unexpected(stored.error());
     const auto rotated = now_ms();
+    auto metadata = cbor::object({{"backend", backend}, {"purpose", purpose},
+        {"last_rotated_ms", rotated}, {"available", true}, {"plaintext", false}});
+    (*metadata.as_map())[model_name.empty() ? "id" : "name"] =
+        model_name.empty() ? id : model_name;
     return emit(beam, act.kind == "secret.create" ? "secret.created" : "secret.rotated",
-        "tokmon.secret.metadata.v1", cbor::object({{"backend", backend},
-          {"id", id}, {"purpose", purpose}, {"last_rotated_ms", rotated},
-          {"available", true}, {"plaintext", false}}));
+                "tokmon.secret.metadata.v1", std::move(metadata));
   }
   if (act.kind == "secret.delete") {
     if (auto removed = keyring_delete(id); !removed) return tl::unexpected(removed.error());
+    auto metadata = cbor::object({{"backend", backend}, {"plaintext", false}});
+    (*metadata.as_map())[model_name.empty() ? "id" : "name"] =
+        model_name.empty() ? id : model_name;
     return emit(beam, "secret.deleted", "tokmon.secret.metadata.v1",
-                cbor::object({{"backend", backend}, {"id", id},
-                              {"plaintext", false}}));
+                std::move(metadata));
   }
 
   const auto purpose = field(act.parameters, "purpose");

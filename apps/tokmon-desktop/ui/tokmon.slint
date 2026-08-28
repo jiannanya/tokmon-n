@@ -248,6 +248,7 @@ export component MainWindow inherits Window {
     in-out property <string> setting-provider-endpoint;
     in-out property <string> setting-provider-auth: "bearer";
     in-out property <string> setting-provider-secret;
+    in-out property <string> setting-provider-secret-env;
     in-out property <string> setting-provider-credential;
     in-out property <string> setting-main-model;
     in-out property <string> setting-reasoning: "高";
@@ -360,7 +361,7 @@ export component MainWindow inherits Window {
     callback reconcile();
     callback save-settings();
     callback reset-settings();
-    callback configure-provider(string, string, string, string, string, bool, string);
+    callback configure-provider(string, string, string, string, string, string, bool, string);
     callback store-provider-secret(string, string);
     callback test-provider(string);
     callback drag-window();
@@ -771,6 +772,7 @@ export component MainWindow inherits Window {
         setting-provider-endpoint <=> root.setting-provider-endpoint;
         setting-provider-protocol <=> root.setting-provider-protocol;
         setting-provider-secret <=> root.setting-provider-secret;
+        setting-provider-secret-env <=> root.setting-provider-secret-env;
         setting-provider-thinking <=> root.setting-provider-thinking;
         setting-quiet-hours <=> root.setting-quiet-hours;
         setting-reasoning <=> root.setting-reasoning;
@@ -782,6 +784,9 @@ export component MainWindow inherits Window {
         accent-name(i) => { root.accent-name(i) }
         approval-selected => { root.approval-selected() }
         cancel-settings => { root.cancel-settings(); }
+        configure-provider(name, protocol, endpoint, model, auth, secret-env, thinking, effort) => {
+            root.configure-provider(name, protocol, endpoint, model, auth, secret-env, thinking, effort);
+        }
         choose-attachment(dir) => { root.choose-attachment(dir) }
         effort-selected => { root.effort-selected() }
         reset-settings => { root.reset-settings(); }

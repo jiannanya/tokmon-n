@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <map>
@@ -34,8 +35,15 @@ struct Binding {
   ~Binding() { std::fill(value.begin(), value.end(), '\0'); }
 };
 
+struct SecretInput {
+  std::string value;
+  std::chrono::steady_clock::time_point expires;
+  ~SecretInput() { std::fill(value.begin(), value.end(), '\0'); }
+};
+
 std::mutex binding_mutex;
 std::map<std::string, Binding, std::less<>> bindings;
+std::map<std::string, SecretInput, std::less<>> secret_inputs;
 
 Result<void> validate_secret_input(const std::string_view id,
                                    const std::string_view purpose = {}) {
@@ -166,6 +174,10 @@ bool keyring_supported() noexcept {
 #else
   return false;
 #endif
+}
+
+std::string model_credential_id(const std::string_view configuration_name) {
+  return "model-secret-library/" + std::string(configuration_name);
 }
 
 Result<void> keyring_write(const std::string_view id, const std::string_view purpose,
@@ -462,6 +474,45 @@ Result<std::vector<SecretMetadata>> keyring_list() {
 #endif
 }
 
+Result<std::string> create_secret_input_handle(
+    const std::string_view value, const std::chrono::milliseconds lifetime) {
+  if (auto checked = validate_secret_value(value); !checked)
+    return tl::unexpected(checked.error());
+  if (lifetime <= std::chrono::milliseconds::zero() ||
+      lifetime > std::chrono::seconds(30))
+    return tl::unexpected(make_error(ErrorCode::invalid_argument,
+                                     "secret input lifetime is invalid"));
+  const auto now = std::chrono::steady_clock::now();
+  const auto handle = make_id("secret-input");
+  std::scoped_lock lock(binding_mutex);
+  std::erase_if(secret_inputs,
+                [now](const auto& item) { return item.second.expires <= now; });
+  secret_inputs.emplace(handle, SecretInput{std::string(value), now + lifetime});
+  return handle;
+}
+
+Result<std::string> consume_secret_input_handle(const std::string_view handle) {
+  std::scoped_lock lock(binding_mutex);
+  const auto found = secret_inputs.find(handle);
+  if (found == secret_inputs.end())
+    return tl::unexpected(make_error(ErrorCode::not_found,
+                                     "secret input is unavailable or already consumed"));
+  if (found->second.expires <= std::chrono::steady_clock::now()) {
+    secret_inputs.erase(found);
+    return tl::unexpected(make_error(ErrorCode::not_found,
+                                     "secret input expired before it was consumed"));
+  }
+  auto value = std::move(found->second.value);
+  secret_inputs.erase(found);
+  return value;
+}
+
+void revoke_secret_input_handle(const std::string_view handle) noexcept {
+  std::scoped_lock lock(binding_mutex);
+  if (const auto found = secret_inputs.find(handle); found != secret_inputs.end())
+    secret_inputs.erase(found);
+}
+
 Result<std::string> create_secret_binding(const std::string_view secret_id,
     const std::string_view purpose, const std::string_view act_hash,
     const std::string_view target, const GenerationId generation, const MountEpoch epoch,
@@ -473,6 +524,45 @@ Result<std::string> create_secret_binding(const std::string_view secret_id,
                                      "invalid secret binding scope"));
   auto value = keyring_read(secret_id);
   if (!value) return tl::unexpected(value.error());
+  auto id = make_id("secret-binding");
+  std::scoped_lock lock(binding_mutex);
+  const auto now = std::chrono::steady_clock::now();
+  std::erase_if(bindings, [now](const auto& item) { return item.second.expires <= now; });
+  bindings.emplace(id, Binding{std::move(*value), std::string(purpose),
+      std::string(act_hash), std::string(target), generation, epoch, now + lifetime});
+  return id;
+}
+
+Result<std::string> create_model_secret_binding(
+    const std::string_view configuration_name,
+    const std::string_view fallback_environment,
+    const std::string_view purpose, const std::string_view act_hash,
+    const std::string_view target, const GenerationId generation,
+    const MountEpoch epoch, const std::chrono::milliseconds lifetime) {
+  if (configuration_name.empty())
+    return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                     "model configuration name is required for a secret binding"));
+  const auto credential_id = model_credential_id(configuration_name);
+  auto value = keyring_read(credential_id);
+  if (!value && value.error().code == ErrorCode::not_found &&
+      !fallback_environment.empty()) {
+    const auto environment_name = std::string(fallback_environment);
+    if (const auto* environment = std::getenv(environment_name.c_str());
+        environment && *environment != '\0')
+      value = std::string(environment);
+  }
+  if (!value && value.error().code == ErrorCode::not_found)
+    return tl::unexpected(make_error(ErrorCode::not_found,
+        "model API credential is not configured for " +
+        std::string(configuration_name)));
+  if (!value) return tl::unexpected(value.error());
+  if (purpose.empty() || act_hash.size() != 64u || target.empty() || generation == 0 ||
+      epoch == 0 || lifetime <= std::chrono::milliseconds::zero() ||
+      lifetime > std::chrono::minutes(5)) {
+    std::fill(value->begin(), value->end(), '\0');
+    return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                     "invalid model secret binding scope"));
+  }
   auto id = make_id("secret-binding");
   std::scoped_lock lock(binding_mutex);
   const auto now = std::chrono::steady_clock::now();
