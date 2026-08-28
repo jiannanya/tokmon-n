@@ -298,7 +298,7 @@ export component SettingsOverlay inherits Rectangle {
                                     }
                                     RowShell {
                                         label: "主模型";
-                                        SelectBox {
+                                        main-model-select := SelectBox {
                                             value: root.setting-main-model == "" ? "选择模型" : root.setting-main-model;
                                             options: root.agent-options;
                                             box-width: 237px;

@@ -1,3 +1,4 @@
+import { ScrollView } from "std-widgets.slint";
 import { NavigationItem, TimelineItem, TraceEvent, ChatBlock } from "tokmon-models.slint";
 import { Palette, Icons } from "tokmon-theme.slint";
 
@@ -199,8 +200,8 @@ export component SelectBox inherits Rectangle {
     in property <bool> drop-up: false;
     in property <bool> mono: false;
     in property <length> box-width: 132px;
+    out property <bool> popup-shown;
     callback selected(int, string);
-    property <bool> open: false;
     width: self.box-width;
     height: 31.33px;
     border-radius: 12px;
@@ -225,33 +226,47 @@ export component SelectBox inherits Rectangle {
         y: (parent.height - 6px) / 2;
     }
     TouchArea {
-        clicked => { parent.open = !parent.open }
+        clicked => { list.show(); }
         mouse-cursor: pointer;
     }
-    if self.open : Rectangle {
+    // A real popup layer: it floats above the rows that follow this control,
+    // which would otherwise cover the dropdown and swallow its option clicks.
+    list := PopupWindow {
         x: 0px;
-        y: parent.drop-up ? -self.height - 6px : parent.height + 6px;
-        width: Math.max(parent.width, 190px);
-        height: Math.min(root.options.length, 6) * 32px + 8px;
-        background: Palette.white;
-        border-radius: 12px;
-        border-width: 0.67px;
-        border-color: Palette.border;
-        drop-shadow-color: rgba(0, 0, 0, 0.14);
-        drop-shadow-offset-y: 6px;
-        drop-shadow-blur: 16px;
-        VerticalLayout {
-            padding: 4px;
-            for option[index] in root.options : MenuOption {
-                label: option;
-                active: option == root.value;
-                chosen => {
-                    root.selected(index, option);
-                    root.open = false;
+        y: drop-up ? -self.height - 6px : self.height + 6px;
+        width: Math.max(box-width, 190px);
+        // Six 30px options maximum; longer lists scroll instead of clipping.
+        height: Math.min(options.length, 6) * 30px + 8px;
+        close-policy: PopupClosePolicy.close-on-click-outside;
+        Rectangle {
+            init => { root.popup-shown = true; }
+            background: Palette.white;
+            border-radius: 12px;
+            border-width: 0.67px;
+            border-color: Palette.border;
+            drop-shadow-color: rgba(0, 0, 0, 0.14);
+            drop-shadow-offset-y: 6px;
+            drop-shadow-blur: 16px;
+            VerticalLayout {
+                padding: 4px;
+                ScrollView {
+                    // Explicit viewport sizing: the fluent ScrollView collapses
+                    // its content area to zero otherwise and shifts the rows out
+                    // of the dropdown.
+                    viewport-height: options.length * 30px;
+                    VerticalLayout {
+                        for option[index] in options : MenuOption {
+                            label: option;
+                            active: option == value;
+                            chosen => {
+                                root.selected(index, option);
+                                list.close();
+                            }
+                        }
+                    }
                 }
             }
         }
-        TouchArea { clicked => { root.open = false } }
     }
 }
 

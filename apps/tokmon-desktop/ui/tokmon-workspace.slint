@@ -1156,13 +1156,16 @@ export component WorkspacePanel inherits Rectangle {
                                                 }
                                             }
                                         }
-                                        if root.model-menu-open : Rectangle {
+                                        if root.model-menu-open : model-menu-popup := Rectangle {
                                             z: 20;
                                             x: Math.max(0px, Math.min(parent.width - self.width,
                                                 model-button.absolute-position.x - parent.absolute-position.x + model-button.width - self.width));
                                             y: composer-toolbar.y - self.height - 8px;
                                             width: 224px;
-                                            height: Math.min(root.model-choices.length * 30px + 34px, 200px);
+                                            // 34px covers the header plus vertical padding; the
+                                            // option list itself shows at most six entries and
+                                            // scrolls beyond that instead of growing unbounded.
+                                            height: Math.min(root.model-choices.length, 6) * 30px + 34px;
                                             background: Palette.white;
                                             border-radius: 12px;
                                             border-width: 0.67px;
@@ -1191,13 +1194,22 @@ export component WorkspacePanel inherits Rectangle {
                                                         background: Palette.sep;
                                                     }
                                                 }
-                                                for choice in root.model-choices : MenuOption {
-                                                    label: choice.label;
-                                                    active: choice.name == root.setting-name && choice.model == root.model-name;
-                                                    chosen => {
-                                                        root.select-model(choice.name, choice.model);
-                                                        root.model-menu-open = false;
-                                                        root.return-focus();
+                                                ScrollView {
+                                                    // The viewport must be sized explicitly:
+                                                    // the fluent ScrollView otherwise collapses
+                                                    // its content area to zero and shifts the
+                                                    // rows out of the popup.
+                                                    viewport-height: root.model-choices.length * 30px;
+                                                    VerticalLayout {
+                                                        for choice in root.model-choices : MenuOption {
+                                                            label: choice.label;
+                                                            active: choice.name == root.setting-name && choice.model == root.model-name;
+                                                            chosen => {
+                                                                root.select-model(choice.name, choice.model);
+                                                                root.model-menu-open = false;
+                                                                root.return-focus();
+                                                            }
+                                                        }
                                                     }
                                                 }
                                             }
@@ -1213,6 +1225,9 @@ export component WorkspacePanel inherits Rectangle {
                                             drop-shadow-color: rgba(0, 0, 0, 0.14);
                                             drop-shadow-offset-y: -4px;
                                             drop-shadow-blur: 14px;
+                                            // Dismiss catcher below the command rows: a
+                                            // topmost TouchArea would swallow their clicks.
+                                            TouchArea { clicked => { root.slash-menu-visible = false } }
                                             VerticalLayout {
                                                 padding: 4px;
                                                 for cmd in root.slash-commands : Rectangle {

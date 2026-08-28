@@ -217,6 +217,9 @@ export component CodePanelSlot inherits Rectangle {
                                         drop-shadow-color: rgba(0, 0, 0, 0.14);
                                         drop-shadow-offset-y: 5px;
                                         drop-shadow-blur: 14px;
+                                        // Dismiss catcher below the file rows: a topmost
+                                        // TouchArea would swallow their clicks.
+                                        TouchArea { clicked => { root.file-menu-open = false } }
                                         VerticalLayout {
                                             padding: 4px;
                                             if root.project-files.length == 0 : Text {
@@ -227,17 +230,21 @@ export component CodePanelSlot inherits Rectangle {
                                                 vertical-alignment: center;
                                                 height: 26px;
                                             }
-                                            for file[fi] in root.project-files : MenuOption {
-                                                label: file.name;
-                                                active: file.name == root.selected-file-name;
-                                                chosen => {
-                                                    root.select-project-file(fi);
-                                                    root.file-menu-open = false;
-                                                    root.return-focus();
+                                            ScrollView {
+                                                viewport-height: root.project-files.length * 30px;
+                                                VerticalLayout {
+                                                    for file[fi] in root.project-files : MenuOption {
+                                                        label: file.name;
+                                                        active: file.name == root.selected-file-name;
+                                                        chosen => {
+                                                            root.select-project-file(fi);
+                                                            root.file-menu-open = false;
+                                                            root.return-focus();
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
-                                        TouchArea { clicked => { root.file-menu-open = false } }
                                     }
                                 }
                                 Rectangle {
@@ -505,6 +512,9 @@ export component CodePanelSlot inherits Rectangle {
                     drop-shadow-color: rgba(0, 0, 0, 0.14);
                     drop-shadow-offset-y: 5px;
                     drop-shadow-blur: 14px;
+                    // Dismiss catcher below the menu options: a topmost
+                    // TouchArea would swallow their clicks.
+                    TouchArea { clicked => { root.code-menu-open = false } }
                     VerticalLayout {
                         padding: 4px;
                         MenuOption {
@@ -518,7 +528,6 @@ export component CodePanelSlot inherits Rectangle {
                             chosen => { root.set-code-panel-visible(false); root.code-menu-open = false; root.return-focus(); }
                         }
                     }
-                    TouchArea { clicked => { root.code-menu-open = false } }
                 }
                 }
             

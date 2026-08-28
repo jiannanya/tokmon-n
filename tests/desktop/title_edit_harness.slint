@@ -1,4 +1,6 @@
 import { MainWindow } from "../../apps/tokmon-desktop/ui/tokmon.slint";
+import { ModelChoice } from "../../apps/tokmon-desktop/ui/tokmon-models.slint";
+import { Palette } from "../../apps/tokmon-desktop/ui/tokmon-theme.slint";
 
 // Exercise the real desktop component tree. In particular, this includes the
 // UI scale layer, sidebar, code-panel slot and application-level FocusScope.
@@ -11,10 +13,18 @@ export component TitleEditHarness inherits MainWindow {
     in-out property <string> test-setting-name <=> root.setting-name;
     in-out property <string> test-setting-main-model <=> root.setting-main-model;
     in-out property <string> test-model-name <=> root.model-name;
-    in-out property <bool> test-error-open <=> root.error-dialog-open;
-    in-out property <bool> test-error-fatal <=> root.error-dialog-fatal;
-    in-out property <string> test-error-title <=> root.error-dialog-title;
-    in-out property <string> test-error-message <=> root.error-dialog-message;
+    in property <bool> test-error-open <=> root.error-dialog-open;
+    in property <bool> test-error-fatal <=> root.error-dialog-fatal;
+    in property <string> test-error-title <=> root.error-dialog-title;
+    in property <string> test-error-message <=> root.error-dialog-message;
+    in-out property <bool> test-model-menu-open <=> root.model-menu-open;
+    in property <[ModelChoice]> test-model-choices <=> root.model-choices;
+    in property <[string]> test-agent-options <=> root.agent-options;
+    in property <[string]> test-agent-names <=> root.agent-names;
+    in property <[string]> test-agent-models <=> root.agent-models;
+    in-out property <bool> test-settings-open <=> root.settings-open;
+    in-out property <int> test-settings-page <=> root.settings-page;
+    in property <bool> test-chat-empty <=> root.chat-empty;
     out property <bool> test-title-confirm-hovered: root.title-confirm-hovered;
     out property <int> rename-count;
     out property <string> last-renamed-title;
@@ -24,6 +34,76 @@ export component TitleEditHarness inherits MainWindow {
 
     callback test-select-model(string, string);
     test-select-model(name, model) => { root.select-model(name, model); }
+
+    // Minimal popup sanity check used by the UI tests.
+    out property <int> mini-popup-clicks;
+    mini-button := TouchArea {
+        x: 900px;
+        y: 50px;
+        width: 40px;
+        height: 40px;
+        clicked => { mini.show(); }
+    }
+    mini := PopupWindow {
+        x: 800px;
+        y: 100px;
+        width: 100px;
+        height: 100px;
+        close-policy: PopupClosePolicy.close-on-click-outside;
+        Rectangle {
+            background: red;
+            mini-ta := TouchArea {
+                clicked => { root.mini-popup-clicks += 1; }
+            }
+        }
+    }
+
+    // Replica of SelectBox's PopupWindow dropdown for isolated testing.
+    component MiniSelect inherits Rectangle {
+        in property <[string]> options;
+        callback selected(int, string);
+        width: 237px;
+        height: 31.33px;
+        background: Palette.surface;
+        border-width: 0.67px;
+        border-color: Palette.border;
+        TouchArea {
+            clicked => { list.show(); }
+            mouse-cursor: pointer;
+        }
+        list := PopupWindow {
+            x: 0px;
+            y: self.height + 6px;
+            width: 237px;
+            height: Math.min(options.length, 6) * 30px + 8px;
+            close-policy: PopupClosePolicy.close-on-click-outside;
+            Rectangle {
+                background: white;
+                VerticalLayout {
+                    padding: 4px;
+                    ScrollView {
+                        viewport-height: options.length * 30px;
+                        VerticalLayout {
+                            for option[index] in options : Rectangle {
+                                height: 30px;
+                                TouchArea {
+                                    clicked => { root.selected(index, option); }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    out property <string> mini-select-picked;
+    mini-select := MiniSelect {
+        x: 700px;
+        y: 150px;
+        options: ["a", "b", "c", "d", "e", "f", "g", "h"];
+        selected(i, o) => { root.mini-select-picked = o; }
+    }
 
     rename-session(title) => {
         root.rename-count += 1;
