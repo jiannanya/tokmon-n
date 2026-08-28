@@ -17,6 +17,8 @@ struct SecretMetadata {
   std::int64_t last_rotated_ms{0};
 };
 
+std::string_view keyring_backend() noexcept;
+bool keyring_supported() noexcept;
 Result<void> keyring_write(std::string_view id, std::string_view purpose,
                            std::string_view value);
 Result<std::string> keyring_read(std::string_view id);

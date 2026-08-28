@@ -96,7 +96,7 @@ tokmon lens reconcile
 | Techor | LightPath/MCP/worker/内置/Code Mode 统一工具目录；严格 JSON schema、schema drift、unknown/ambiguous tool、稳定幂等路由；受限 `tokmon-act-v1` Code Mode | MCP catalog 真实组合调用；Code Mode 编译为结构化 Act，不能直接 I/O |
 | Styx | `SandboxPlan`、argv 无 shell 执行、cwd/env allowlist、文件/网络范围、CPU/Mem/PID/output/deadline、bounded ring、PTY stdin/stdout/resize/exit、cooperative cancel 后进程树终止、Wasmtime CLI 与 Docker CLI adapter | Windows Job Object、ConPTY 和真实取消测试；adapter 缺失时 fail closed，禁止退化成本机裸执行 |
 | Fallen | deny → allow → ask、用户根策略限制项目策略、risk/trust/path/argv/参数/时间匹配、多级审批、Act hash/epoch/generation/deadline 绑定、one-shot/session、内容分类 | `approved=true` 不能绕过公共 admission；不可信文本分类不回显 secret |
-| Cista | Windows Credential Manager create/read/rotate/delete/list metadata；exact Act + target generation + purpose + epoch + lifetime 的一次性 binding；schema-aware redaction 与内存清零 | 真实 OS credential 读写与一次消费测试；Photon 中无明文 |
+| Cista | Windows Credential Manager、macOS Keychain、Linux Secret Service/libsecret 的 create/read/rotate/delete/list metadata；exact Act + target generation + purpose + epoch + lifetime 的一次性 binding；schema-aware redaction 与内存清零 | 平台 OS credential 读写与一次消费测试；Photon 中无明文 |
 | Chora | Photon WAL/append gate 显像、不可变版本 KV、内容寻址 Blob、去重/校验、Windows DPAPI 敏感 Blob、checkpoint、archive、backup manifest/restore | 真实 blob 写入、地址 hash 和不可变性测试 |
 | Tracket | sequence/id/parent/epoch/schema/hash/caused-by-act 验证、timeline/causal DAG、raw trace vault、R0/R1/R2/R3 replay、fork/export/audit/integrity report | 断链与未知 required schema 进入不可信诊断，不伪造可信 replay |
 | Nota | chLog 结构化事件、correlation、Span/metric fold、OTLP HTTP exporter、Prometheus 文本和真实 loopback `/metrics` server、运行时 filter/sample、health/doctor/diagnostic bundle | 真实 HTTP collector 与 Prometheus GET 专项测试；endpoint 只允许 loopback |
@@ -203,7 +203,7 @@ cmake --install build/windows-msvc-ui-debug --prefix build/install-smoke
 
 - Wasmtime CLI 本机未安装。Styx 的 WASI adapter、参数校验、scope 和 fail-closed 路径已实现；本机没有执行真实 `.wasm` 模块。
 - Docker CLI 29.4.0 已安装，但 Docker Desktop daemon 未运行。容器 create/copy/exec/stop/remove 生命周期已实现；本机没有完成 live container 测试。
-- 当前完整编译与现实系统测试在 Windows 上执行。Cista 当前使用 Windows Credential Manager；非 Windows credential backend 保持明确 `unsupported`，不会退化成明文文件。
+- 当前完整编译与现实系统测试在 Windows 上执行。Cista 已实现 Windows Credential Manager、macOS Keychain 和 Linux Secret Service；macOS/Linux 仍需各平台 CI 或实体系统完成 live 验收，任何后端故障都不会退化成明文文件。
 - Chora 敏感 Blob 在 Windows 使用 DPAPI；非 Windows 未配置 envelope backend 时明确拒绝敏感写入。
 
 这些限制不影响本次 Windows 目标的 84 项测试与 Slint 构建，但若把“完成”定义为所有 OS/所有可选外部后端都做现场验收，则仍需相应平台或 daemon 环境。由于这些后端会 fail closed，缺少环境不会导致较弱隔离被冒充为成功。

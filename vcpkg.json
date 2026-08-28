@@ -5,6 +5,10 @@
   "builtin-baseline": "c8f45a069ad0266bc70e703c1252cb51506ddcaf",
   "dependencies": [
     "brotli",
+    {
+      "name": "libsecret",
+      "platform": "linux"
+    },
     "libuv",
     "openssl",
     "zlib",

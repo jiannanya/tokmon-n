@@ -46,7 +46,7 @@ tokmon model configure deepseek `
 tokmon model secret set deepseek
 ```
 
-终端会关闭输入回显。Tokmon 不接受 `--api-key` 参数，Key 不会出现在命令历史、进程参数、YAML、Photon 或日志中。Windows 上 Key 写入 Credential Manager；YAML 只包含 `secret_ref: model-provider/deepseek`。
+终端会关闭输入回显。Tokmon 不接受 `--api-key` 参数，Key 不会出现在命令历史、进程参数、YAML、Photon 或日志中。Key 根据平台写入 Windows Credential Manager、macOS Keychain 或 Linux Secret Service；YAML 只包含 `secret_ref: model-provider/deepseek`。Linux 构建要求 `libsecret-1 >= 0.20`，运行时要求用户会话中存在可用的 Secret Service（如 GNOME Keyring 或 KWallet Secret Service）。
 
 执行真实连通性测试：
 

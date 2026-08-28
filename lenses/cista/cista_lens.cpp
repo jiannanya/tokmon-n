@@ -41,6 +41,7 @@ CistaLens::CistaLens() : LensBase(make_manifest("cista", "Cista / Secret 遮光�
 
 Result<void> CistaLens::view(const OpticalInput& photons, WavefrontBuilder& surface) {
   if (auto status = ready(); !status) return status;
+  const auto backend = std::string(keyring_backend());
   cbor::Value::Map references;
   for (const auto& photon : photons.photons()) {
     if (photon.kind != "secret.ref-observed" && photon.kind != "secret.created" &&
@@ -48,8 +49,8 @@ Result<void> CistaLens::view(const OpticalInput& photons, WavefrontBuilder& surf
     const auto id = field(photon.payload, "id", field(photon.payload, "ref"));
     if (id.empty()) continue;
     if (photon.kind == "secret.deleted") { references.erase(id); continue; }
-    references[id] = cbor::object({{"backend", "os-keyring"}, {"id", id},
-        {"purpose", field(photon.payload, "purpose")}, {"available", true},
+    references[id] = cbor::object({{"backend", backend}, {"id", id},
+        {"purpose", field(photon.payload, "purpose")}, {"available", keyring_supported()},
         {"last_rotated_ms", cbor::find(photon.payload, "last_rotated_ms")
             ? cbor::find(photon.payload, "last_rotated_ms")->as_integer() : 0},
         {"plaintext", false}});
@@ -57,7 +58,7 @@ Result<void> CistaLens::view(const OpticalInput& photons, WavefrontBuilder& surf
   cbor::Value::Array items;
   for (auto& [_, value] : references) items.push_back(std::move(value));
   if (auto result = identify(surface, "act.secrets", cbor::object({
-      {"references", std::move(items)}, {"backend", "os-keyring"},
+      {"references", std::move(items)}, {"backend", backend},
       {"plaintext_visible", false}, {"binding_max_lifetime_ms", 300000}})); !result)
     return result;
   return surface.add("diagnostic.redaction", "policy", cbor::object({
@@ -68,6 +69,7 @@ Result<void> CistaLens::view(const OpticalInput& photons, WavefrontBuilder& surf
 Result<RefractionResult> CistaLens::refract(const PhotonWindow&, const Act& act,
                                              RefractionBeam& beam) {
   if (!accepts(act)) return RefractionResult{.status = RefractionStatus::passed};
+  const auto backend = std::string(keyring_backend());
   if (act.kind == "redaction.apply") {
     const auto* content = cbor::find(act.parameters, "content");
     if (!content)
@@ -83,7 +85,7 @@ Result<RefractionResult> CistaLens::refract(const PhotonWindow&, const Act& act,
     if (!metadata) return tl::unexpected(metadata.error());
     cbor::Value::Array items;
     for (const auto& item : *metadata)
-      items.push_back(cbor::object({{"backend", "os-keyring"}, {"id", item.id},
+      items.push_back(cbor::object({{"backend", backend}, {"id", item.id},
           {"purpose", item.purpose}, {"last_rotated_ms", item.last_rotated_ms},
           {"available", true}, {"plaintext", false}}));
     return emit(beam, "secret.metadata-listed", "tokmon.secret.metadata.v1",
@@ -105,14 +107,14 @@ Result<RefractionResult> CistaLens::refract(const PhotonWindow&, const Act& act,
       return tl::unexpected(stored.error());
     const auto rotated = now_ms();
     return emit(beam, act.kind == "secret.create" ? "secret.created" : "secret.rotated",
-        "tokmon.secret.metadata.v1", cbor::object({{"backend", "os-keyring"},
+        "tokmon.secret.metadata.v1", cbor::object({{"backend", backend},
           {"id", id}, {"purpose", purpose}, {"last_rotated_ms", rotated},
           {"available", true}, {"plaintext", false}}));
   }
   if (act.kind == "secret.delete") {
     if (auto removed = keyring_delete(id); !removed) return tl::unexpected(removed.error());
     return emit(beam, "secret.deleted", "tokmon.secret.metadata.v1",
-                cbor::object({{"backend", "os-keyring"}, {"id", id},
+                cbor::object({{"backend", backend}, {"id", id},
                               {"plaintext", false}}));
   }
 

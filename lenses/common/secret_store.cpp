@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstring>
+#include <limits>
 #include <map>
 #include <mutex>
 
@@ -11,6 +13,11 @@
 #define NOMINMAX
 #include <windows.h>
 #include <wincred.h>
+#elif defined(__APPLE__)
+#include <CoreFoundation/CoreFoundation.h>
+#include <Security/Security.h>
+#elif defined(TOKMON_HAS_LIBSECRET)
+#include <libsecret/secret.h>
 #endif
 
 namespace tokmon::builtin {
@@ -29,6 +36,24 @@ struct Binding {
 
 std::mutex binding_mutex;
 std::map<std::string, Binding, std::less<>> bindings;
+
+Result<void> validate_secret_input(const std::string_view id,
+                                   const std::string_view purpose = {}) {
+  if (id.empty() || id.size() > 240u || id.find('\0') != std::string_view::npos)
+    return tl::unexpected(make_error(ErrorCode::invalid_argument,
+                                     "secret id is empty, invalid or too long"));
+  if (purpose.size() > 240u || purpose.find('\0') != std::string_view::npos)
+    return tl::unexpected(make_error(ErrorCode::invalid_argument,
+                                     "secret purpose is invalid or too long"));
+  return {};
+}
+
+Result<void> validate_secret_value(const std::string_view value) {
+  if (value.empty() || value.find('\0') != std::string_view::npos)
+    return tl::unexpected(make_error(ErrorCode::invalid_argument,
+                                     "secret value is empty or contains NUL"));
+  return {};
+}
 
 #if defined(_WIN32)
 Result<std::wstring> wide(const std::string_view input) {
@@ -55,10 +80,64 @@ std::string narrow(const wchar_t* input) {
 }
 
 Result<std::wstring> target_name(const std::string_view id) {
-  if (id.empty() || id.size() > 240u || id.find('\0') != std::string_view::npos)
-    return tl::unexpected(make_error(ErrorCode::invalid_argument,
-                                     "secret id is empty or too long"));
   return wide("Tokmon:" + std::string(id));
+}
+#elif defined(__APPLE__)
+Error apple_keychain_error(const OSStatus status, const std::string_view operation) {
+  return make_error(status == errSecItemNotFound ? ErrorCode::not_found
+                                                  : ErrorCode::io_error,
+      std::string(operation) + " failed with Keychain status " +
+          std::to_string(status));
+}
+
+CFStringRef apple_string(const std::string_view value) {
+  return CFStringCreateWithBytes(kCFAllocatorDefault,
+      reinterpret_cast<const UInt8*>(value.data()),
+      static_cast<CFIndex>(value.size()), kCFStringEncodingUTF8, false);
+}
+
+std::string apple_text(const CFTypeRef value) {
+  if (!value || CFGetTypeID(value) != CFStringGetTypeID()) return {};
+  const auto string = static_cast<CFStringRef>(value);
+  const auto capacity = CFStringGetMaximumSizeForEncoding(
+      CFStringGetLength(string), kCFStringEncodingUTF8) + 1;
+  std::string output(static_cast<std::size_t>(capacity), '\0');
+  if (!CFStringGetCString(string, output.data(), capacity, kCFStringEncodingUTF8))
+    return {};
+  output.resize(std::strlen(output.c_str()));
+  return output;
+}
+
+Result<CFMutableDictionaryRef> apple_keychain_query(const std::string_view id) {
+  auto* account = apple_string(id);
+  if (!account)
+    return tl::unexpected(make_error(ErrorCode::invalid_argument,
+                                     "secret id is not valid UTF-8"));
+  auto* query = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+      &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+  if (!query) {
+    CFRelease(account);
+    return tl::unexpected(make_error(ErrorCode::io_error,
+                                     "cannot allocate a Keychain query"));
+  }
+  CFDictionarySetValue(query, kSecClass, kSecClassGenericPassword);
+  CFDictionarySetValue(query, kSecAttrService, CFSTR("org.tokmon.secrets"));
+  CFDictionarySetValue(query, kSecAttrAccount, account);
+  CFRelease(account);
+  return query;
+}
+#elif defined(TOKMON_HAS_LIBSECRET)
+const SecretSchema tokmon_secret_schema = {
+    "org.tokmon.Secret", SECRET_SCHEMA_NONE,
+    {{"id", SECRET_SCHEMA_ATTRIBUTE_STRING},
+     {nullptr, SECRET_SCHEMA_ATTRIBUTE_STRING}}};
+
+Error libsecret_error(const std::string_view operation, GError* error,
+                      const ErrorCode fallback = ErrorCode::io_error) {
+  auto message = std::string(operation);
+  if (error && error->message) message += ": " + std::string(error->message);
+  if (error) g_error_free(error);
+  return make_error(fallback, std::move(message));
 }
 #endif
 
@@ -69,16 +148,38 @@ Error keyring_unavailable() {
 
 }  // namespace
 
+std::string_view keyring_backend() noexcept {
+#if defined(_WIN32)
+  return "windows-credential-manager";
+#elif defined(__APPLE__)
+  return "macos-keychain";
+#elif defined(TOKMON_HAS_LIBSECRET)
+  return "linux-secret-service";
+#else
+  return "unsupported";
+#endif
+}
+
+bool keyring_supported() noexcept {
+#if defined(_WIN32) || defined(__APPLE__) || defined(TOKMON_HAS_LIBSECRET)
+  return true;
+#else
+  return false;
+#endif
+}
+
 Result<void> keyring_write(const std::string_view id, const std::string_view purpose,
                            const std::string_view value) {
+  if (auto checked = validate_secret_input(id, purpose); !checked) return checked;
+  if (auto checked = validate_secret_value(value); !checked) return checked;
 #if defined(_WIN32)
   auto target = target_name(id);
   auto comment = wide(purpose);
   if (!target) return tl::unexpected(target.error());
   if (!comment) return tl::unexpected(comment.error());
-  if (value.empty() || value.size() > CRED_MAX_CREDENTIAL_BLOB_SIZE)
+  if (value.size() > CRED_MAX_CREDENTIAL_BLOB_SIZE)
     return tl::unexpected(make_error(ErrorCode::invalid_argument,
-                                     "secret value is empty or too large"));
+                                     "secret value is too large"));
   CREDENTIALW credential{};
   credential.Type = CRED_TYPE_GENERIC;
   credential.TargetName = target->data();
@@ -92,6 +193,65 @@ Result<void> keyring_write(const std::string_view id, const std::string_view pur
     return tl::unexpected(make_error(ErrorCode::io_error,
         "Windows Credential Manager rejected the secret"));
   return {};
+#elif defined(__APPLE__)
+  auto query = apple_keychain_query(id);
+  if (!query) return tl::unexpected(query.error());
+  auto* data = CFDataCreate(kCFAllocatorDefault,
+      reinterpret_cast<const UInt8*>(value.data()),
+      static_cast<CFIndex>(value.size()));
+  auto* comment = apple_string(purpose);
+  const auto label_text = "Tokmon: " + std::string(id);
+  auto* label = apple_string(label_text);
+  if (!data || !comment || !label) {
+    if (data) CFRelease(data);
+    if (comment) CFRelease(comment);
+    if (label) CFRelease(label);
+    CFRelease(*query);
+    return tl::unexpected(make_error(ErrorCode::io_error,
+                                     "cannot allocate Keychain attributes"));
+  }
+  CFDictionarySetValue(*query, kSecAttrLabel, label);
+  CFDictionarySetValue(*query, kSecAttrComment, comment);
+  CFDictionarySetValue(*query, kSecValueData, data);
+  auto status = SecItemAdd(*query, nullptr);
+  if (status == errSecDuplicateItem) {
+    CFDictionaryRemoveValue(*query, kSecAttrLabel);
+    CFDictionaryRemoveValue(*query, kSecAttrComment);
+    CFDictionaryRemoveValue(*query, kSecValueData);
+    auto* changes = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+        &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    if (!changes) {
+      CFRelease(data);
+      CFRelease(comment);
+      CFRelease(label);
+      CFRelease(*query);
+      return tl::unexpected(make_error(ErrorCode::io_error,
+                                       "cannot allocate Keychain update attributes"));
+    }
+    CFDictionarySetValue(changes, kSecAttrLabel, label);
+    CFDictionarySetValue(changes, kSecAttrComment, comment);
+    CFDictionarySetValue(changes, kSecValueData, data);
+    status = SecItemUpdate(*query, changes);
+    CFRelease(changes);
+  }
+  CFRelease(data);
+  CFRelease(comment);
+  CFRelease(label);
+  CFRelease(*query);
+  if (status != errSecSuccess)
+    return tl::unexpected(apple_keychain_error(status, "Keychain write"));
+  return {};
+#elif defined(TOKMON_HAS_LIBSECRET)
+  GError* error = nullptr;
+  const auto label = purpose.empty() ? std::string("Tokmon secret")
+                                     : std::string(purpose);
+  const auto password = std::string(value);
+  const auto identifier = std::string(id);
+  if (!secret_password_store_sync(&tokmon_secret_schema, SECRET_COLLECTION_DEFAULT,
+          label.c_str(), password.c_str(), nullptr, &error,
+          "id", identifier.c_str(), nullptr))
+    return tl::unexpected(libsecret_error("Secret Service write failed", error));
+  return {};
 #else
   (void)id; (void)purpose; (void)value;
   return tl::unexpected(keyring_unavailable());
@@ -99,6 +259,8 @@ Result<void> keyring_write(const std::string_view id, const std::string_view pur
 }
 
 Result<std::string> keyring_read(const std::string_view id) {
+  if (auto checked = validate_secret_input(id); !checked)
+    return tl::unexpected(checked.error());
 #if defined(_WIN32)
   auto target = target_name(id);
   if (!target) return tl::unexpected(target.error());
@@ -114,6 +276,42 @@ Result<std::string> keyring_read(const std::string_view id) {
                     credential->CredentialBlobSize);
   CredFree(credential);
   return value;
+#elif defined(__APPLE__)
+  auto query = apple_keychain_query(id);
+  if (!query) return tl::unexpected(query.error());
+  CFDictionarySetValue(*query, kSecReturnData, kCFBooleanTrue);
+  CFDictionarySetValue(*query, kSecMatchLimit, kSecMatchLimitOne);
+  CFTypeRef found = nullptr;
+  const auto status = SecItemCopyMatching(*query, &found);
+  CFRelease(*query);
+  if (status != errSecSuccess) {
+    if (found) CFRelease(found);
+    return tl::unexpected(apple_keychain_error(status, "Keychain read"));
+  }
+  if (!found || CFGetTypeID(found) != CFDataGetTypeID()) {
+    if (found) CFRelease(found);
+    return tl::unexpected(make_error(ErrorCode::io_error,
+                                     "Keychain returned an invalid secret"));
+  }
+  const auto data = static_cast<CFDataRef>(found);
+  std::string value(reinterpret_cast<const char*>(CFDataGetBytePtr(data)),
+                    static_cast<std::size_t>(CFDataGetLength(data)));
+  CFRelease(found);
+  return value;
+#elif defined(TOKMON_HAS_LIBSECRET)
+  GError* error = nullptr;
+  const auto identifier = std::string(id);
+  auto* password = secret_password_lookup_sync(&tokmon_secret_schema, nullptr, &error,
+      "id", identifier.c_str(), nullptr);
+  if (!password) {
+    if (error)
+      return tl::unexpected(libsecret_error("Secret Service read failed", error));
+    return tl::unexpected(make_error(ErrorCode::not_found,
+                                     "secret reference was not found"));
+  }
+  std::string value(password);
+  secret_password_free(password);
+  return value;
 #else
   (void)id;
   return tl::unexpected(keyring_unavailable());
@@ -121,6 +319,7 @@ Result<std::string> keyring_read(const std::string_view id) {
 }
 
 Result<void> keyring_delete(const std::string_view id) {
+  if (auto checked = validate_secret_input(id); !checked) return checked;
 #if defined(_WIN32)
   auto target = target_name(id);
   if (!target) return tl::unexpected(target.error());
@@ -130,6 +329,22 @@ Result<void> keyring_delete(const std::string_view id) {
     return tl::unexpected(make_error(ErrorCode::io_error,
                                      "Windows Credential Manager delete failed"));
   }
+  return {};
+#elif defined(__APPLE__)
+  auto query = apple_keychain_query(id);
+  if (!query) return tl::unexpected(query.error());
+  const auto status = SecItemDelete(*query);
+  CFRelease(*query);
+  if (status != errSecSuccess && status != errSecItemNotFound)
+    return tl::unexpected(apple_keychain_error(status, "Keychain delete"));
+  return {};
+#elif defined(TOKMON_HAS_LIBSECRET)
+  GError* error = nullptr;
+  const auto identifier = std::string(id);
+  (void)secret_password_clear_sync(&tokmon_secret_schema, nullptr, &error,
+      "id", identifier.c_str(), nullptr);
+  if (error)
+    return tl::unexpected(libsecret_error("Secret Service delete failed", error));
   return {};
 #else
   (void)id;
@@ -158,6 +373,88 @@ Result<std::vector<SecretMetadata>> keyring_list() {
     result.push_back(SecretMetadata{target.substr(7), narrow(item->Comment), unix_ms});
   }
   CredFree(credentials);
+  std::ranges::sort(result, {}, &SecretMetadata::id);
+  return result;
+#elif defined(__APPLE__)
+  auto* query = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+      &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+  if (!query)
+    return tl::unexpected(make_error(ErrorCode::io_error,
+                                     "cannot allocate a Keychain list query"));
+  CFDictionarySetValue(query, kSecClass, kSecClassGenericPassword);
+  CFDictionarySetValue(query, kSecAttrService, CFSTR("org.tokmon.secrets"));
+  CFDictionarySetValue(query, kSecReturnAttributes, kCFBooleanTrue);
+  CFDictionarySetValue(query, kSecMatchLimit, kSecMatchLimitAll);
+  CFTypeRef found = nullptr;
+  const auto status = SecItemCopyMatching(query, &found);
+  CFRelease(query);
+  if (status == errSecItemNotFound) return std::vector<SecretMetadata>{};
+  if (status != errSecSuccess)
+    return tl::unexpected(apple_keychain_error(status, "Keychain enumeration"));
+  std::vector<SecretMetadata> result;
+  const auto append = [&result](const CFDictionaryRef attributes) {
+    const auto id = apple_text(CFDictionaryGetValue(attributes, kSecAttrAccount));
+    if (id.empty()) return;
+    const auto purpose = apple_text(CFDictionaryGetValue(attributes, kSecAttrComment));
+    std::int64_t modified_ms = 0;
+    const auto modified = CFDictionaryGetValue(attributes, kSecAttrModificationDate);
+    if (modified && CFGetTypeID(modified) == CFDateGetTypeID()) {
+      const auto unix_seconds = CFDateGetAbsoluteTime(static_cast<CFDateRef>(modified)) +
+          kCFAbsoluteTimeIntervalSince1970;
+      modified_ms = static_cast<std::int64_t>(unix_seconds * 1000.0);
+    }
+    result.push_back(SecretMetadata{id, purpose, modified_ms});
+  };
+  if (found && CFGetTypeID(found) == CFArrayGetTypeID()) {
+    const auto items = static_cast<CFArrayRef>(found);
+    for (CFIndex index = 0; index < CFArrayGetCount(items); ++index) {
+      const auto item = CFArrayGetValueAtIndex(items, index);
+      if (item && CFGetTypeID(item) == CFDictionaryGetTypeID())
+        append(static_cast<CFDictionaryRef>(item));
+    }
+  } else if (found && CFGetTypeID(found) == CFDictionaryGetTypeID()) {
+    append(static_cast<CFDictionaryRef>(found));
+  } else {
+    if (found) CFRelease(found);
+    return tl::unexpected(make_error(ErrorCode::io_error,
+                                     "Keychain returned invalid enumeration data"));
+  }
+  if (found) CFRelease(found);
+  std::ranges::sort(result, {}, &SecretMetadata::id);
+  return result;
+#elif defined(TOKMON_HAS_LIBSECRET)
+  auto* attributes = g_hash_table_new(g_str_hash, g_str_equal);
+  if (!attributes)
+    return tl::unexpected(make_error(ErrorCode::io_error,
+                                     "cannot allocate Secret Service attributes"));
+  GError* error = nullptr;
+  auto* items = secret_password_searchv_sync(&tokmon_secret_schema, attributes,
+      SECRET_SEARCH_ALL, nullptr, &error);
+  g_hash_table_unref(attributes);
+  if (error) {
+    if (items) g_list_free_full(items, g_object_unref);
+    return tl::unexpected(libsecret_error("Secret Service enumeration failed", error));
+  }
+  std::vector<SecretMetadata> result;
+  for (auto* iterator = items; iterator; iterator = iterator->next) {
+    auto* item = SECRET_RETRIEVABLE(iterator->data);
+    auto* item_attributes = secret_retrievable_get_attributes(item);
+    const auto* id = item_attributes
+        ? static_cast<const char*>(g_hash_table_lookup(item_attributes, "id")) : nullptr;
+    auto* label = secret_retrievable_get_label(item);
+    const auto modified = secret_retrievable_get_modified(item);
+    if (id && *id) {
+      const auto maximum_seconds = static_cast<std::uint64_t>(
+          std::numeric_limits<std::int64_t>::max() / 1000);
+      const auto modified_ms = modified > maximum_seconds
+          ? std::numeric_limits<std::int64_t>::max()
+          : static_cast<std::int64_t>(modified * 1000u);
+      result.push_back(SecretMetadata{id, label ? label : "", modified_ms});
+    }
+    if (label) g_free(label);
+    if (item_attributes) g_hash_table_unref(item_attributes);
+  }
+  if (items) g_list_free_full(items, g_object_unref);
   std::ranges::sort(result, {}, &SecretMetadata::id);
   return result;
 #else

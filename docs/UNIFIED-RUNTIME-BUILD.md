@@ -198,6 +198,14 @@ cmake --install build/windows-msvc-release-external-lenses `
 
 ## 6. Portable Debug
 
+macOS 直接链接系统 `Security.framework`，不需要额外的密钥库开发包。Linux 使用
+Secret Service，并在配置阶段要求 `pkg-config` 能找到 `libsecret-1 >= 0.20`；例如
+Debian/Ubuntu 安装 `pkg-config libsecret-1-dev`，Fedora 安装
+`pkgconf-pkg-config libsecret-devel`。若使用 vcpkg toolchain，根目录 manifest 会只在
+Linux 目标安装 `libsecret`。运行测试或保存模型密钥时，Linux 用户会话还必须启动
+Secret Service（如 GNOME Keyring 或兼容 Secret Service 的 KWallet）。后端不可用时
+Tokmon 明确失败，不会改用 YAML、环境旁路或明文文件。
+
 ```sh
 cmake -S . --preset=portable-debug
 cmake --build --preset=portable-debug

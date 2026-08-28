@@ -1562,14 +1562,8 @@ int tokmon::app::daemon_main(int argc, char** argv) {
 #endif
                       {"controlled_degradation", true}})},
                   {"secret_backend", tokmon::cbor::object({
-#if defined(_WIN32)
-                      {"backend", "windows-credential-manager"}, {"available", true}
-#elif defined(__APPLE__)
-                      {"backend", "macos-keychain"}, {"available", true}
-#else
-                      {"backend", "libsecret"}, {"available", true}
-#endif
-                  })},
+                      {"backend", std::string(tokmon::builtin::keyring_backend())},
+                      {"available", tokmon::builtin::keyring_supported()}})},
                   {"ui_connection", tokmon::cbor::object({
                       {"endpoint", endpoint.generic_string()}, {"snow", snow.running()}})}})}})});
     }

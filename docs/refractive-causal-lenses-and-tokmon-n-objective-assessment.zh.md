@@ -16,7 +16,7 @@
 2. **当前正式设计比论文更可靠。** [DESIGN.md](DESIGN.md) 已主动收缩论文中的绝对化表述，明确“无状态”的工程含义、现实不会被撤销、拆卸是“未来零新增贡献”、C++20 基线以及不承诺未经验证的 benchmark。这是正确方向。
 3. **RCLD 论文的形式化部分尚不成立为完整元理论。** 其 Lens 类型、GetPut/PutGet/PutPut 公理和“追加 Photon”的 `refract` 定义互相冲突；操作语义不封闭；零残留、无死锁、合流性证明遗漏了关键假设。
 4. **对 Cordis 的批评不够公平。** Cordis 论文没有声称所有物理世界结果都可逆；它明确区分系统边界内的可恢复 acquisition 与边界外的 emission，并讨论 withholding、compensation、恶意插件隔离、依赖环和版本漂移。RCLD 解决的是另一组问题，不是对 Cordis 的简单代际替代。
-5. **`tokmon-n` 不是 PPT 工程。** Photon 数据库有 UPDATE/DELETE 拒绝触发器和 hash chain；LightPath 使用完整快照校验与原子发布；C ABI 热替换、多语言 worker、真实文件/Git/PTY/HTTP/MCP/LSP、Credential Manager 等都有代码与测试。
+5. **`tokmon-n` 不是 PPT 工程。** Photon 数据库有 UPDATE/DELETE 拒绝触发器和 hash chain；LightPath 使用完整快照校验与原子发布；C ABI 热替换、多语言 worker、真实文件/Git/PTY/HTTP/MCP/LSP、跨平台系统凭据后端等都有代码与测试。
 6. **但核心资源托管尚未完整落地。** 当前 C++ `OpticalHost` 只暴露 `emit` 和 `log`，设计中的 `MountGuard`/Hosted I/O/Task/Secret 统一资源托盘未形成实际强制边界；同进程 Lens 仍能直接调用 OS API，并需要自行停止所拥有的资源。
 7. **现有证据支持“可信原型”，不支持论文中的极限指标。** 本次复跑已有 Windows 测试二进制得到 `85 cases / 2965 checks / 0 failures`，但没有可复现的零幻觉对照实验、跨平台完整验收、WASM live test、Docker live test或严谨性能统计。
 
@@ -420,7 +420,7 @@ Engine 的 Act 流程不是让 Lens 直接执行任意工具调用：
 - Node/CPython worker；
 - MCP、LSP、HTTP collector/Prometheus；
 - PTY、进程取消、Windows Job Object；
-- Windows Credential Manager 与 secret redaction；
+- Windows Credential Manager、macOS Keychain、Linux Secret Service 与 secret redaction；
 - 真实 Git repository/worktree；
 - 文件生命周期、RAG revision、memory provenance；
 - 19 个正式 Lens 与 Calculator 的独立 contract。
@@ -506,7 +506,7 @@ Engine 的 Act 流程不是让 Lens 直接执行任意工具调用：
 - 本机无 Wasmtime CLI，未执行真实 `.wasm`；
 - Docker daemon 未运行，未完成 live container 测试；
 - 完整现实系统测试集中在 Windows；
-- 非 Windows credential backend 未实现；
+- macOS Keychain 与 Linux Secret Service 已实现，但尚未在本报告的 Windows 现场完成 live 验收；
 - 非 Windows 敏感 Blob envelope 未配置时 fail closed。
 
 Fail closed 是正确选择，但仍不能把“路径已实现”写成“所有后端已验收”。
@@ -797,7 +797,7 @@ LLM 幻觉不能由类型系统宣称为 0。应：
 2. 对所有 model request 强制 `epoch + surface hash + contribution provenance`；
 3. 对所有 Act 强制 `target lens id + generation + epoch + policy decision hash`；
 4. 为旧 epoch 增加“拒绝新 ticket”的明确原子状态；
-5. 做 Linux/macOS 构建与 credential/envelope backend；
+5. 做 Linux/macOS 构建验收与敏感 Blob envelope backend；
 6. 在可用环境完成 Wasmtime 与 Docker live tests；
 7. 增加 property/fuzz/crash-recovery/concurrency sanitizer 测试。
 

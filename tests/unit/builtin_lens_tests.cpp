@@ -1578,61 +1578,86 @@ TEST_CASE("redaction removes assignment bearer and URL secrets") {
   REQUIRE(redacted.find("url-secret") == std::string::npos);
 }
 
+TEST_CASE("Cista selects the native credential backend without legacy metadata") {
+#if defined(_WIN32)
+  REQUIRE(tokmon::builtin::keyring_backend() == "windows-credential-manager");
+  REQUIRE(tokmon::builtin::keyring_supported());
+#elif defined(__APPLE__)
+  REQUIRE(tokmon::builtin::keyring_backend() == "macos-keychain");
+  REQUIRE(tokmon::builtin::keyring_supported());
+#elif defined(__linux__)
+  REQUIRE(tokmon::builtin::keyring_backend() == "linux-secret-service");
+  REQUIRE(tokmon::builtin::keyring_supported());
+#else
+  REQUIRE(tokmon::builtin::keyring_backend() == "unsupported");
+  REQUIRE_FALSE(tokmon::builtin::keyring_supported());
+#endif
+}
+
 TEST_CASE("Cista OS credential binding is exact one-shot and leaves no plaintext Photon") {
   const auto id = "tokmon-test-" + tokmon::make_id("secret");
-#if defined(_WIN32)
-  REQUIRE(tokmon::builtin::keyring_write(id, "test-only", "fixture-credential"));
-  struct Cleanup {
-    std::string id;
-    ~Cleanup() { (void)tokmon::builtin::keyring_delete(id); }
-  } cleanup{id};
-  auto metadata = tokmon::builtin::keyring_list();
-  REQUIRE(metadata);
-  REQUIRE(std::any_of(metadata->begin(), metadata->end(), [&](const auto& item) {
-    return item.id == id && item.purpose == "test-only";
-  }));
-  tokmon::Act consumer{.id = "act-secret-consumer", .ray = "ray-secret",
-      .kind = "model.call", .schema = "tokmon.model.call.v1",
-      .parameters = tokmon::cbor::object({{"model", "secure-model"}}),
-      .target = "org.tokmon.lens.rhea", .epoch = 9, .generation = 9001,
-      .risk = tokmon::RiskClass::external, .idempotency_key = std::string(64, '1'),
-      .timeout = std::chrono::seconds(10)};
-  const auto scope = tokmon::act_secret_scope_hash(consumer);
-  auto binding = tokmon::builtin::create_secret_binding(id, "model-api", scope,
-      consumer.target, consumer.generation, consumer.epoch, std::chrono::seconds(30));
-  REQUIRE(binding);
-  (*consumer.parameters.as_map())["secret_binding"] = *binding;
-  auto plaintext = tokmon::builtin::resolve_secret_binding(*binding, "model-api",
-      tokmon::act_secret_scope_hash(consumer), consumer.target,
-      consumer.generation, consumer.epoch);
-  REQUIRE(plaintext);
-  REQUIRE(*plaintext == "fixture-credential");
-  std::fill(plaintext->begin(), plaintext->end(), '\0');
-  REQUIRE_FALSE(tokmon::builtin::resolve_secret_binding(*binding, "model-api",
-      tokmon::act_secret_scope_hash(consumer), consumer.target,
-      consumer.generation, consumer.epoch));
-
-  const auto lens = tokmon::make_builtin_lens("cista");
-  RecordingHost host;
-  auto listed = refract(lens, "secret.list-metadata", "tokmon.secret.list-metadata.v1",
-                         tokmon::cbor::Value::Map{}, host);
-  REQUIRE(listed);
-  const auto* items = tokmon::cbor::find(host.drafts.back().payload, "items");
-  REQUIRE(items != nullptr);
-  const auto metadata_item = std::ranges::find_if(*items->as_array(), [&](const auto& item) {
-    const auto* item_id = tokmon::cbor::find(item, "id");
-    return item_id && item_id->as_string() == id;
-  });
-  REQUIRE(metadata_item != items->as_array()->end());
-  REQUIRE(tokmon::cbor::find(*metadata_item, "backend")->as_string() == "os-keyring");
-  REQUIRE(tokmon::cbor::find(*metadata_item, "provider") == nullptr);
-  REQUIRE(tokmon::cbor::diagnostic(host.drafts.back().payload).find("fixture-credential") ==
-          std::string::npos);
-#else
-  auto unavailable = tokmon::builtin::keyring_write(id, "test-only", "fixture-credential");
-  REQUIRE_FALSE(unavailable);
-  REQUIRE(unavailable.error().code == tokmon::ErrorCode::unsupported);
+  if (tokmon::builtin::keyring_supported()) {
+    auto stored = tokmon::builtin::keyring_write(id, "test-only", "fixture-credential");
+#if defined(__APPLE__) || defined(__linux__)
+    if (!stored) {
+      INFO(stored.error().describe());
+      REQUIRE(stored.error().code == tokmon::ErrorCode::io_error);
+      return;
+    }
 #endif
+    REQUIRE(stored);
+    struct Cleanup {
+      std::string id;
+      ~Cleanup() { (void)tokmon::builtin::keyring_delete(id); }
+    } cleanup{id};
+    auto metadata = tokmon::builtin::keyring_list();
+    REQUIRE(metadata);
+    REQUIRE(std::any_of(metadata->begin(), metadata->end(), [&](const auto& item) {
+      return item.id == id && item.purpose == "test-only";
+    }));
+    tokmon::Act consumer{.id = "act-secret-consumer", .ray = "ray-secret",
+        .kind = "model.call", .schema = "tokmon.model.call.v1",
+        .parameters = tokmon::cbor::object({{"model", "secure-model"}}),
+        .target = "org.tokmon.lens.rhea", .epoch = 9, .generation = 9001,
+        .risk = tokmon::RiskClass::external, .idempotency_key = std::string(64, '1'),
+        .timeout = std::chrono::seconds(10)};
+    const auto scope = tokmon::act_secret_scope_hash(consumer);
+    auto binding = tokmon::builtin::create_secret_binding(id, "model-api", scope,
+        consumer.target, consumer.generation, consumer.epoch, std::chrono::seconds(30));
+    REQUIRE(binding);
+    (*consumer.parameters.as_map())["secret_binding"] = *binding;
+    auto plaintext = tokmon::builtin::resolve_secret_binding(*binding, "model-api",
+        tokmon::act_secret_scope_hash(consumer), consumer.target,
+        consumer.generation, consumer.epoch);
+    REQUIRE(plaintext);
+    REQUIRE(*plaintext == "fixture-credential");
+    std::fill(plaintext->begin(), plaintext->end(), '\0');
+    REQUIRE_FALSE(tokmon::builtin::resolve_secret_binding(*binding, "model-api",
+        tokmon::act_secret_scope_hash(consumer), consumer.target,
+        consumer.generation, consumer.epoch));
+
+    const auto lens = tokmon::make_builtin_lens("cista");
+    RecordingHost host;
+    auto listed = refract(lens, "secret.list-metadata", "tokmon.secret.list-metadata.v1",
+                           tokmon::cbor::Value::Map{}, host);
+    REQUIRE(listed);
+    const auto* items = tokmon::cbor::find(host.drafts.back().payload, "items");
+    REQUIRE(items != nullptr);
+    const auto metadata_item = std::ranges::find_if(*items->as_array(), [&](const auto& item) {
+      const auto* item_id = tokmon::cbor::find(item, "id");
+      return item_id && item_id->as_string() == id;
+    });
+    REQUIRE(metadata_item != items->as_array()->end());
+    REQUIRE(tokmon::cbor::find(*metadata_item, "backend")->as_string() ==
+            tokmon::builtin::keyring_backend());
+    REQUIRE(tokmon::cbor::find(*metadata_item, "provider") == nullptr);
+    REQUIRE(tokmon::cbor::diagnostic(host.drafts.back().payload).find("fixture-credential") ==
+            std::string::npos);
+  } else {
+    auto unavailable = tokmon::builtin::keyring_write(id, "test-only", "fixture-credential");
+    REQUIRE_FALSE(unavailable);
+    REQUIRE(unavailable.error().code == tokmon::ErrorCode::unsupported);
+  }
 }
 
 TEST_CASE("Enso progressively discovers and loads a real bounded SKILL document") {

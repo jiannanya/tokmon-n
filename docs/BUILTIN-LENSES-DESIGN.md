@@ -748,7 +748,7 @@ fallen:
 
 ```yaml
 secret_ref:
-  backend: os-keyring
+  backend: windows-credential-manager # macOS: macos-keychain; Linux: linux-secret-service
   id: model/openai/default
   purpose: model-api
 ```

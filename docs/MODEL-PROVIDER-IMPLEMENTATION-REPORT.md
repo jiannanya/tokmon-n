@@ -51,7 +51,7 @@ Tokmon 已从“UI 中存在模型名称但 Janus 固定调用本地 mock”升�
 - 新增配置合并、明文 Key 拒绝、不安全 endpoint 拒绝、Janus 平台中立 envelope 测试；
 - Rhea 使用 Python OpenAI-compatible SSE fixture 完成真实 TCP/HTTP 请求、流式 reasoning/content、usage 与 retry 测试；
 - 隔离工作区通过 CLI 原子配置 `fixture-cloud`，`model test` 返回 `hello world` 与 3/2 token usage；
-- Windows Credential Manager 完成 Key 写入、状态枚举与删除；使用必须鉴权的 loopback provider，经 Cista SecretRef 一次性绑定后成功完成真实 Rhea HTTP 请求；YAML 和工作区全文检索未发现测试 Key；
+- 跨平台密钥层使用 Windows Credential Manager、macOS Keychain 与 Linux Secret Service/libsecret；本次 Windows 现场完成 Key 写入、状态枚举与删除，并使用必须鉴权的 loopback provider 经 Cista SecretRef 一次性绑定后成功完成真实 Rhea HTTP 请求；YAML 和工作区全文检索未发现测试 Key；
 - daemon 使用 Snow 优雅关闭，未使用进程强杀。
 
 详细使用方式见 [MODEL-PROVIDER-CONFIGURATION.md](MODEL-PROVIDER-CONFIGURATION.md)。

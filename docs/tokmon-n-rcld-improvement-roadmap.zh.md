@@ -1315,7 +1315,7 @@ Inspector 必须默认脱敏；Secret 只显示引用和 binding 元数据。
 
 - Linux/macOS/Windows 矩阵；
 - Wasmtime 与 Docker live test；
-- 非 Windows credential/envelope backend；
+- 非 Windows 敏感 Blob envelope backend；
 - benchmark harness 与原始数据；
 - 基于真实不变式重写 RCLD whitepaper；
 - 只发布已由模型/测试/实验支持的结论。
