@@ -47,6 +47,20 @@ export global Palette {
     out property<color> new-chat: #F2ECE2;
     out property<color> new-chat-hover: #EAE2D5;
     out property<color> new-chat-ink: #7C431B;
+    // Prototype wash used by hover-only affordances (pill tabs, list rows).
+    out property<color> hover-soft: rgba(0, 0, 0, 0.04);
+    // Git diff tints. The 0x66 alpha reproduces the prototype's 40% washes.
+    out property<color> diff-add-bg: #DCFCE766;
+    out property<color> diff-add-num-bg: #BBF7D066;
+    out property<color> diff-add-num-ink: #16A34A;
+    out property<color> diff-add-ink: #166534;
+    out property<color> diff-del-bg: #FEE2E266;
+    out property<color> diff-del-num-bg: #FECACA66;
+    out property<color> diff-del-num-ink: #DC2626;
+    out property<color> diff-del-ink: #991B1B;
+    out property<color> diff-banner-bg: #F4F4F4;
+    out property<color> diff-banner-line: #E5E5E5;
+    out property<color> diff-del-empty: #F5F5F480;
 }
 
 export global Icons {
@@ -95,4 +109,14 @@ export global Icons {
     out property<image> sparkles: @image-url("../assets/figma/icon-48.svg");
     out property<image> lock: @image-url("../assets/figma/icon-49.svg");
     out property<image> git-branch: @image-url("../assets/figma/icon-50.svg");
+    // Right panel: review tab, commit & push, split diff, pane toggle,
+    // maximize, and the collapse/expand rail buttons.
+    out property<image> review: @image-url("../assets/figma/icon-51.svg");
+    out property<image> commit: @image-url("../assets/figma/icon-52.svg");
+    out property<image> diff-split: @image-url("../assets/figma/icon-53.svg");
+    out property<image> panes: @image-url("../assets/figma/icon-54.svg");
+    out property<image> maximize: @image-url("../assets/figma/icon-55.svg");
+    out property<image> panel-right-close: @image-url("../assets/figma/icon-56.svg");
+    out property<image> panel-right-open: @image-url("../assets/figma/icon-57.svg");
+    out property<image> arrow-up: @image-url("../assets/figma/icon-58.svg");
 }

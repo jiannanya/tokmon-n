@@ -81,3 +81,51 @@ export struct TraceEvent {
     dur: string,
     tokens: string,
 }
+
+// One open tab in the right side panel. The launcher screen is not a tab: it
+// is shown whenever `right-tabs` is empty.
+export struct RightTab {
+    // "review" | "openFile"
+    id: string,
+    title: string,
+}
+
+// A file with uncommitted Git changes, listed in the review sidebar.
+export struct ReviewFile {
+    id: string,
+    // Workspace-relative path, e.g. "apps/tokmon-desktop/ui/tokmon.slint".
+    path: string,
+    display-folder: string,
+    display-name: string,
+    // True only for the first visible file in a folder. The review sidebar
+    // renders one compact folder heading per group instead of repeating the
+    // complete parent path above every changed file.
+    show-folder: bool,
+    // "added" | "modified"
+    status: string,
+    additions: int,
+    deletions: int,
+}
+
+// One rendered row of a unified/split diff.
+//   kind: "context" | "add" | "delete" | "banner"
+// `hunk` identifies the banner group so the UI can ask C++ to expand or
+// collapse the surrounding context lines.
+export struct DiffLine {
+    kind: string,
+    old-num: string,
+    new-num: string,
+    text: string,
+    banner: string,
+    hunk: string,
+}
+
+// Flattened workspace directory tree row for the "openFile" tab.
+export struct TreeItem {
+    name: string,
+    path: string,
+    // "folder" | "file"
+    kind: string,
+    depth: int,
+    expanded: bool,
+}

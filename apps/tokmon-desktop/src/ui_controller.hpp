@@ -10,6 +10,8 @@
 
 namespace tokmon::desktop {
 
+class RightPanelController;
+
 class UiController {
 public:
   virtual ~UiController() = default;
@@ -58,6 +60,7 @@ std::unique_ptr<UiController> make_ui_controller(
     std::shared_ptr<slint::VectorModel<NavigationItem>> navigation_model,
     std::shared_ptr<std::vector<NavigationItem>> navigation,
     std::filesystem::path assets, slint::ComponentWeakHandle<MainWindow> window,
+    std::shared_ptr<RightPanelController> right_panel,
     bool restore_initial_workspace);
 
 } // namespace tokmon::desktop

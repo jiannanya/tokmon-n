@@ -192,6 +192,8 @@ if(TOKMON_BUILD_DESKTOP)
     apps/tokmon-desktop/src/desktop_application.cpp
     apps/tokmon-desktop/src/navigation_state.cpp
     apps/tokmon-desktop/src/platform_utils.cpp
+    apps/tokmon-desktop/src/review_panel.cpp
+    apps/tokmon-desktop/src/right_panel_controller.cpp
     apps/tokmon-desktop/src/ui_controller.cpp
     apps/tokmon-desktop/src/ui_projection.cpp)
   target_link_libraries(tokmon-desktop PRIVATE tokmon_core Slint::Slint)
@@ -211,6 +213,8 @@ if(TOKMON_BUILD_DESKTOP)
   set_property(SOURCE
     apps/tokmon-desktop/src/desktop_application.cpp
     apps/tokmon-desktop/src/navigation_state.cpp
+    apps/tokmon-desktop/src/review_panel.cpp
+    apps/tokmon-desktop/src/right_panel_controller.cpp
     apps/tokmon-desktop/src/ui_controller.cpp
     apps/tokmon-desktop/src/ui_projection.cpp
     APPEND PROPERTY

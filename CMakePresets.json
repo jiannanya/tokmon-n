@@ -80,6 +80,26 @@
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
     },
     {
+      "name": "windows-ninja-release-desktop",
+      "inherits": "windows-vcpkg",
+      "displayName": "Windows Ninja Release - Desktop",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/windows-ninja-release-desktop",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "cl",
+        "CMAKE_CXX_COMPILER": "cl",
+        "CMAKE_PREFIX_PATH": "${sourceDir}/.deps/slint",
+        "BUILD_TESTING": "OFF",
+        "TOKMON_BUILD_DESKTOP": "ON",
+        "TOKMON_BUILD_EXTERNAL_LENSES": "OFF",
+        "TOKMON_BUILD_TESTS": "OFF",
+        "TOKMON_BUILD_SCRIPT_SDK_TESTS": "OFF",
+        "TOKMON_OPTIMIZE_RELEASE_SIZE": "ON"
+      },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
       "name": "portable-debug",
       "displayName": "Portable Debug - Unified CLI",
       "generator": "Ninja",
@@ -107,6 +127,10 @@
       "name": "windows-msvc-release-external-lenses",
       "configurePreset": "windows-msvc-release-external-lenses",
       "configuration": "Release"
+    },
+    {
+      "name": "windows-ninja-release-desktop",
+      "configurePreset": "windows-ninja-release-desktop"
     },
     { "name": "portable-debug", "configurePreset": "portable-debug" }
   ],

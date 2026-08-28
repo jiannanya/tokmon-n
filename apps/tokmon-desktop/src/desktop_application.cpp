@@ -25,6 +25,7 @@
 #include "desktop_application.hpp"
 #include "navigation_state.hpp"
 #include "platform_utils.hpp"
+#include "right_panel_controller.hpp"
 #include "ui_controller.hpp"
 #include "ui_projection.hpp"
 
@@ -246,12 +247,21 @@ int run_application(int argc, char **argv) {
   window->set_trace_events(trace_events_model);
   window->set_gantt(gantt_model);
   window->set_setting_workspace(display_string(navigation_workspace_text));
+  // The right panel owns its own Git subprocess worker, so it is created
+  // before the controller that refreshes it on workspace switches.
+  auto right_panel = std::make_shared<RightPanelController>(
+      slint::ComponentWeakHandle<MainWindow>(window));
   auto controller = make_ui_controller(
       endpoint, navigation_workspace, daemon_executable, timeline_model,
       conversation_workflow_model, assistant_blocks_model, code_model,
       trace_events_model, gantt_model,
       nav_model, navigation_state, assets,
-      slint::ComponentWeakHandle<MainWindow>(window), !workspace.has_value());
+      slint::ComponentWeakHandle<MainWindow>(window), right_panel,
+      !workspace.has_value());
+  // Prime the review panel with the workspace resolved at startup; the
+  // controller refreshes it again once the daemon reports the saved settings.
+  right_panel->set_workspace(navigation_workspace);
+  right_panel->refresh();
   // Connection, daemon launch, attach and every configuration-dependent load
   // happen after show() and off the Slint event loop thread.
   std::thread backend_connect(
@@ -759,6 +769,43 @@ int run_application(int argc, char **argv) {
     controller->load_providers();
   });
   window->on_reconcile([&controller] { controller->reconcile(); });
+  window->on_open_right_tab(
+      [right_panel](const slint::SharedString &id) {
+        right_panel->open_tab(std::string(id));
+      });
+  window->on_close_right_tab(
+      [right_panel](const slint::SharedString &id) {
+        right_panel->close_tab(std::string(id));
+      });
+  window->on_add_right_tab([right_panel] { right_panel->add_tab(); });
+  window->on_toggle_panel_maximized([right_panel] { right_panel->toggle_maximized(); });
+  window->on_select_review_file(
+      [right_panel](const slint::SharedString &id) {
+        right_panel->select_review_file(std::string(id));
+      });
+  window->on_switch_branch([right_panel](const slint::SharedString &branch) {
+    right_panel->switch_branch(std::string(branch));
+  });
+  window->on_toggle_hunk([right_panel](const slint::SharedString &hunk) {
+    right_panel->toggle_hunk(std::string(hunk));
+  });
+  window->on_stage_all([right_panel] { right_panel->stage_all(); });
+  window->on_refresh_review([right_panel] { right_panel->refresh(); });
+  window->on_discard_unstaged([right_panel] { right_panel->discard_unstaged(); });
+  window->on_commit_and_push([right_panel](const slint::SharedString &message,
+                                           bool push) {
+    right_panel->commit_and_push(std::string(message), push);
+  });
+  window->on_reveal_in_explorer([right_panel] { right_panel->reveal_in_explorer(); });
+  window->on_select_tree_item(
+      [right_panel](int index) { right_panel->select_tree_item(index); });
+  window->on_filter_tree([right_panel](const slint::SharedString &query) {
+    right_panel->set_tree_filter(std::string(query));
+  });
+  window->on_filter_review_files([right_panel](const slint::SharedString &query) {
+    right_panel->set_review_filter(std::string(query));
+  });
+  window->on_dismiss_toast([] {});
   window->on_refresh_workspace(
       [&controller] { controller->refresh_workspace(); });
   window->on_configure_provider(

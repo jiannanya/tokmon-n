@@ -1,5 +1,5 @@
-import { NavigationItem, ModelChoice, TimelineItem, CodeLine, SlashCommandItem, ProjectFile, GanttSegment, TraceEvent, ChatBlock } from "tokmon-models.slint";
-import { Palette } from "tokmon-theme.slint";
+import { NavigationItem, ModelChoice, TimelineItem, CodeLine, SlashCommandItem, ProjectFile, GanttSegment, TraceEvent, ChatBlock, RightTab, ReviewFile, DiffLine, TreeItem } from "tokmon-models.slint";
+import { Palette, Icons } from "tokmon-theme.slint";
 import { SettingsOverlay } from "tokmon-settings.slint";
 import { CodePanelSlot } from "tokmon-code-panel.slint";
 import { SidebarPanel } from "tokmon-sidebar.slint";
@@ -202,6 +202,42 @@ export component MainWindow inherits Window {
     in property <[ProjectFile]> workspace-presets;
     in property <[CodeLine]> preview-lines;
 
+    // Right side panel: closable tabs, Git review and the workspace tree.
+    in-out property <[RightTab]> right-tabs;
+    in-out property <string> right-tab: "launcher";
+    in-out property <[ReviewFile]> review-files;
+    in-out property <[DiffLine]> diff-lines;
+    in-out property <string> current-branch;
+    in-out property <[string]> branch-options;
+    in-out property <int> review-added: 0;
+    in-out property <int> review-removed: 0;
+    in-out property <int> review-list-height: 0;
+    in-out property <string> selected-review-file-id;
+    in-out property <string> selected-review-path;
+    in-out property <int> selected-review-added: 0;
+    in-out property <int> selected-review-removed: 0;
+    in-out property <string> review-file-search;
+    in-out property <string> diff-view-mode: "unified";
+    in-out property <bool> file-list-visible: true;
+    // Widest diff row in device pixels so long lines scroll horizontally.
+    in-out property <length> diff-content-width: 0px;
+    in-out property <[TreeItem]> tree-items;
+    in-out property <string> tree-search;
+    in-out property <string> tree-file-name;
+    in-out property <string> tree-file-content;
+    in-out property <string> tree-selected-path;
+    in-out property <string> workspace-tree-label;
+    in-out property <bool> workspace-tree-visible: true;
+    in-out property <bool> branch-menu-open: false;
+    in-out property <bool> git-menu-open: false;
+    in-out property <bool> commit-modal-open: false;
+    in-out property <string> commit-message;
+    in-out property <bool> push-immediately: true;
+    in-out property <string> staged-summary;
+    in-out property <string> toast-text;
+    in-out property <bool> toast-visible: false;
+    in-out property <bool> right-panel-maximized: false;
+
     in-out property <string> session-title: "新会话";
     in-out property <string> status-text: "就绪";
     in-out property <string> model-name: "-";
@@ -391,6 +427,22 @@ export component MainWindow inherits Window {
     pure callback identify-project(string) -> string;
     pure callback project-in-group(string, string) -> bool;
     callback filter-preview(string);
+    callback open-right-tab(string);
+    callback close-right-tab(string);
+    callback add-right-tab();
+    callback toggle-panel-maximized();
+    callback select-review-file(string);
+    callback switch-branch(string);
+    callback stage-all();
+    callback refresh-review();
+    callback discard-unstaged();
+    callback commit-and-push(string, bool);
+    callback toggle-hunk(string);
+    callback select-tree-item(int);
+    callback filter-tree(string);
+    callback filter-review-files(string);
+    callback reveal-in-explorer();
+    callback dismiss-toast();
 
     select-model(name, model) => {
         root.setting-name = name;
@@ -615,22 +667,57 @@ export component MainWindow inherits Window {
                 host-width: ui-scale-layer.width;
                 sidebar-visible: root.sidebar-visible;
                 sidebar-width: root.sidebar-width;
-                project-files: root.project-files;
-                code-lines: root.code-lines;
-                preview-lines: root.preview-lines;
-                file-added-lines: root.file-added-lines;
-                selected-file-name: root.selected-file-name;
-                preview-content: root.preview-content;
                 status-text: root.status-text;
-                trace-result: root.trace-result;
-                assistant-text: root.assistant-text;
+                right-tabs <=> root.right-tabs;
+                right-tab <=> root.right-tab;
+                review-files <=> root.review-files;
+                diff-lines <=> root.diff-lines;
+                current-branch <=> root.current-branch;
+                branch-options: root.branch-options;
+                review-added: root.review-added;
+                review-removed: root.review-removed;
+                review-list-height: root.review-list-height;
+                selected-review-file-id <=> root.selected-review-file-id;
+                selected-review-path: root.selected-review-path;
+                selected-review-added: root.selected-review-added;
+                selected-review-removed: root.selected-review-removed;
+                review-file-search <=> root.review-file-search;
+                diff-view-mode <=> root.diff-view-mode;
+                file-list-visible <=> root.file-list-visible;
+                diff-content-width <=> root.diff-content-width;
+                tree-items <=> root.tree-items;
+                tree-search <=> root.tree-search;
+                tree-file-name: root.tree-file-name;
+                tree-file-content: root.tree-file-content;
+                tree-selected-path <=> root.tree-selected-path;
+                workspace-tree-label: root.workspace-tree-label;
+                workspace-tree-visible <=> root.workspace-tree-visible;
+                branch-menu-open <=> root.branch-menu-open;
+                git-menu-open <=> root.git-menu-open;
+                commit-modal-open <=> root.commit-modal-open;
+                commit-message <=> root.commit-message;
+                push-immediately <=> root.push-immediately;
+                staged-summary: root.staged-summary;
+                toast-text <=> root.toast-text;
+                toast-visible <=> root.toast-visible;
+                maximized <=> root.right-panel-maximized;
                 code-panel-width <=> root.code-panel-width;
-                file-preview-selected <=> root.file-preview-selected;
-                code-menu-open <=> root.code-menu-open;
-                file-menu-open <=> root.file-menu-open;
-                copy-notice-visible <=> root.copy-notice-visible;
-                preview-search <=> root.preview-search;
-                issues-open <=> root.issues-open;
+                open-right-tab(id) => { root.open-right-tab(id); }
+                close-right-tab(id) => { root.close-right-tab(id); }
+                add-right-tab => { root.add-right-tab(); }
+                toggle-panel-maximized => { root.toggle-panel-maximized(); }
+                select-review-file(id) => { root.select-review-file(id); }
+                switch-branch(branch) => { root.switch-branch(branch); }
+                stage-all => { root.stage-all(); }
+                refresh-review => { root.refresh-review(); }
+                discard-unstaged => { root.discard-unstaged(); }
+                commit-and-push(message, push) => { root.commit-and-push(message, push); }
+                toggle-hunk(hunk) => { root.toggle-hunk(hunk); }
+                select-tree-item(index) => { root.select-tree-item(index); }
+                filter-tree(value) => { root.filter-tree(value); }
+                filter-review-files(value) => { root.filter-review-files(value); }
+                reveal-in-explorer => { root.reveal-in-explorer(); }
+                dismiss-toast => { root.dismiss-toast(); }
                 return-focus => { hs.focus(); }
                 drag-window => { root.drag-window(); }
                 update-window-drag => { root.update-window-drag(); }
@@ -639,11 +726,33 @@ export component MainWindow inherits Window {
                 toggle-maximize-window => { root.toggle-maximize-window(); }
                 close-window => { root.close-window(); }
                 set-code-panel-visible(visible) => { root.set-code-panel-visible(visible); }
-                select-project-file(index) => { root.select-project-file(index); }
-                reconcile => { root.reconcile(); }
-                copy-text(value) => { root.copy-text(value); }
-                filter-preview(value) => { root.filter-preview(value); }
             }
+        }
+    }
+    // Floating rail button: reopens the collapsed right panel. It sits on the
+    // vertical center of the window's right edge so it never overlaps the
+    // header's window controls, which shift between columns as panels toggle.
+    if !root.code-visible : Rectangle {
+        x: ui-scale-layer.width - 30px;
+        y: (ui-scale-layer.height - 26px) / 2;
+        width: 26px;
+        height: 26px;
+        border-radius: 6px;
+        background: rail-touch.has-hover ? #FCF2EA : #FEF8F4;
+        border-width: 0.67px;
+        border-color: rail-touch.has-hover ? Palette.accent : Palette.accent-border;
+        drop-shadow-color: Palette.shadow;
+        drop-shadow-offset-y: 1px;
+        Image {
+            source: Icons.panel-right-open;
+            width: 14px;
+            height: 14px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+        }
+        rail-touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.set-code-panel-visible(true); }
         }
     }
     hs := FocusScope {
@@ -665,6 +774,22 @@ export component MainWindow inherits Window {
             } else if event.modifiers.control && event.modifiers.shift && (event.text == "p" || event.text == "P") {
                 root.composer-text = "/";
                 root.slash-query-changed("/");
+                accept
+            } else if event.modifiers.control && event.modifiers.shift && (event.text == "g" || event.text == "G") {
+                // Prototype shortcut: open the right panel on the review tab.
+                if !root.code-visible {
+                    root.code-visible = true;
+                    root.set-code-panel-visible(true);
+                }
+                root.open-right-tab("review");
+                accept
+            } else if event.modifiers.control && !event.modifiers.shift && (event.text == "p" || event.text == "P") {
+                // Prototype shortcut: open the right panel on the file tab.
+                if !root.code-visible {
+                    root.code-visible = true;
+                    root.set-code-panel-visible(true);
+                }
+                root.open-right-tab("openFile");
                 accept
             } else if event.modifiers.control && (event.text == "=" || event.text == "+") {
                 root.setting-ui-scale = Math.min(200, Math.round((root.setting-ui-scale + 10) / 5) * 5);
@@ -694,7 +819,7 @@ export component MainWindow inherits Window {
                     root.settings-open = false;
                     hs.focus();
                     accept
-                } else if root.access-menu-open || root.model-menu-open || root.effort-menu-open || root.slash-menu-visible || root.trace-filter-open || root.code-menu-open || root.issues-open || root.file-menu-open || root.context-popover-open {
+                } else if root.access-menu-open || root.model-menu-open || root.effort-menu-open || root.slash-menu-visible || root.trace-filter-open || root.code-menu-open || root.issues-open || root.file-menu-open || root.context-popover-open || root.branch-menu-open || root.git-menu-open || root.commit-modal-open {
                     root.access-menu-open = false;
                     root.model-menu-open = false;
                     root.effort-menu-open = false;
@@ -704,6 +829,9 @@ export component MainWindow inherits Window {
                     root.issues-open = false;
                     root.file-menu-open = false;
                     root.context-popover-open = false;
+                    root.branch-menu-open = false;
+                    root.git-menu-open = false;
+                    root.commit-modal-open = false;
                     accept
                 } else { reject }
             } else { reject }

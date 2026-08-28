@@ -1,5 +1,7 @@
 #include "ui_controller.hpp"
 
+#include "right_panel_controller.hpp"
+
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -60,6 +62,7 @@ public:
       std::shared_ptr<std::vector<NavigationItem>> navigation,
       std::filesystem::path assets,
       slint::ComponentWeakHandle<MainWindow> window,
+      std::shared_ptr<RightPanelController> right_panel,
       const bool restore_initial_workspace)
       : endpoint_(endpoint), navigation_endpoint_(std::move(endpoint)),
         current_workspace_(workspace),
@@ -73,6 +76,7 @@ public:
         navigation_model_(std::move(navigation_model)),
         navigation_(std::move(navigation)), assets_(std::move(assets)),
         window_(std::move(window)),
+        right_panel_(std::move(right_panel)),
         restore_initial_workspace_(restore_initial_workspace),
         worker_([this](std::stop_token stop) { run(stop); }) {}
 
@@ -642,6 +646,17 @@ public:
             handle->set_workspace_presets(preset_model);
           }
         });
+    refresh_right_panel();
+  }
+
+  // Keeps the right panel's Git status and directory tree in step with the
+  // workspace the rest of the window just switched to. Git subprocesses run
+  // on the panel's own worker thread.
+  void refresh_right_panel() {
+    if (!right_panel_)
+      return;
+    right_panel_->set_workspace(current_workspace_);
+    right_panel_->refresh();
   }
 
 private:
@@ -2041,6 +2056,9 @@ private:
   std::vector<CodeLine> full_preview_lines_;
   std::filesystem::path assets_;
   slint::ComponentWeakHandle<MainWindow> window_;
+  // Owns the Git review data and the workspace file tree shown by the right
+  // side panel. Refreshed whenever the active workspace changes.
+  std::shared_ptr<RightPanelController> right_panel_;
   bool restore_initial_workspace_{true};
   std::mutex mutex_;
   std::condition_variable_any condition_;
@@ -2079,6 +2097,7 @@ std::unique_ptr<UiController> make_ui_controller(
     std::shared_ptr<slint::VectorModel<NavigationItem>> navigation_model,
     std::shared_ptr<std::vector<NavigationItem>> navigation,
     std::filesystem::path assets, slint::ComponentWeakHandle<MainWindow> window,
+    std::shared_ptr<RightPanelController> right_panel,
     const bool restore_initial_workspace) {
   return std::make_unique<UiControllerImpl>(
       std::move(endpoint), std::move(workspace), std::move(daemon_executable),
@@ -2086,7 +2105,7 @@ std::unique_ptr<UiController> make_ui_controller(
       std::move(assistant_blocks), std::move(code),
       std::move(trace_events), std::move(gantt), std::move(navigation_model),
       std::move(navigation), std::move(assets), std::move(window),
-      restore_initial_workspace);
+      std::move(right_panel), restore_initial_workspace);
 }
 
 } // namespace tokmon::desktop

@@ -1,29 +1,531 @@
-import { ListView, ScrollView } from "std-widgets.slint";
+import { ScrollView } from "std-widgets.slint";
 import { Palette, Icons } from "tokmon-theme.slint";
-import { CodeLine, ProjectFile } from "tokmon-models.slint";
+import { ReviewFile, DiffLine, TreeItem, RightTab } from "tokmon-models.slint";
 import { ToolIcon, MenuOption } from "tokmon-components.slint";
+
+// A single row of the unified (inline) diff. Every row keeps one fixed height
+// so the scroll viewport can measure long files cheaply.
+component UnifiedDiffRow inherits Rectangle {
+    in property <DiffLine> line;
+    callback toggle-hunk(string);
+
+    height: 20px;
+    background: root.line.kind == "delete" ? Palette.diff-del-bg
+        : root.line.kind == "add" ? Palette.diff-add-bg : transparent;
+
+    if root.line.kind == "banner" : Rectangle {
+        x: 8px;
+        y: 2px;
+        width: parent.width - 16px;
+        height: 16px;
+        border-radius: 6px;
+        background: banner-touch.has-hover ? #EAEAEA : Palette.diff-banner-bg;
+        border-width: 1px;
+        border-color: Palette.diff-banner-line;
+        HorizontalLayout {
+            padding-left: 16px;
+            padding-right: 12px;
+            alignment: space-between;
+            Text {
+                text: root.line.banner;
+                font-family: "MiSans VF";
+                font-size: 11px;
+                color: Palette.dim;
+                vertical-alignment: center;
+            }
+            Text {
+                text: root.line.hunk == "expanded" ? "点击折叠" : "点击展开上下文";
+                font-size: 10px;
+                color: Palette.faint;
+                vertical-alignment: center;
+            }
+        }
+        banner-touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.toggle-hunk(root.line.hunk); }
+        }
+    }
+
+    if root.line.kind != "banner" : HorizontalLayout {
+        spacing: 0px;
+        Rectangle {
+            width: 48px;
+            horizontal-stretch: 0;
+            background: root.line.kind == "delete" ? Palette.diff-del-num-bg
+                : root.line.kind == "add" ? Palette.diff-add-num-bg : transparent;
+            Text {
+                x: 0px;
+                width: 40px;
+                height: parent.height;
+                text: root.line.kind == "add" ? root.line.new-num : root.line.old-num;
+                font-family: "MiSans VF";
+                font-size: 11px;
+                font-weight: root.line.kind == "context" ? 400 : 500;
+                color: root.line.kind == "delete" ? Palette.diff-del-num-ink
+                    : root.line.kind == "add" ? Palette.diff-add-num-ink : Palette.faint;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+            }
+            if root.line.kind != "context" : Rectangle {
+                x: parent.width - 1px;
+                width: 1px;
+                height: parent.height;
+                background: root.line.kind == "delete" ? #FCA5A566 : #86EFAC66;
+            }
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+            Text {
+                x: 12px;
+                width: parent.width - 12px;
+                height: parent.height;
+                text: root.line.text == "" ? " " : root.line.text;
+                font-family: "MiSans VF";
+                font-size: 12px;
+                color: root.line.kind == "delete" ? Palette.diff-del-ink
+                    : root.line.kind == "add" ? Palette.diff-add-ink : Palette.ink;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+// A single row of the side-by-side diff. Both columns are always present so
+// the two versions stay vertically aligned across the whole file.
+component SplitDiffRow inherits Rectangle {
+    in property <DiffLine> line;
+
+    height: 20px;
+
+    if root.line.kind == "banner" : Rectangle {
+        x: 8px;
+        y: 2px;
+        width: parent.width - 16px;
+        height: 16px;
+        border-radius: 6px;
+        background: Palette.diff-banner-bg;
+        border-width: 1px;
+        border-color: Palette.diff-banner-line;
+        Text {
+            x: 16px;
+            width: parent.width - 32px;
+            height: parent.height;
+            text: root.line.banner;
+            font-family: "MiSans VF";
+            font-size: 11px;
+            color: Palette.dim;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    if root.line.kind != "banner" : HorizontalLayout {
+        spacing: 0px;
+        Rectangle {
+            horizontal-stretch: 1;
+            background: root.line.kind == "delete" ? Palette.diff-del-bg : transparent;
+            Text {
+                x: 8px;
+                height: parent.height;
+                text: (root.line.kind == "add" || root.line.old-num == "")
+                    ? "" : (root.line.old-num + "  " + root.line.text);
+                font-family: "MiSans VF";
+                font-size: 12px;
+                color: root.line.kind == "delete" ? Palette.diff-del-ink : Palette.ink;
+                vertical-alignment: center;
+            }
+            Rectangle {
+                x: parent.width - 1px;
+                width: 1px;
+                height: parent.height;
+                background: Palette.border;
+            }
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+            background: root.line.kind == "add" ? Palette.diff-add-bg
+                : root.line.kind == "delete" ? Palette.diff-del-empty : transparent;
+            Text {
+                x: 8px;
+                height: parent.height;
+                text: (root.line.kind == "delete" || root.line.new-num == "")
+                    ? "" : (root.line.new-num + "  " + root.line.text);
+                font-family: "MiSans VF";
+                font-size: 12px;
+                color: root.line.kind == "add" ? Palette.diff-add-ink : Palette.ink;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+// Pill-shaped closable tab in the right panel header.
+component RightTabPill inherits Rectangle {
+    in property <string> title;
+    in property <bool> active;
+    in property <image> icon;
+    callback picked();
+    callback closed();
+
+    height: 28px;
+    border-radius: 999px;
+    background: root.active ? Palette.white
+        : (pill-touch.has-hover ? Palette.hover-soft : transparent);
+    border-width: root.active ? 0.67px : 0px;
+    border-color: Palette.card-line;
+    drop-shadow-color: root.active ? Palette.shadow : transparent;
+    drop-shadow-offset-y: root.active ? 1px : 0px;
+    drop-shadow-blur: root.active ? 1px : 0px;
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: root.active ? 8px : 12px;
+        spacing: 6px;
+        alignment: start;
+        Image {
+            source: root.icon;
+            width: 14px;
+            height: 14px;
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            text: root.title;
+            font-size: 12.5px;
+            font-weight: root.active ? 500 : 400;
+            color: root.active ? Palette.ink : Palette.dim;
+            vertical-alignment: center;
+        }
+        if root.active : Rectangle {
+            width: 16px;
+            height: 16px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 999px;
+            background: close-touch.has-hover ? Palette.hover-soft : transparent;
+            Image {
+                source: Icons.close;
+                width: 9px;
+                height: 9px;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                colorize: close-touch.has-hover ? Palette.ink : Palette.faint;
+            }
+        }
+    }
+    close-touch := TouchArea {
+        // Overlay only the trailing close hit box; the pill itself picks the tab.
+        x: parent.width - 26px;
+        width: 26px;
+        height: 28px;
+        visible: root.active;
+        mouse-cursor: pointer;
+        clicked => { root.closed(); }
+    }
+    pill-touch := TouchArea {
+        width: parent.width - (root.active ? 26px : 0px);
+        height: parent.height;
+        mouse-cursor: pointer;
+        clicked => { root.picked(); }
+    }
+}
+
+// One row of the changed-files list in the review sidebar.
+component ReviewFileRow inherits Rectangle {
+    in property <ReviewFile> file;
+    in property <bool> active;
+    callback picked();
+
+    height: root.file.show-folder ? 42px : 26px;
+    clip: true;
+
+    if root.file.show-folder : Rectangle {
+        height: 16px;
+        Image {
+            source: Icons.chev-down-faint;
+            x: 6px;
+            y: (parent.height - 5px) / 2;
+            width: 9px;
+            height: 5px;
+        }
+        Text {
+            x: 20px;
+            width: parent.width - 40px;
+            height: parent.height;
+            text: root.file.display-folder;
+            font-family: "MiSans VF";
+            font-size: 11px;
+            color: Palette.dim;
+            overflow: elide;
+            vertical-alignment: center;
+        }
+        Rectangle {
+            x: parent.width - 14px;
+            y: (parent.height - 6px) / 2;
+            width: 6px;
+            height: 6px;
+            border-radius: 999px;
+            background: root.file.status == "added" ? Palette.green
+                : root.file.status == "deleted" ? #DC2626 : Palette.accent;
+        }
+    }
+    file-row := Rectangle {
+        y: root.file.show-folder ? 18px : 0px;
+        height: 24px;
+        border-radius: 8px;
+        background: root.active ? Palette.white
+            : (row-touch.has-hover ? Palette.hover-soft : transparent);
+        border-width: root.active ? 0.67px : 0px;
+        border-color: Palette.card-line;
+        drop-shadow-color: root.active ? Palette.shadow : transparent;
+        drop-shadow-offset-y: root.active ? 1px : 0px;
+        drop-shadow-blur: root.active ? 1px : 0px;
+        Image {
+            source: Icons.doc;
+            x: 8px;
+            y: (parent.height - 13px) / 2;
+            width: 13px;
+            height: 13px;
+        }
+        Text {
+            x: 27px;
+            width: parent.width - 58px;
+            height: parent.height;
+            text: root.file.display-name;
+            font-family: "MiSans VF";
+            font-size: 11.5px;
+            font-weight: root.active ? 500 : 400;
+            color: root.active ? Palette.ink : Palette.strong;
+            overflow: elide;
+            vertical-alignment: center;
+        }
+        Rectangle {
+            x: parent.width - 26px;
+            y: (parent.height - 16px) / 2;
+            width: 18px;
+            height: 16px;
+            border-radius: 4px;
+            background: root.file.status == "added" ? #DCFCE7
+                : root.file.status == "deleted" ? #FEE2E2
+                : root.file.status == "renamed" ? #DBEAFE : Palette.chip;
+            Text {
+                width: parent.width;
+                height: parent.height;
+                text: root.file.status == "added" ? "A"
+                    : root.file.status == "deleted" ? "D"
+                    : root.file.status == "renamed" ? "R" : "M";
+                font-family: "MiSans VF";
+                font-size: 10px;
+                font-weight: 700;
+                color: root.file.status == "added" ? Palette.green-ink
+                    : root.file.status == "deleted" ? #B91C1C
+                    : root.file.status == "renamed" ? #1D4ED8 : Palette.chip-ink;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+        row-touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.picked(); }
+        }
+    }
+}
+
+// Directory tree row for the workspace "open file" sidebar.
+component TreeRow inherits Rectangle {
+    in property <TreeItem> item;
+    in property <bool> active;
+    callback picked();
+
+    height: 26px;
+    property <length> content-x: 6px + root.item.depth * 14px;
+    border-radius: 6px;
+    background: root.active ? Palette.accent-bg
+        : (row-touch.has-hover ? Palette.sep : transparent);
+    clip: true;
+    if root.item.kind == "folder" : Image {
+        source: root.item.expanded ? Icons.chev-down-faint : Icons.chev-right-faint;
+        x: root.content-x;
+        y: (parent.height - 6px) / 2;
+        width: 9px;
+        height: 6px;
+    }
+    if root.item.kind == "file" : Image {
+        source: Icons.doc;
+        x: root.content-x;
+        y: (parent.height - 12px) / 2;
+        width: 12px;
+        height: 12px;
+    }
+    Text {
+        x: root.content-x + (root.item.kind == "folder" ? 15px : 18px);
+        width: parent.width - self.x - 8px;
+        height: parent.height;
+        text: root.item.name;
+        font-family: "MiSans VF";
+        font-size: root.item.kind == "folder" ? 12px : 11.5px;
+        font-weight: root.active ? 600 : 400;
+        color: root.active ? Palette.accent-text : (root.item.kind == "folder" ? Palette.strong : Palette.dim);
+        overflow: elide;
+        vertical-alignment: center;
+    }
+    row-touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.picked(); }
+    }
+}
+
+// Frameless filter field reused by both right-panel sidebars.
+component PanelFilter inherits Rectangle {
+    in-out property <string> text;
+    in property <string> placeholder;
+    callback edited(string);
+
+    height: 26px;
+    border-radius: 8px;
+    background: field.has-focus ? Palette.white : Palette.pill;
+    border-width: 1px;
+    border-color: field.has-focus ? rgba(200, 106, 40, 0.4) : transparent;
+    animate background { duration: 150ms; }
+    animate border-color { duration: 150ms; }
+    Image {
+        source: Icons.search;
+        x: 8px;
+        y: (parent.height - 12px) / 2;
+        width: 12px;
+        height: 12px;
+    }
+    field := TextInput {
+        x: 26px;
+        width: parent.width - 34px;
+        height: parent.height;
+        vertical-alignment: center;
+        font-size: 11.5px;
+        color: Palette.body;
+        text <=> root.text;
+        edited => { root.edited(self.text); }
+    }
+    if root.text == "" : Text {
+        x: 26px;
+        height: parent.height;
+        text: root.placeholder;
+        font-size: 11.5px;
+        color: Palette.faint;
+        vertical-alignment: center;
+    }
+}
+
+// Launcher entry: icon + label + keyboard hint, matching the prototype card.
+component LauncherEntry inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <string> shortcut;
+    callback chosen();
+
+    height: 56px;
+    border-radius: 16px;
+    background: entry-touch.has-hover ? Palette.hover-soft : transparent;
+    border-width: 1px;
+    border-color: entry-touch.has-hover ? Palette.card-line : transparent;
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 14px;
+        alignment: space-between;
+        HorizontalLayout {
+            spacing: 12px;
+            alignment: start;
+            Image {
+                source: root.icon;
+                width: 16px;
+                height: 16px;
+                y: (parent.height - 16px) / 2;
+                colorize: entry-touch.has-hover ? Palette.accent : Palette.dim;
+            }
+            Text {
+                text: root.label;
+                font-size: 13.5px;
+                font-weight: 500;
+                color: Palette.ink;
+                vertical-alignment: center;
+            }
+        }
+        Rectangle {
+            height: 20px;
+            border-radius: 999px;
+            background: Palette.white;
+            border-width: 1px;
+            border-color: Palette.card-line;
+            horizontal-stretch: 0;
+            HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 10px;
+                Text {
+                    text: root.shortcut;
+                    font-family: "MiSans VF";
+                    font-size: 11px;
+                    color: Palette.faint;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+    entry-touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.chosen(); }
+    }
+}
 
 export component CodePanelSlot inherits Rectangle {
     in property <bool> code-visible;
     in property <length> host-width;
     in property <bool> sidebar-visible;
     in property <length> sidebar-width;
-    in property <[ProjectFile]> project-files;
-    in property <[CodeLine]> code-lines;
-    in property <[CodeLine]> preview-lines;
-    in property <int> file-added-lines;
-    in property <string> selected-file-name;
-    in property <string> preview-content;
     in property <string> status-text;
-    in property <string> trace-result;
-    in property <string> assistant-text;
+
+    // Tabs: an empty list means the launcher screen is showing.
+    in-out property <[RightTab]> right-tabs;
+    in-out property <string> right-tab: "launcher";
+
+    // Review (Git diff) state
+    in-out property <[ReviewFile]> review-files;
+    in-out property <[DiffLine]> diff-lines;
+    in-out property <string> current-branch;
+    in-out property <[string]> branch-options;
+    in-out property <int> review-added: 0;
+    in-out property <int> review-removed: 0;
+    in-out property <int> review-list-height: 0;
+    in-out property <string> selected-review-file-id;
+    in-out property <string> selected-review-path;
+    in-out property <int> selected-review-added: 0;
+    in-out property <int> selected-review-removed: 0;
+    in-out property <string> review-file-search;
+    in-out property <string> diff-view-mode: "unified";
+    in-out property <bool> file-list-visible: true;
+    // Widest diff row in device pixels, so long lines scroll horizontally
+    // instead of being clipped.
+    in-out property <length> diff-content-width: 0px;
+
+    // Workspace tree state
+    in-out property <[TreeItem]> tree-items;
+    in-out property <string> tree-search;
+    in-out property <string> tree-file-name;
+    in-out property <string> tree-file-content;
+    in-out property <string> tree-selected-path;
+    in-out property <string> workspace-tree-label;
+    in-out property <bool> workspace-tree-visible: true;
+
+    // Popovers
+    in-out property <bool> branch-menu-open: false;
+    in-out property <bool> git-menu-open: false;
+    in-out property <bool> commit-modal-open: false;
+    in-out property <string> commit-message;
+    in-out property <bool> push-immediately: true;
+    in-out property <string> staged-summary;
+
+    // Toast feedback
+    in-out property <string> toast-text;
+    in-out property <bool> toast-visible: false;
+
     in-out property <length> code-panel-width;
-    in-out property <bool> file-preview-selected;
-    in-out property <bool> code-menu-open;
-    in-out property <bool> file-menu-open;
-    in-out property <bool> copy-notice-visible;
-    in-out property <string> preview-search;
-    in-out property <bool> issues-open;
+    in-out property <bool> maximized: false;
 
     callback return-focus();
     callback drag-window();
@@ -33,502 +535,999 @@ export component CodePanelSlot inherits Rectangle {
     callback toggle-maximize-window();
     callback close-window();
     callback set-code-panel-visible(bool);
-    callback select-project-file(int);
-    callback reconcile();
-    callback copy-text(string);
-    callback filter-preview(string);
-                width: root.code-visible ? root.code-panel-width + 1px : 0px;
-                horizontal-stretch: 0;
-                vertical-stretch: 1;
-                background: transparent;
-                Rectangle {
-                    visible: root.code-visible;
-                    x: 0px;
-                    width: 1px;
-                    height: parent.height;
-                    background: cpt.has-hover || cpt.pressed ? Palette.accent : Palette.line-soft;
-                    cpt := TouchArea {
-                        x: -3px;
-                        width: 7px;
-                        moved => {
-                            root.code-panel-width = Math.max(320px,
-                                Math.min(Math.min(720px, root.host-width
-                                    - (root.sidebar-visible ? root.sidebar-width + 1px : 0px)
-                                    - 481px),
-                                root.code-panel-width - (self.mouse-x - self.pressed-x)));
+    callback open-right-tab(string);
+    callback close-right-tab(string);
+    callback add-right-tab();
+    callback toggle-panel-maximized();
+    callback select-review-file(string);
+    callback switch-branch(string);
+    callback toggle-diff-view();
+    callback toggle-file-list();
+    callback reveal-in-explorer();
+    callback stage-all();
+    callback refresh-review();
+    callback discard-unstaged();
+    callback commit-and-push(string, bool);
+    callback toggle-hunk(string);
+    callback select-tree-item(int);
+    callback filter-tree(string);
+    callback filter-review-files(string);
+    callback dismiss-toast();
+
+    toggle-diff-view => {
+        root.diff-view-mode = root.diff-view-mode == "unified" ? "split" : "unified";
+    }
+    toggle-file-list => { root.file-list-visible = !root.file-list-visible; }
+
+    width: root.code-visible ? root.code-panel-width + 1px : 0px;
+    horizontal-stretch: 0;
+    vertical-stretch: 1;
+    background: transparent;
+
+    Timer {
+        interval: 2500ms;
+        running: root.toast-visible;
+        triggered => {
+            root.toast-visible = false;
+            root.dismiss-toast();
+        }
+    }
+
+    Rectangle {
+        visible: root.code-visible;
+        x: 0px;
+        width: 1px;
+        height: parent.height;
+        background: cpt.has-hover || cpt.pressed ? Palette.accent : Palette.line-soft;
+        cpt := TouchArea {
+            x: -3px;
+            width: 7px;
+            moved => {
+                root.code-panel-width = Math.max(320px,
+                    Math.min(Math.min(720px, root.host-width
+                        - (root.sidebar-visible ? root.sidebar-width + 1px : 0px)
+                        - 481px),
+                    root.code-panel-width - (self.mouse-x - self.pressed-x)));
+            }
+            mouse-cursor: ew-resize;
+        }
+    }
+
+    Rectangle {
+        visible: root.code-visible;
+        x: 1px;
+        width: root.code-panel-width;
+        height: parent.height;
+        background: Palette.surface;
+
+        // ---- Header: closable tabs, new tab, panel and window actions ----
+        Rectangle {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: 46px;
+            HorizontalLayout {
+                x: 0px;
+                y: 0px;
+                width: parent.width;
+                height: parent.height;
+                padding-left: 10px;
+                padding-right: 4px;
+                spacing: 0px;
+                alignment: start;
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: start;
+                    horizontal-stretch: 0;
+                    for tab in root.right-tabs : RightTabPill {
+                        title: tab.title;
+                        icon: tab.id == "review" ? Icons.review : Icons.folder-dim;
+                        active: root.right-tab == tab.id;
+                        picked => { root.right-tab = tab.id; root.return-focus(); }
+                        closed => { root.close-right-tab(tab.id); }
+                    }
+                    Rectangle {
+                        width: 24px;
+                        height: 24px;
+                        y: (parent.height - self.height) / 2;
+                        border-radius: 999px;
+                        horizontal-stretch: 0;
+                        background: add-touch.has-hover ? Palette.hover-soft : transparent;
+                        Image {
+                            source: Icons.plus-dim;
+                            width: 14px;
+                            height: 14px;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
                         }
-                        mouse-cursor: ew-resize;
+                        add-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.add-right-tab(); }
+                        }
                     }
                 }
+                // Draggable spacer: only this blank stretch moves the native
+                // window, leaving every button independently clickable.
                 Rectangle {
-                    visible: root.code-visible;
-                    x: 1px;
-                    width: root.code-panel-width;
-                    height: parent.height;
-                    clip: true;
-                    // Same surface tone as the middle column so the rail does
-                    // not read as a different-colored panel.
-                    background: Palette.surface;
-                VerticalLayout {
-                    Rectangle {
-                        height: 46px;
-                        code-header-content := HorizontalLayout {
-                            padding-left: 16px;
-                            padding-right: 4px;
-                            spacing: 0px;
-                            alignment: start;
-                            code-header-tabs := HorizontalLayout {
-                                // Reserve the complete tab hit targets before the
-                                // flexible draggable spacer begins.
-                                width: 200px;
-                                spacing: 24px;
-                                alignment: start;
-                                horizontal-stretch: 0;
-                                Rectangle {
-                                    width: ct1.width + 4px;
-                                    horizontal-stretch: 0;
-                                    ct1 := Text {
-                                        y: (parent.height - self.preferred-height) / 2;
-                                        text: "代码审阅";
-                                        font-size: 12.5px;
-                                        font-weight: root.file-preview-selected ? 500 : 700;
-                                        color: root.file-preview-selected ? (code-tab-touch.has-hover ? Palette.ink : Palette.dim) : Palette.accent-text;
-                                    }
-                                    Rectangle {
-                                        y: parent.height - 2px;
-                                        height: 2px;
-                                        width: parent.width;
-                                        background: root.file-preview-selected ? transparent : Palette.accent;
-                                    }
-                                    code-tab-touch := TouchArea {
-                                        clicked => { root.file-preview-selected = false; root.return-focus(); }
-                                        mouse-cursor: pointer;
-                                    }
-                                }
-                                Rectangle {
-                                    width: ct2.width + 4px;
-                                    horizontal-stretch: 0;
-                                    ct2 := Text {
-                                        y: (parent.height - self.preferred-height) / 2;
-                                        text: "文件预览";
-                                        font-size: 12.5px;
-                                        font-weight: root.file-preview-selected ? 700 : 500;
-                                        color: root.file-preview-selected ? Palette.accent-text : (preview-tab-touch.has-hover ? Palette.ink : Palette.dim);
-                                    }
-                                    Rectangle {
-                                        y: parent.height - 2px;
-                                        height: 2px;
-                                        width: parent.width;
-                                        background: root.file-preview-selected ? Palette.accent : transparent;
-                                    }
-                                    preview-tab-touch := TouchArea {
-                                        clicked => { root.file-preview-selected = true; root.return-focus(); }
-                                        mouse-cursor: pointer;
-                                    }
-                                }
-                            }
-                            // Only this auto-sized blank spacer starts native
-                            // window movement. Tabs and window buttons remain
-                            // independent hover/click targets at every width.
-                            Rectangle {
-                                min-width: 0px;
-                                preferred-width: 100000px;
-                                max-width: 100000px;
-                                horizontal-stretch: 1;
-                                TouchArea {
-                                    x: 0px;
-                                    y: 7px;
-                                    width: parent.width;
-                                    height: parent.height - self.y;
-                                    pointer-event(event) => {
-                                        if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
-                                            root.return-focus();
-                                            root.drag-window();
-                                        } else if event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel {
-                                            root.end-window-drag();
-                                        }
-                                    }
-                                    moved => {
-                                        if self.pressed {
-                                            root.update-window-drag();
-                                        }
-                                    }
-                                }
-                            }
-                            code-window-actions := HorizontalLayout {
-                                spacing: 0px;
-                                horizontal-stretch: 0;
-                                ToolIcon { source: Icons.minus; icon-size: 14px; clicked => { root.minimize-window() } }
-                                ToolIcon { source: Icons.stop; icon-size: 12px; clicked => { root.toggle-maximize-window() } }
-                                ToolIcon { source: Icons.close; icon-size: 14px; clicked => { root.close-window() } }
+                    min-width: 0px;
+                    preferred-width: 100000px;
+                    max-width: 100000px;
+                    horizontal-stretch: 1;
+                    TouchArea {
+                        x: 0px;
+                        y: 6px;
+                        width: parent.width;
+                        height: parent.height - self.y;
+                        pointer-event(event) => {
+                            if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                                root.return-focus();
+                                root.drag-window();
+                            } else if event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel {
+                                root.end-window-drag();
                             }
                         }
-                        Rectangle {
-                            y: parent.height - 0.67px;
-                            width: parent.width;
-                            height: 0.67px;
-                            background: Palette.line-soft;
+                        moved => {
+                            if self.pressed {
+                                root.update-window-drag();
+                            }
                         }
                     }
-                    if !root.file-preview-selected : Rectangle {
-                        height: 34px;
-                        background: Palette.surface;
+                }
+                HorizontalLayout {
+                    spacing: 2px;
+                    alignment: end;
+                    horizontal-stretch: 0;
+                    // This edge of the frameless window owns the native window
+                    // controls. Panel expand/collapse stays on the divider rail;
+                    // do not duplicate the prototype's panel buttons here.
+                    ToolIcon { source: Icons.minus; icon-size: 14px; clicked => { root.minimize-window() } }
+                    ToolIcon { source: Icons.stop; icon-size: 12px; clicked => { root.toggle-maximize-window() } }
+                    ToolIcon { source: Icons.close; icon-size: 14px; clicked => { root.close-window() } }
+                }
+            }
+            Rectangle {
+                y: parent.height - 0.67px;
+                height: 0.67px;
+                width: parent.width;
+                background: Palette.line-soft;
+            }
+        }
+
+        // ================= VIEW 1: LAUNCHER (no tabs open) =================
+        if root.right-tab == "launcher" : Rectangle {
+            width: parent.width;
+            y: 46px;
+            height: parent.height - self.y;
+            Rectangle {
+                width: Math.min(260px, parent.width - 40px);
+                height: 122px;
+                x: (parent.width - self.width) / 2;
+                y: Math.max(16px, (parent.height - self.height) / 2);
+                VerticalLayout {
+                    spacing: 10px;
+                    LauncherEntry {
+                        icon: Icons.review;
+                        label: "审查";
+                        shortcut: "Ctrl+Shift+G";
+                        chosen => { root.open-right-tab("review"); }
+                    }
+                    LauncherEntry {
+                        icon: Icons.folder-dim;
+                        label: "文件";
+                        shortcut: "Ctrl+P";
+                        chosen => { root.open-right-tab("openFile"); }
+                    }
+                }
+            }
+        }
+
+        // ================= VIEW 2: CODE REVIEW (GIT DIFF) =================
+        if root.right-tab == "review" : Rectangle {
+            width: parent.width;
+            y: 46px;
+            height: parent.height - self.y;
+            VerticalLayout {
+                spacing: 0px;
+                // Git toolbar
+                Rectangle {
+                    height: 42px;
+                    branch-control := Rectangle {
+                        x: 12px;
+                        y: 8px;
+                        width: 54px;
+                        height: 26px;
+                        border-radius: 8px;
+                        background: branch-touch.has-hover ? Palette.sep : transparent;
+                        Text {
+                            x: 8px;
+                            width: 28px;
+                            height: parent.height;
+                            text: "分支";
+                            font-size: 12.5px;
+                            font-weight: 500;
+                            color: Palette.ink;
+                            vertical-alignment: center;
+                        }
+                        Image {
+                            source: Icons.chev-down-faint;
+                            x: 39px;
+                            y: (parent.height - 5px) / 2;
+                            width: 9px;
+                            height: 5px;
+                        }
+                        branch-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.branch-menu-open = !root.branch-menu-open; }
+                        }
+                    }
+                    HorizontalLayout {
+                        x: 76px;
+                        y: 8px;
+                        width: 68px;
+                        height: 26px;
+                        spacing: 4px;
+                        alignment: start;
+                        Text {
+                            text: "+" + root.review-added;
+                            font-family: "MiSans VF";
+                            font-size: 12px;
+                            font-weight: 700;
+                            color: #16A34A;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: "-" + root.review-removed;
+                            font-family: "MiSans VF";
+                            font-size: 12px;
+                            font-weight: 700;
+                            color: #DC2626;
+                            vertical-alignment: center;
+                        }
+                    }
+                    if root.code-panel-width >= 560px : Text {
+                        x: 154px;
+                        y: 8px;
+                        width: parent.width - self.x - 256px;
+                        height: 26px;
+                        text: root.current-branch + " → origin/" + root.current-branch;
+                        font-family: "MiSans VF";
+                        font-size: 11px;
+                        color: Palette.dim;
+                        overflow: elide;
+                        vertical-alignment: center;
+                    }
+                    Rectangle {
+                        x: parent.width - self.width - 10px;
+                        y: 7px;
+                        width: root.code-panel-width >= 560px ? 236px : 124px;
+                        height: 28px;
                         HorizontalLayout {
-                            padding-left: 14px;
-                            padding-right: 14px;
-                            alignment: space-between;
-                            HorizontalLayout {
-                                spacing: 8px;
-                                alignment: start;
-                                Rectangle {
-                                    height: 22px;
-                                    border-radius: 6px;
-                                    background: Palette.white;
-                                    border-width: 0.67px;
-                                    border-color: Palette.line-faint;
+                            width: parent.width;
+                            height: parent.height;
+                            spacing: 4px;
+                            alignment: end;
+                            ToolIcon {
+                                source: Icons.dots;
+                                icon-size: 14px;
+                                clicked => { root.git-menu-open = !root.git-menu-open; }
+                            }
+                            Rectangle {
+                                width: 28px;
+                                height: 28px;
+                                border-radius: 8px;
+                                horizontal-stretch: 0;
+                                background: root.diff-view-mode == "split" ? Palette.accent-bg
+                                    : (diff-touch.has-hover ? Palette.sep : transparent);
+                                Image {
+                                    source: Icons.diff-split;
+                                    width: 14px;
+                                    height: 14px;
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                    colorize: root.diff-view-mode == "split" ? Palette.accent : Palette.dim;
+                                }
+                                diff-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.toggle-diff-view(); }
+                                }
+                            }
+                            Rectangle {
+                                width: 28px;
+                                height: 28px;
+                                border-radius: 8px;
+                                horizontal-stretch: 0;
+                                background: root.file-list-visible ? Palette.accent-bg
+                                    : (panes-touch.has-hover ? Palette.sep : transparent);
+                                Image {
+                                    source: Icons.panes;
+                                    width: 14px;
+                                    height: 14px;
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                    colorize: root.file-list-visible ? Palette.accent : Palette.dim;
+                                }
+                                panes-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.toggle-file-list(); }
+                                }
+                            }
+                            if root.code-panel-width >= 560px : ToolIcon {
+                                source: Icons.folder-open;
+                                icon-size: 14px;
+                                clicked => { root.reveal-in-explorer(); }
+                            }
+                            Rectangle {
+                                width: root.code-panel-width >= 560px ? 108px : 28px;
+                                height: 28px;
+                                border-radius: 8px;
+                                horizontal-stretch: 0;
+                                background: Palette.white;
+                                border-width: 1px;
+                                border-color: commit-touch.has-hover ? Palette.accent : Palette.border;
+                                HorizontalLayout {
+                                    padding-left: root.code-panel-width >= 560px ? 8px : 7px;
+                                    padding-right: root.code-panel-width >= 560px ? 6px : 7px;
+                                    spacing: 4px;
+                                    Image {
+                                        source: Icons.commit;
+                                        width: 14px;
+                                        height: 14px;
+                                        y: (parent.height - 14px) / 2;
+                                    }
+                                    if root.code-panel-width >= 560px : Text {
+                                        text: "提交或推送";
+                                        font-size: 12px;
+                                        font-weight: 500;
+                                        color: Palette.ink;
+                                        vertical-alignment: center;
+                                    }
+                                    if root.code-panel-width >= 560px : Image {
+                                        source: Icons.chev-down-faint;
+                                        width: 9px;
+                                        height: 5px;
+                                        y: (parent.height - 5px) / 2;
+                                    }
+                                }
+                                commit-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.commit-modal-open = !root.commit-modal-open; }
+                                }
+                            }
+                        }
+                    }
+                    Rectangle {
+                        y: parent.height - 0.67px;
+                        height: 0.67px;
+                        width: parent.width;
+                        background: Palette.line-soft;
+                    }
+                }
+                // Diff body: viewer plus the optional changed-files list
+                HorizontalLayout {
+                    vertical-stretch: 1;
+                    spacing: 0px;
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        clip: true;
+                        VerticalLayout {
+                            spacing: 0px;
+                            Rectangle {
+                                height: 34px;
+                                HorizontalLayout {
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    alignment: space-between;
                                     HorizontalLayout {
-                                        padding-left: 8px;
-                                        padding-right: 8px;
-                                        spacing: 4px;
-                                        Image { source: Icons.file-code; width: 13px; height: 13px; y: (parent.height - 13px) / 2; }
+                                        spacing: 6px;
+                                        alignment: start;
+                                        Image {
+                                            source: Icons.doc;
+                                            width: 13px;
+                                            height: 13px;
+                                            y: (parent.height - 13px) / 2;
+                                        }
                                         Text {
-                                            text: root.selected-file-name == "" ? (root.project-files.length > 0 ? root.project-files[0].name : "会话文件") : root.selected-file-name;
+                                            horizontal-stretch: 1;
+                                            text: root.selected-review-path;
                                             font-family: "MiSans VF";
                                             font-size: 12px;
                                             font-weight: 500;
-                                            color: Palette.strong;
-                                            vertical-alignment: center;
-                                        }
-                                        Image { source: Icons.chev-down-faint; width: 9px; height: 5px; y: (parent.height - 5px) / 2; }
-                                    }
-                                    TouchArea {
-                                        clicked => { root.code-menu-open = false; root.file-menu-open = !root.file-menu-open }
-                                        mouse-cursor: pointer;
-                                    }
-                                    if root.file-menu-open : Rectangle {
-                                        x: 0px;
-                                        y: parent.height + 6px;
-                                        width: 220px;
-                                        height: Math.min(root.project-files.length, 8) * 30px + 8px;
-                                        background: Palette.white;
-                                        border-radius: 12px;
-                                        border-width: 0.67px;
-                                        border-color: Palette.border;
-                                        drop-shadow-color: rgba(0, 0, 0, 0.14);
-                                        drop-shadow-offset-y: 5px;
-                                        drop-shadow-blur: 14px;
-                                        // Dismiss catcher below the file rows: a topmost
-                                        // TouchArea would swallow their clicks.
-                                        TouchArea { clicked => { root.file-menu-open = false } }
-                                        VerticalLayout {
-                                            padding: 4px;
-                                            if root.project-files.length == 0 : Text {
-                                                text: "会话尚未产生文件投影";
-                                                font-size: 11px;
-                                                color: Palette.faint;
-                                                horizontal-alignment: center;
-                                                vertical-alignment: center;
-                                                height: 26px;
-                                            }
-                                            ScrollView {
-                                                viewport-height: root.project-files.length * 30px;
-                                                VerticalLayout {
-                                                    for file[fi] in root.project-files : MenuOption {
-                                                        label: file.name;
-                                                        active: file.name == root.selected-file-name;
-                                                        chosen => {
-                                                            root.select-project-file(fi);
-                                                            root.file-menu-open = false;
-                                                            root.return-focus();
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                Rectangle {
-                                    height: 20px;
-                                    border-radius: 4px;
-                                    background: #DCFCE7;
-                                    HorizontalLayout {
-                                        padding-left: 6px;
-                                        padding-right: 6px;
-                                        Text {
-                                            text: "+" + (root.file-added-lines == 0 ? root.code-lines.length : root.file-added-lines) + " -0";
-                                            font-family: "MiSans VF";
-                                            font-size: 11px;
-                                            font-weight: 700;
-                                            color: #15803D;
+                                            color: Palette.ink;
+                                            overflow: elide;
                                             vertical-alignment: center;
                                         }
                                     }
-                                }
-                            }
-                            HorizontalLayout {
-                                spacing: 6px;
-                                alignment: end;
-                                ToolIcon { source: Icons.download; icon-size: 13px; clicked => { root.reconcile() } }
-                            }
-                        }
-                    }
-                    if !root.file-preview-selected : ListView {
-                        vertical-stretch: 1;
-                        for line in root.code-lines : Rectangle {
-                            height: 22px;
-                            HorizontalLayout {
-                                Text {
-                                    width: 40px;
-                                    horizontal-stretch: 0;
-                                    text: line.number;
-                                    font-family: "MiSans VF";
-                                    font-size: 11px;
-                                    color: Palette.faint;
-                                    horizontal-alignment: right;
-                                    vertical-alignment: center;
-                                }
-                                Text {
-                                    horizontal-stretch: 1;
-                                    text: line.text == "" ? " " : line.text;
-                                    font-family: "MiSans VF";
-                                    font-size: 12px;
-                                    color: line.tone == "comment" ? #99A1AF : #1E2939;
-                                    overflow: elide;
-                                    vertical-alignment: center;
-                                }
-                            }
-                        }
-                    }
-                    if root.file-preview-selected : Rectangle {
-                        vertical-stretch: 1;
-                        VerticalLayout {
-                            padding: 12px;
-                            spacing: 10px;
-                            if root.copy-notice-visible : Rectangle {
-                                height: 34px;
-                                border-radius: 8px;
-                                background: Palette.green-bg;
-                                border-width: 0.67px;
-                                border-color: Palette.green-line;
-                                HorizontalLayout {
-                                    padding-left: 9px;
-                                    padding-right: 7px;
-                                    alignment: space-between;
-                                    Text {
-                                        text: "✓ 已成功复制全条字幕内容！";
-                                        font-size: 12px;
-                                        color: Palette.green-ink;
-                                        vertical-alignment: center;
-                                    }
-                                    ToolIcon {
-                                        source: Icons.close;
-                                        icon-size: 12px;
-                                        clicked => { root.copy-notice-visible = false }
-                                    }
-                                }
-                            }
-                            HorizontalLayout {
-                                alignment: space-between;
-                                Text {
-                                    text: "内容预览" + (root.selected-file-name == "" ? "" : " · " + root.selected-file-name);
-                                    font-size: 12.5px;
-                                    font-weight: 600;
-                                    color: Palette.ink;
-                                    vertical-alignment: center;
-                                }
-                                Rectangle {
-                                    height: 24px;
-                                    border-radius: 8px;
-                                    background: Palette.sep;
-                                    border-width: 0.67px;
-                                    border-color: Palette.border;
                                     HorizontalLayout {
-                                        padding-left: 8px;
-                                        padding-right: 8px;
                                         spacing: 4px;
-                                        Image { source: Icons.doc; width: 11px; height: 11px; y: (parent.height - 11px) / 2; }
-                                        Text { text: "复制内容"; font-size: 11px; font-weight: 500; color: Palette.mid; vertical-alignment: center; }
-                                    }
-                                    TouchArea {
-                                        clicked => {
-                                            root.copy-text(root.preview-content);
-                                            root.copy-notice-visible = true;
+                                        alignment: end;
+                                        Text {
+                                            text: "+" + root.selected-review-added;
+                                            font-family: "MiSans VF";
+                                            font-size: 11.5px;
+                                            font-weight: 600;
+                                            color: #16A34A;
+                                            vertical-alignment: center;
                                         }
-                                        mouse-cursor: pointer;
+                                        Text {
+                                            text: "-" + root.selected-review-removed;
+                                            font-family: "MiSans VF";
+                                            font-size: 11.5px;
+                                            font-weight: 600;
+                                            color: #DC2626;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+                                Rectangle {
+                                    y: parent.height - 0.67px;
+                                    height: 0.67px;
+                                    width: parent.width;
+                                    background: Palette.line-soft;
+                                }
+                            }
+                            if root.diff-view-mode == "split" : Rectangle {
+                                height: 24px;
+                                HorizontalLayout {
+                                    spacing: 0px;
+                                    Rectangle {
+                                        horizontal-stretch: 1;
+                                        background: #FAFAFA;
+                                        Text {
+                                            x: 8px;
+                                            height: parent.height;
+                                            text: "原版本 (Original)";
+                                            font-size: 11px;
+                                            color: Palette.dim;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                    Rectangle {
+                                        horizontal-stretch: 1;
+                                        background: #FAFAFA;
+                                        Rectangle {
+                                            x: 0px;
+                                            width: 1px;
+                                            height: parent.height;
+                                            background: Palette.border;
+                                        }
+                                        Text {
+                                            x: 8px;
+                                            height: parent.height;
+                                            text: "修改后 (Modified)";
+                                            font-size: 11px;
+                                            color: Palette.dim;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+                                Rectangle {
+                                    y: parent.height - 0.67px;
+                                    height: 0.67px;
+                                    width: parent.width;
+                                    background: Palette.border;
+                                }
+                            }
+                            if root.diff-lines.length > 0 : ScrollView {
+                                vertical-stretch: 1;
+                                viewport-width: root.diff-content-width;
+                                viewport-height: root.diff-lines.length * 20px + 8px;
+                                VerticalLayout {
+                                    if root.diff-view-mode == "unified" : Rectangle {
+                                        height: root.diff-lines.length * 20px;
+                                        for line in root.diff-lines : UnifiedDiffRow {
+                                            line: line;
+                                            toggle-hunk(hunk) => { root.toggle-hunk(hunk); }
+                                        }
+                                    }
+                                    if root.diff-view-mode == "split" : Rectangle {
+                                        height: root.diff-lines.length * 20px;
+                                        for line in root.diff-lines : SplitDiffRow {
+                                            line: line;
+                                        }
                                     }
                                 }
                             }
-                            // Frameless filter field matching the sidebar search:
-                            // warm fill, no border, soft focus glow.
-                            Rectangle {
-                                height: 28px;
-                                border-radius: 8px;
-                                background: preview-q.has-focus ? Palette.white : Palette.pill;
-                                border-width: 1px;
-                                border-color: preview-q.has-focus ? rgba(200, 106, 40, 0.4) : transparent;
-                                animate background { duration: 150ms; }
-                                animate border-color { duration: 150ms; }
-                                Image {
-                                    source: Icons.search;
-                                    x: 9px;
-                                    y: (parent.height - 13px) / 2;
-                                    width: 13px;
-                                    height: 13px;
-                                }
-                                preview-q := TextInput {
-                                    x: 29px;
-                                    width: parent.width - 37px;
+                            if root.diff-lines.length == 0 : Rectangle {
+                                vertical-stretch: 1;
+                                Text {
+                                    width: parent.width;
                                     height: parent.height;
-                                    vertical-alignment: center;
-                                    font-size: 12px;
-                                    color: Palette.body;
-                                    text <=> root.preview-search;
-                                    edited => { root.filter-preview(self.text) }
-                                    accepted => { root.filter-preview(self.text) }
-                                }
-                                if root.preview-search == "" : Text {
-                                    x: 29px;
-                                    height: parent.height;
-                                    text: "在投影内容中搜索...";
-                                    font-size: 12px;
+                                    text: root.current-branch == "" ? "当前工作空间不是 Git 仓库。"
+                                        : root.review-files.length == 0 ? "工作区干净，没有待审查的更改。"
+                                        : "该文件没有可显示的文本差异。";
+                                    font-size: 12.5px;
                                     color: Palette.faint;
+                                    horizontal-alignment: center;
                                     vertical-alignment: center;
                                 }
+                            }
+                        }
+                    }
+                    if root.file-list-visible : Rectangle {
+                        width: Math.max(160px, Math.min(224px, parent.width - 200px));
+                        horizontal-stretch: 0;
+                        Rectangle {
+                            x: 0px;
+                            width: 1px;
+                            height: parent.height;
+                            background: Palette.line-soft;
+                        }
+                        VerticalLayout {
+                            padding: 8px;
+                            spacing: 6px;
+                            PanelFilter {
+                                text <=> root.review-file-search;
+                                placeholder: "筛选文件...";
+                                edited(value) => { root.filter-review-files(value); }
                             }
                             ScrollView {
                                 vertical-stretch: 1;
+                                viewport-height: root.review-list-height * 1px;
                                 VerticalLayout {
-                                    spacing: 6px;
-                                    for line in root.preview-lines : Rectangle {
-                                        height: text-item.preferred-height + 16px;
-                                        border-radius: 10px;
-                                        background: Palette.white;
-                                        border-width: 0.67px;
-                                        border-color: Palette.line-faint;
-                                        VerticalLayout {
-                                            padding-left: 10px;
-                                            padding-right: 10px;
-                                            padding-top: 8px;
-                                            padding-bottom: 8px;
-                                            HorizontalLayout {
-                                                alignment: space-between;
-                                                Text {
-                                                    text: "#" + line.number;
-                                                    font-family: "MiSans VF";
-                                                    font-size: 10.5px;
-                                                    font-weight: 600;
-                                                    color: Palette.amber;
-                                                    vertical-alignment: center;
-                                                }
-                                                Text { horizontal-stretch: 1; }
-                                            }
-                                            text-item := Text {
-                                                text: line.text == "" ? " " : line.text;
-                                                font-size: 12.5px;
-                                                color: Palette.ink;
-                                                wrap: word-wrap;
-                                            }
-                                        }
-                                    }
-                                    if root.preview-lines.length == 0 : Text {
-                                        text: "// 暂无可预览的投影内容。";
-                                        font-family: "MiSans VF";
-                                        font-size: 12px;
-                                        color: Palette.faint;
+                                    spacing: 4px;
+                                    for file in root.review-files : ReviewFileRow {
+                                        file: file;
+                                        active: file.id == root.selected-review-file-id;
+                                        picked => { root.select-review-file(file.id); }
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+                // Thin status strip: keeps the daemon/backend state visible
+                // now that the review view replaced the old code footer.
+                Rectangle {
+                    height: 28px;
+                    background: Palette.surface;
+                    Rectangle {
+                        y: 0px;
+                        height: 0.67px;
+                        width: parent.width;
+                        background: Palette.line-faint;
+                    }
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 10px;
+                        spacing: 6px;
+                        alignment: start;
+                        Image {
+                            source: Icons.check-circle-green;
+                            width: 13px;
+                            height: 13px;
+                            y: (parent.height - 13px) / 2;
+                        }
+                        Text {
+                            text: root.status-text;
+                            font-size: 11.5px;
+                            font-weight: 500;
+                            color: Palette.green;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+
+        // ================= VIEW 3: WORKSPACE FILE TREE =================
+        if root.right-tab == "openFile" : Rectangle {
+            width: parent.width;
+            y: 46px;
+            height: parent.height - self.y;
+            HorizontalLayout {
+                spacing: 0px;
+                Rectangle {
+                    horizontal-stretch: 1;
+                    clip: true;
+                    VerticalLayout {
+                        spacing: 0px;
+                        Rectangle {
+                            height: 34px;
+                            HorizontalLayout {
+                                padding-left: 12px;
+                                padding-right: 12px;
+                                alignment: space-between;
+                                Text {
+                                    horizontal-stretch: 1;
+                                    text: root.workspace-tree-label
+                                        + (root.tree-selected-path == "" ? "" : " / " + root.tree-selected-path);
+                                    font-family: "MiSans VF";
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    color: Palette.ink;
+                                    overflow: elide;
+                                    vertical-alignment: center;
+                                }
+                                Rectangle {
+                                    width: 26px;
+                                    height: 26px;
+                                    border-radius: 6px;
+                                    horizontal-stretch: 0;
+                                    background: tree-toggle.has-hover ? Palette.sep : transparent;
+                                    Image {
+                                        source: Icons.folder-dim;
+                                        width: 14px;
+                                        height: 14px;
+                                        x: (parent.width - self.width) / 2;
+                                        y: (parent.height - self.height) / 2;
+                                        colorize: root.workspace-tree-visible ? Palette.accent : Palette.dim;
+                                    }
+                                    tree-toggle := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.workspace-tree-visible = !root.workspace-tree-visible; }
+                                    }
+                                }
+                            }
+                            Rectangle {
+                                y: parent.height - 0.67px;
+                                height: 0.67px;
+                                width: parent.width;
+                                background: Palette.line-soft;
+                            }
+                        }
+                        if root.tree-file-name != "" : ScrollView {
+                            vertical-stretch: 1;
+                            Text {
+                                x: 14px;
+                                y: 12px;
+                                width: Math.max(200px, parent.width - 28px);
+                                font-family: "MiSans VF";
+                                font-size: 12px;
+                                color: Palette.body;
+                                text: root.tree-file-content;
+                                wrap: word-wrap;
+                                vertical-alignment: top;
+                            }
+                        }
+                        if root.tree-file-name == "" : Rectangle {
+                            vertical-stretch: 1;
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: 6px;
+                                Rectangle {
+                                    width: 64px;
+                                    height: 64px;
+                                    x: (parent.width - self.width) / 2;
+                                    border-radius: 16px;
+                                    background: Palette.white;
+                                    border-width: 0.67px;
+                                    border-color: Palette.card-line;
+                                    drop-shadow-color: Palette.shadow;
+                                    drop-shadow-offset-y: 1px;
+                                    Image {
+                                        source: Icons.folder-open;
+                                        width: 28px;
+                                        height: 28px;
+                                        x: (parent.width - self.width) / 2;
+                                        y: (parent.height - self.height) / 2;
+                                    }
+                                }
+                                Text {
+                                    text: "打开文件";
+                                    font-size: 15px;
+                                    font-weight: 600;
+                                    color: Palette.ink;
+                                    horizontal-alignment: center;
+                                }
+                                Text {
+                                    text: "从工作区目录树中选择文件";
+                                    font-size: 12.5px;
+                                    color: Palette.dim;
+                                    horizontal-alignment: center;
+                                }
+                            }
+                        }
+                    }
+                }
+                if root.workspace-tree-visible : Rectangle {
+                    width: Math.max(192px, Math.min(256px, parent.width - 220px));
+                    horizontal-stretch: 0;
+                    Rectangle {
+                        x: 0px;
+                        width: 1px;
+                        height: parent.height;
+                        background: Palette.line-soft;
+                    }
+                    VerticalLayout {
+                        padding: 10px;
+                        spacing: 6px;
+                        PanelFilter {
+                            text <=> root.tree-search;
+                            placeholder: "筛选文件...";
+                            edited(value) => { root.filter-tree(value); }
+                        }
+                        ScrollView {
+                            vertical-stretch: 1;
+                            viewport-height: root.tree-items.length * 28px;
+                            VerticalLayout {
+                                spacing: 2px;
+                                for item[index] in root.tree-items : TreeRow {
+                                    item: item;
+                                    active: root.tree-selected-path != "" && item.path == root.tree-selected-path;
+                                    picked => { root.select-tree-item(index); }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ---- Branch dropdown ----
+        if root.branch-menu-open : Rectangle {
+            x: 12px;
+            y: 80px;
+            width: 200px;
+            background: Palette.white;
+            border-radius: 12px;
+            border-width: 0.67px;
+            border-color: Palette.border;
+            drop-shadow-color: rgba(0, 0, 0, 0.14);
+            drop-shadow-offset-y: 5px;
+            drop-shadow-blur: 14px;
+            TouchArea { clicked => { root.branch-menu-open = false; } }
+            VerticalLayout {
+                padding: 4px;
+                Text {
+                    x: 8px;
+                    height: 22px;
+                    text: "切换 Git 分支";
+                    font-size: 11px;
+                    font-weight: 600;
+                    color: Palette.faint;
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    height: 1px;
+                    background: Palette.hairline;
+                }
+                for branch in root.branch-options : MenuOption {
+                    label: branch;
+                    active: branch == root.current-branch;
+                    chosen => {
+                        root.switch-branch(branch);
+                        root.branch-menu-open = false;
+                    }
+                }
+            }
+        }
+
+        // ---- Git "more" menu ----
+        if root.git-menu-open : Rectangle {
+            x: parent.width - 190px;
+            y: 80px;
+            width: 176px;
+            background: Palette.white;
+            border-radius: 12px;
+            border-width: 0.67px;
+            border-color: Palette.border;
+            drop-shadow-color: rgba(0, 0, 0, 0.14);
+            drop-shadow-offset-y: 5px;
+            drop-shadow-blur: 14px;
+            TouchArea { clicked => { root.git-menu-open = false; } }
+            VerticalLayout {
+                padding: 4px;
+                MenuOption {
+                    label: "暂存全部更改";
+                    active: false;
+                    chosen => { root.git-menu-open = false; root.stage-all(); }
+                }
+                MenuOption {
+                    label: "刷新审查状态";
+                    active: false;
+                    chosen => { root.git-menu-open = false; root.refresh-review(); }
+                }
+                MenuOption {
+                    label: "放弃未暂存更改";
+                    active: false;
+                    chosen => { root.git-menu-open = false; root.discard-unstaged(); }
+                }
+            }
+        }
+
+        // ---- Commit & push popover ----
+        if root.commit-modal-open : Rectangle {
+            x: Math.max(8px, parent.width - 300px);
+            y: 78px;
+            width: 288px;
+            background: Palette.white;
+            border-radius: 16px;
+            border-width: 0.67px;
+            border-color: Palette.border;
+            drop-shadow-color: rgba(0, 0, 0, 0.18);
+            drop-shadow-offset-y: 8px;
+            drop-shadow-blur: 20px;
+            VerticalLayout {
+                padding: 14px;
+                spacing: 10px;
+                HorizontalLayout {
+                    alignment: space-between;
+                    Text {
+                        text: "提交更改到 " + root.current-branch;
+                        font-size: 12.5px;
+                        font-weight: 600;
+                        color: Palette.ink;
+                        vertical-alignment: center;
+                    }
+                    Rectangle {
+                        width: 22px;
+                        height: 22px;
+                        border-radius: 6px;
+                        horizontal-stretch: 0;
+                        background: close-commit.has-hover ? Palette.sep : transparent;
+                        Image {
+                            source: Icons.close;
+                            width: 11px;
+                            height: 11px;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                        }
+                        close-commit := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.commit-modal-open = false; }
+                        }
+                    }
+                }
+                Text {
+                    text: root.staged-summary;
+                    font-size: 11.5px;
+                    color: Palette.dim;
+                    wrap: word-wrap;
+                }
+                Rectangle {
+                    height: 72px;
+                    border-radius: 12px;
+                    background: Palette.input;
+                    border-width: 1px;
+                    border-color: commit-input.has-focus ? Palette.accent : Palette.border;
+                    commit-input := TextInput {
+                        x: 10px;
+                        y: 8px;
+                        width: parent.width - 20px;
+                        height: parent.height - 16px;
+                        font-size: 12px;
+                        color: Palette.ink;
+                        wrap: word-wrap;
+                        text <=> root.commit-message;
+                    }
+                    if root.commit-message == "" : Text {
+                        x: 10px;
+                        y: 8px;
+                        width: parent.width - 20px;
+                        text: "输入提交信息 (例如: feat: 更新字幕文本)...";
+                        font-size: 12px;
+                        color: Palette.faint;
+                        wrap: word-wrap;
+                    }
+                }
+                Rectangle {
+                    height: 22px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: start;
+                        Rectangle {
+                            width: 18px;
+                            height: 18px;
+                            y: (parent.height - 18px) / 2;
+                            border-radius: 5px;
+                            border-width: 1px;
+                            border-color: root.push-immediately ? Palette.accent : Palette.border;
+                            background: root.push-immediately ? Palette.accent : Palette.white;
+                            if root.push-immediately : Image {
+                                source: Icons.check-small;
+                                width: 11px;
+                                height: 11px;
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                                colorize: Palette.white;
+                            }
+                            push-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.push-immediately = !root.push-immediately; }
+                            }
+                        }
+                        Text {
+                            text: "提交后立即推送到远程 origin/" + root.current-branch;
+                            font-size: 11.5px;
+                            color: Palette.mid;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    spacing: 8px;
+                    Rectangle {
+                        height: 28px;
+                        border-radius: 8px;
+                        horizontal-stretch: 0;
+                        border-width: 1px;
+                        border-color: Palette.border;
+                        background: cancel-commit.has-hover ? Palette.sep : Palette.white;
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            Text {
+                                text: "取消";
+                                font-size: 12px;
+                                color: Palette.mid;
+                                vertical-alignment: center;
+                            }
+                        }
+                        cancel-commit := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.commit-modal-open = false; }
                         }
                     }
                     Rectangle {
-                        height: 30px;
-                        background: Palette.surface;
-                        Rectangle {
-                            y: 0px;
-                            height: 0.67px;
-                            width: parent.width;
-                            background: Palette.line-faint;
-                        }
+                        height: 28px;
+                        border-radius: 8px;
+                        horizontal-stretch: 0;
+                        background: do-commit.has-hover ? #B85E20 : Palette.accent;
                         HorizontalLayout {
                             padding-left: 12px;
-                            padding-right: 8px;
-                            spacing: 12px;
-                            alignment: space-between;
-                            HorizontalLayout {
-                                spacing: 6px;
-                                Image { source: Icons.check-circle-green; width: 14px; height: 14px; y: (parent.height - 14px) / 2; }
-                                Text { text: root.status-text; font-size: 11.5px; font-weight: 500; color: Palette.green; vertical-alignment: center; overflow: elide; }
+                            padding-right: 12px;
+                            Text {
+                                text: root.push-immediately ? "提交并推送" : "仅提交";
+                                font-size: 12px;
+                                font-weight: 600;
+                                color: Palette.white;
+                                vertical-alignment: center;
                             }
-                            HorizontalLayout {
-                                spacing: 12px;
-                                alignment: end;
-                                Text { text: "UTF-8"; font-size: 11.5px; color: Palette.dim; vertical-alignment: center; }
-                                Rectangle {
-                                    height: 20px;
-                                    border-radius: 6px;
-                                    horizontal-stretch: 0;
-                                    HorizontalLayout {
-                                        padding-left: 8px;
-                                        padding-right: 8px;
-                                        spacing: 4px;
-                                        Image { source: Icons.dots; width: 12px; height: 12px; y: (parent.height - 12px) / 2; }
-                                        Text { text: "问题"; font-size: 11.5px; color: Palette.mid; vertical-alignment: center; }
-                                    }
-                                    TouchArea {
-                                        clicked => { root.issues-open = !root.issues-open; }
-                                        mouse-cursor: pointer;
-                                    }
-                                    if root.issues-open : Rectangle {
-                                        x: parent.width - 230px;
-                                        y: -110px;
-                                        width: 220px;
-                                        background: Palette.white;
-                                        border-radius: 12px;
-                                        border-width: 0.67px;
-                                        border-color: Palette.border;
-                                        drop-shadow-color: rgba(0, 0, 0, 0.14);
-                                        drop-shadow-blur: 14px;
-                                        VerticalLayout {
-                                            padding: 12px;
-                                            spacing: 6px;
-                                            Text { text: "问题面板"; font-size: 12px; font-weight: 600; color: Palette.ink; }
-                                            Text { text: root.trace-result == "执行失败" ? root.assistant-text : "当前投影没有发现问题。"; font-size: 11.5px; color: Palette.dim; wrap: word-wrap; overflow: elide; }
-                                        }
-                                        TouchArea { clicked => { root.issues-open = false } }
-                                    }
-                                }
+                        }
+                        do-commit := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.commit-and-push(root.commit-message, root.push-immediately);
+                                root.commit-message = "";
+                                root.commit-modal-open = false;
                             }
                         }
                     }
                 }
-                if root.code-menu-open : Rectangle {
-                    x: parent.width - 170px;
-                    y: 44px;
-                    width: 160px;
-                    background: Palette.white;
-                    border-radius: 12px;
-                    border-width: 0.67px;
-                    border-color: Palette.border;
-                    drop-shadow-color: rgba(0, 0, 0, 0.14);
-                    drop-shadow-offset-y: 5px;
-                    drop-shadow-blur: 14px;
-                    // Dismiss catcher below the menu options: a topmost
-                    // TouchArea would swallow their clicks.
-                    TouchArea { clicked => { root.code-menu-open = false } }
-                    VerticalLayout {
-                        padding: 4px;
-                        MenuOption {
-                            label: "重新审阅";
-                            active: false;
-                            chosen => { root.reconcile(); root.code-menu-open = false; root.return-focus(); }
-                        }
-                        MenuOption {
-                            label: "关闭面板";
-                            active: false;
-                            chosen => { root.set-code-panel-visible(false); root.code-menu-open = false; root.return-focus(); }
-                        }
-                    }
+            }
+        }
+
+        // ---- Toast ----
+        if root.toast-visible : Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: 54px;
+            width: Math.min(parent.width - 24px, toast-label.preferred-width + 46px);
+            height: 30px;
+            border-radius: 8px;
+            background: #1C1917;
+            drop-shadow-color: rgba(0, 0, 0, 0.24);
+            drop-shadow-offset-y: 4px;
+            drop-shadow-blur: 12px;
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 10px;
+                spacing: 8px;
+                alignment: start;
+                Image {
+                    source: Icons.check-circle-green;
+                    width: 14px;
+                    height: 14px;
+                    y: (parent.height - 14px) / 2;
                 }
+                toast-label := Text {
+                    text: root.toast-text;
+                    font-size: 12px;
+                    color: Palette.white;
+                    vertical-alignment: center;
                 }
-            
+            }
+        }
+    }
+
+    // A click on empty panel space closes any open popover.
+    if root.branch-menu-open || root.git-menu-open || root.commit-modal-open : TouchArea {
+        y: 46px;
+        height: parent.height - self.y;
+        clicked => {
+            root.branch-menu-open = false;
+            root.git-menu-open = false;
+            root.commit-modal-open = false;
+        }
+    }
 }
