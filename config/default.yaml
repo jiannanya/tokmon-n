@@ -8,7 +8,7 @@ security:
   require_signatures: false
 models:
   default: local
-  providers:
+  goes:
     local:
       protocol: local
       endpoint: builtin://rhea

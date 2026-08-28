@@ -15,12 +15,12 @@ public:
   virtual ~UiController() = default;
 
   virtual void backend_connected() = 0;
-  virtual void chat(std::string text, std::string provider, std::string model,
+  virtual void chat(std::string text, std::string name, std::string model,
                     std::string access_mode, std::string effort) = 0;
   // User pressed the composer stop button: leave the generating presentation
   // immediately and keep whatever content was already produced.
   virtual void interrupt_generation() = 0;
-  virtual void slash_command(std::string text, std::string provider,
+  virtual void slash_command(std::string text, std::string name,
                              std::string model, std::string access_mode,
                              std::string effort) = 0;
   virtual void rename_session(std::string title) = 0;
@@ -34,9 +34,9 @@ public:
   virtual void save_navigation() = 0;
   virtual void save_settings(tokmon::cbor::Value values) = 0;
   virtual void configure_provider(tokmon::cbor::Value values) = 0;
-  virtual void select_provider(std::string id) = 0;
-  virtual void store_provider_secret(std::string id, std::string secret) = 0;
-  virtual void test_provider(std::string id) = 0;
+  virtual void select_provider(std::string name) = 0;
+  virtual void store_provider_secret(std::string name, std::string secret) = 0;
+  virtual void test_provider(std::string name) = 0;
   virtual void publish_trace_view() = 0;
   virtual void export_trace() = 0;
   [[nodiscard]] virtual const std::filesystem::path &

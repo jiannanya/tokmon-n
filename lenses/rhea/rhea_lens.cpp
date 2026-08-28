@@ -20,7 +20,7 @@ namespace tokmon::builtin {
 namespace {
 
 struct ProviderPlan {
-  std::string provider;
+  std::string name;
   std::string protocol;
   std::string model;
   std::string endpoint;
@@ -94,8 +94,8 @@ bool local_endpoint(const std::string_view endpoint) {
 Result<ProviderPlan> provider_plan(const cbor::Value& value,
                                    const ProviderPlan* inherited = nullptr) {
   ProviderPlan plan = inherited ? *inherited : ProviderPlan{};
-  if (const auto provider = string_field(value, "provider"); !provider.empty())
-    plan.provider = provider;
+  if (const auto name = string_field(value, "name"); !name.empty())
+    plan.name = name;
   if (const auto protocol = string_field(value, "protocol"); !protocol.empty())
     plan.protocol = protocol;
   if (const auto model = string_field(value, "model"); !model.empty()) plan.model = model;
@@ -104,14 +104,14 @@ Result<ProviderPlan> provider_plan(const cbor::Value& value,
   if (const auto reference = string_field(value, "secret_ref"); !reference.empty())
     plan.secret_ref = reference;
   if (const auto auth = string_field(value, "auth"); !auth.empty()) plan.auth = auth;
-  if (plan.provider.empty() || plan.model.empty())
+  if (plan.name.empty() || plan.model.empty())
     return tl::unexpected(make_error(ErrorCode::schema_mismatch,
-                                     "model provider and model are required"));
-  // Legacy direct Acts used provider as the protocol. Configured platforms
-  // always supply protocol explicitly.
+                                     "model configuration name and model are required"));
+  // Configuration names are Tokmon-local. The protocol remains the only
+  // selector for the upstream wire adapter.
   if (plan.protocol.empty())
-    plan.protocol = plan.provider == "anthropic" ? "anthropic" :
-                    plan.provider == "gemini" ? "gemini" : "openai-compatible";
+    plan.protocol = plan.name == "anthropic" ? "anthropic" :
+                    plan.name == "gemini" ? "gemini" : "openai-compatible";
   if (plan.endpoint.empty())
     return tl::unexpected(make_error(ErrorCode::schema_mismatch,
                                      "model provider endpoint is required"));
@@ -132,7 +132,7 @@ Result<std::string> credential(const ProviderPlan& plan, const bool allow_anonym
         act_secret_scope_hash(act), act.target, act.generation, act.epoch);
   }
   if (!plan.secret_ref.empty()) {
-    if (plan.secret_ref != "model-provider/" + plan.provider)
+    if (plan.secret_ref != "model-provider/" + plan.name)
       return tl::unexpected(make_error(ErrorCode::permission_denied,
           "model provider SecretRef is outside its platform scope"));
     auto binding = create_secret_binding(plan.secret_ref, "model-api",
@@ -201,7 +201,7 @@ Result<cbor::Value> merge_request_parameters(cbor::Value body,
     return tl::unexpected(make_error(ErrorCode::schema_mismatch,
         "model request_parameters must be a map"));
   static const std::set<std::string> protected_fields{
-      "api_key", "secret", "secret_value", "authorization", "model", "messages",
+      "api_key", "secret", "secret_value", "authorization", "name", "model", "messages",
       "contents", "tools", "stream", "stream_options", "thinking", "reasoning_effort",
       "max_tokens", "max_output_tokens"};
   for (const auto& [key, value] : *configured->as_map()) {
@@ -224,7 +224,7 @@ Result<cbor::Value> request_body(const ProviderPlan& plan, const cbor::Value& pa
       (*body.as_map())["stream"] = stream;
     else
       body.as_map()->erase("stream");
-    return body;
+    return merge_request_parameters(std::move(body), parameters);
   }
   const auto max_tokens = cbor::find(parameters, "max_output_tokens")
       ? cbor::find(parameters, "max_output_tokens")->as_integer(4096) : 4096;
@@ -425,17 +425,17 @@ RheaLens::RheaLens() : LensBase(make_manifest("rhea", "Rhea / 模型网关神谕
 Result<void> RheaLens::view(const OpticalInput& photons, WavefrontBuilder& surface) {
   if (auto status = ready(); !status) return status;
   if (auto result = surface.add("model.catalog", "local-deterministic", cbor::object({
-      {"id", "local-deterministic"}, {"provider", "local"},
+      {"id", "local-deterministic"}, {"name", "local"},
       {"context_window", 32768}, {"structured_tools", true}, {"healthy", true}}), 20);
       !result) return result;
   std::int64_t providers = 1;
   for (const auto& photon : photons.photons()) {
     if (photon.kind != "model.provider-configured" &&
         photon.kind != "model.provider-observed") continue;
-    const auto provider = string_field(photon.payload, "provider");
-    if (provider.empty()) continue;
+    const auto name = string_field(photon.payload, "name");
+    if (name.empty()) continue;
     ++providers;
-    if (auto result = surface.add("model.catalog", provider, photon.payload, 15); !result)
+    if (auto result = surface.add("model.catalog", name, photon.payload, 15); !result)
       return result;
   }
   const auto* failure = photons.latest("model.failed");
@@ -475,10 +475,10 @@ Result<RefractionResult> RheaLens::refract(const PhotonWindow& photons, const Ac
     emitted.push_back(photon->id);
     return {};
   };
-  const auto provider_name = string_field(act.parameters, "provider",
+  const auto config_name = string_field(act.parameters, "name",
       model == "local-deterministic" ? "local" : "openai");
   if (auto result = append("model.requested", "tokmon.model.request.v1",
-      cbor::object({{"model", model}, {"provider", provider_name},
+      cbor::object({{"model", model}, {"name", config_name},
                     {"idempotency_key", act.idempotency_key},
                     {"max_output_tokens", output_budget},
                     {"credential", "opaque-binding"}})); !result)
@@ -486,7 +486,7 @@ Result<RefractionResult> RheaLens::refract(const PhotonWindow& photons, const Ac
 
   if (model == "local-deterministic") {
     if (auto result = append("model.dispatched", "tokmon.model.dispatch.v1",
-        cbor::object({{"model", model}, {"provider", "local"}, {"attempt", 1}})); !result)
+        cbor::object({{"model", model}, {"name", "local"}, {"attempt", 1}})); !result)
       return tl::unexpected(result.error());
     const auto* input = photons.latest("user.input");
     const auto* tool_result = photons.latest("tool.result");
@@ -495,7 +495,7 @@ Result<RefractionResult> RheaLens::refract(const PhotonWindow& photons, const Ac
       if (auto result = append("assistant.message", "tokmon.assistant.message.v1",
           cbor::object({{"text", "计算完成，结果是 " +
               (value ? cbor::diagnostic(*value) : std::string("未知"))},
-                        {"model", model}, {"provider", "local"}})); !result)
+                        {"model", model}, {"name", "local"}})); !result)
         return tl::unexpected(result.error());
     } else if (const auto expression = arithmetic_expression(prompt)) {
       if (auto result = append("model.reasoning-chunk", "tokmon.model.reasoning.v1",
@@ -508,14 +508,14 @@ Result<RefractionResult> RheaLens::refract(const PhotonWindow& photons, const Ac
         return tl::unexpected(result.error());
     } else if (auto result = append("assistant.message", "tokmon.assistant.message.v1",
         cbor::object({{"text", "已通过 A Lens to Them All 光路处理：" + prompt},
-                      {"model", model}, {"provider", "local"}})); !result)
+                      {"model", model}, {"name", "local"}})); !result)
       return tl::unexpected(result.error());
     if (auto result = append("model.usage", "tokmon.model.usage.v1", cbor::object({
         {"input_tokens", static_cast<std::int64_t>(prompt.size() / 3u + 1u)},
-        {"output_tokens", 1}, {"cached_tokens", 0}, {"provider", "local"}})); !result)
+        {"output_tokens", 1}, {"cached_tokens", 0}, {"name", "local"}})); !result)
       return tl::unexpected(result.error());
     if (auto result = append("model.completed", "tokmon.model.completed.v1",
-        cbor::object({{"model", model}, {"provider", "local"},
+        cbor::object({{"model", model}, {"name", "local"},
                       {"attempt", 1}, {"outcome", "complete"}})); !result)
       return tl::unexpected(result.error());
     return RefractionResult{.status = RefractionStatus::completed,
@@ -572,7 +572,7 @@ Result<RefractionResult> RheaLens::refract(const PhotonWindow& photons, const Ac
           : configured_stream ? configured_stream->as_bool() : true;
       const auto body = json::stringify(*requested_body);
       if (auto result = append("model.dispatched", "tokmon.model.dispatch.v1",
-          cbor::object({{"model", plan.model}, {"provider", plan.provider},
+          cbor::object({{"model", plan.model}, {"name", plan.name},
               {"endpoint", plan.endpoint}, {"attempt", global_attempt},
               {"stream", streaming},
               {"request_bytes", static_cast<std::int64_t>(body.size())},
@@ -587,7 +587,7 @@ Result<RefractionResult> RheaLens::refract(const PhotonWindow& photons, const Ac
         while (emitted_reasoning < parsed.reasoning_chunks.size()) {
           const auto& chunk = parsed.reasoning_chunks[emitted_reasoning++];
           if (auto result = append("model.reasoning-chunk", "tokmon.model.reasoning.v1",
-              cbor::object({{"text", chunk}, {"provider", plan.provider},
+              cbor::object({{"text", chunk}, {"name", plan.name},
                             {"model", plan.model}, {"attempt", global_attempt},
                             {"stream", streaming}, {"visibility", "reasoning"}})); !result)
             return result;
@@ -596,7 +596,7 @@ Result<RefractionResult> RheaLens::refract(const PhotonWindow& photons, const Ac
           const auto& chunk = parsed.content_chunks[emitted_content++];
           final_text.append(chunk);
           if (auto result = append("model.content-chunk", "tokmon.model.chunk.v1",
-              cbor::object({{"text", chunk}, {"provider", plan.provider},
+              cbor::object({{"text", chunk}, {"name", plan.name},
                             {"model", plan.model}, {"attempt", global_attempt},
                             {"stream", streaming}})); !result)
             return result;
@@ -669,12 +669,12 @@ Result<RefractionResult> RheaLens::refract(const PhotonWindow& photons, const Ac
             if (auto result = append("model.tool-call", "tokmon.model.tool-call.v1",
                 cbor::object({{"call_id", tool.id}, {"tool", tool.name},
                               {"arguments", std::move(arguments)},
-                              {"provider", plan.provider}, {"model", plan.model}})); !result)
+                              {"name", plan.name}, {"model", plan.model}})); !result)
               return tl::unexpected(result.error());
           }
           if (!final_text.empty())
             if (auto result = append("assistant.message", "tokmon.assistant.message.v1",
-                cbor::object({{"text", final_text}, {"provider", plan.provider},
+                cbor::object({{"text", final_text}, {"name", plan.name},
                               {"model", plan.model}, {"attempt", global_attempt}})); !result)
               return tl::unexpected(result.error());
           // Some OpenAI-compatible gateways omit usage from otherwise valid
@@ -697,11 +697,11 @@ Result<RefractionResult> RheaLens::refract(const PhotonWindow& photons, const Ac
                                 static_cast<double>(output_tokens) *
                                 number_field(act.parameters,
                                              "output_cost_per_million")) / 1'000'000.0},
-                            {"provider", plan.provider}, {"model", plan.model},
+                            {"name", plan.name}, {"model", plan.model},
                             {"attempt", global_attempt}})); !result)
             return tl::unexpected(result.error());
           if (auto result = append("model.completed", "tokmon.model.completed.v1",
-              cbor::object({{"provider", plan.provider}, {"model", plan.model},
+              cbor::object({{"name", plan.name}, {"model", plan.model},
                             {"attempt", global_attempt},
                             {"stream", streaming},
                             {"response_hash", sha256_hex(
@@ -723,7 +723,7 @@ Result<RefractionResult> RheaLens::refract(const PhotonWindow& photons, const Ac
         const auto wait_ms = std::max(scheduled_ms,
             std::clamp<std::int64_t>(retry_after_ms, 0, 60'000));
         if (auto result = append("model.retry-scheduled", "tokmon.model.retry.v1",
-            cbor::object({{"provider", plan.provider}, {"model", plan.model},
+            cbor::object({{"name", plan.name}, {"model", plan.model},
                           {"attempt", global_attempt},
                           {"next_attempt", global_attempt + 1},
                           {"wait_ms", wait_ms},

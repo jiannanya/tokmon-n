@@ -148,19 +148,19 @@ Usage:
   tokmon daemon stop             Gracefully stop it after active work drains
   tokmon config paths            Print resolved .tokmon directories
   tokmon model list              List configured platforms (credentials redacted)
-  tokmon model configure <id> --protocol <wire> --endpoint <url> --model <name>
+  tokmon model configure <name> --protocol <wire> --endpoint <url> --model <model>
                                 [--auth <mode>] [--default] [--thinking] [--no-stream]
-  tokmon model use <id>          Select the project default platform
-  tokmon model secret set <id>   Read a key with terminal echo disabled
-  tokmon model secret delete <id>
-  tokmon model test <id> [text]  Run a real Fact → Lens → Act model request
+  tokmon model use <name>        Select the project default configuration
+  tokmon model secret set <name> Read a key with terminal echo disabled
+  tokmon model secret delete <name>
+  tokmon model test <name> [text] Run a real Fact → Lens → Act model request
 
 Options:
   --workspace <path>             Select project-level .tokmon directory
   --format human|jsonl|cbor      Stable human or machine output
   --output <file>                Write command output to a file
   --deadline-ms <milliseconds>   Attach a request deadline
-  --provider <id>                Use a configured platform for run/chat
+  --name <configuration>         Use a configured model profile for run/chat
   --no-color                     Disable decoration (accepted for CI)
 
 All stateful commands attach to or automatically start the workspace daemon.
@@ -330,16 +330,16 @@ void print_providers(const tokmon::SnowMessage& response, std::ostream& output) 
   const auto* providers = tokmon::cbor::find(response.payload, "providers");
   const auto* selected = tokmon::cbor::find(response.payload, "default");
   if (!providers || !providers->as_array()) return;
-  output << "DEFAULT\tID\tPROTOCOL\tMODEL\tCREDENTIAL\tENDPOINT\n";
+  output << "DEFAULT\tNAME\tPROTOCOL\tMODEL\tCREDENTIAL\tENDPOINT\n";
   for (const auto& provider : *providers->as_array()) {
     const auto text = [&provider](const char* key) {
       const auto* field = tokmon::cbor::find(provider, key);
       return field ? std::string(field->as_string()) : std::string{};
     };
     const auto* credential = tokmon::cbor::find(provider, "credential_present");
-    const auto id = text("id");
-    output << (selected && selected->as_string() == id ? "*" : "") << '\t'
-           << id << '\t' << text("protocol") << '\t' << text("model") << '\t'
+    const auto name = text("name");
+    output << (selected && selected->as_string() == name ? "*" : "") << '\t'
+           << name << '\t' << text("protocol") << '\t' << text("model") << '\t'
            << (credential && credential->as_bool() ? "ready" : "missing") << '\t'
            << text("endpoint") << '\n';
   }
@@ -376,7 +376,7 @@ int tokmon::app::cli_main(int argc, char** argv) {
   std::optional<std::filesystem::path> output_path;
   OutputFormat output_format = OutputFormat::human;
   std::int64_t deadline_ms = 0;
-  std::string selected_provider;
+  std::string selected_name;
   for (auto iterator = arguments.begin(); iterator != arguments.end();) {
     if (*iterator == "--workspace" && std::next(iterator) != arguments.end()) {
       workspace = *std::next(iterator);
@@ -396,8 +396,8 @@ int tokmon::app::cli_main(int argc, char** argv) {
       catch (...) { std::cerr << "invalid deadline\n"; return 2; }
       if (deadline_ms <= 0) { std::cerr << "deadline must be positive\n"; return 2; }
       iterator = arguments.erase(iterator, std::next(iterator, 2));
-    } else if (*iterator == "--provider" && std::next(iterator) != arguments.end()) {
-      selected_provider = *std::next(iterator);
+    } else if (*iterator == "--name" && std::next(iterator) != arguments.end()) {
+      selected_name = *std::next(iterator);
       iterator = arguments.erase(iterator, std::next(iterator, 2));
     } else if (*iterator == "--no-color") {
       iterator = arguments.erase(iterator);
@@ -537,7 +537,7 @@ int tokmon::app::cli_main(int argc, char** argv) {
       std::cerr << "model configure requires --endpoint and --model\n"; return 2;
     }
     tokmon::cbor::Value payload = tokmon::cbor::object({
-        {"action", "model.provider.configure"}, {"id", arguments[2]},
+        {"action", "model.provider.configure"}, {"name", arguments[2]},
         {"protocol", option_value(arguments, "--protocol").value_or("openai-compatible")},
         {"endpoint", *endpoint_option}, {"model", *model_option},
         {"auth", option_value(arguments, "--auth").value_or("protocol-default")},
@@ -559,17 +559,17 @@ int tokmon::app::cli_main(int argc, char** argv) {
     auto response = intent(client, std::move(payload));
     if (!response) { print_error(response.error()); return 1; }
     if (output_format == OutputFormat::human)
-      *output << "configured provider " << arguments[2]
+      *output << "configured model profile " << arguments[2]
               << "; API key is not stored in YAML\n";
     else write_value(*output, response->payload, output_format);
     return 0;
   }
   if (arguments[0] == "model" && arguments.size() > 2 && arguments[1] == "use") {
     auto response = intent(client, tokmon::cbor::object({
-        {"action", "model.provider.use"}, {"id", arguments[2]}}));
+        {"action", "model.provider.use"}, {"name", arguments[2]}}));
     if (!response) { print_error(response.error()); return 1; }
     if (output_format == OutputFormat::human)
-      *output << "default provider is now " << arguments[2] << '\n';
+      *output << "default model profile is now " << arguments[2] << '\n';
     else write_value(*output, response->payload, output_format);
     return 0;
   }
@@ -578,7 +578,7 @@ int tokmon::app::cli_main(int argc, char** argv) {
     tokmon::cbor::Value payload = tokmon::cbor::object({
         {"action", arguments[2] == "set" ? "model.provider.secret.set"
                                            : "model.provider.secret.delete"},
-        {"id", arguments[3]}});
+        {"name", arguments[3]}});
     std::string secret_value;
     if (arguments[2] == "set") {
       auto secret = read_secret();
@@ -599,7 +599,7 @@ int tokmon::app::cli_main(int argc, char** argv) {
     const auto text = arguments.size() > 3 ? join(arguments, 3) : std::string{};
     ModelStreamOutput streamed(*output, output_format);
     auto response = intent(client, tokmon::cbor::object({
-        {"action", "model.provider.test"}, {"provider", arguments[2]},
+        {"action", "model.provider.test"}, {"name", arguments[2]},
         {"text", text}, {"deadline_ms", deadline_ms}}),
         [&streamed](const tokmon::SnowMessage& event) {
           return streamed.observe(event);
@@ -627,7 +627,7 @@ int tokmon::app::cli_main(int argc, char** argv) {
     if (input.empty()) { std::cerr << "run requires a message or stdin\n"; return 2; }
     auto payload = tokmon::cbor::object({{"action", "chat"},
         {"text", input}, {"deadline_ms", deadline_ms}});
-    if (!selected_provider.empty()) (*payload.as_map())["provider"] = selected_provider;
+    if (!selected_name.empty()) (*payload.as_map())["name"] = selected_name;
     ModelStreamOutput streamed(*output, output_format);
     auto response = intent(client, std::move(payload),
         [&streamed](const tokmon::SnowMessage& event) {
@@ -659,7 +659,7 @@ int tokmon::app::cli_main(int argc, char** argv) {
           {"text", line}, {"ray", active_ray}, {"deadline_ms", deadline_ms},
           {"surface", "cli"}, {"effort", session_effort},
           {"access_mode", session_access_mode}});
-      if (!selected_provider.empty()) (*payload.as_map())["provider"] = selected_provider;
+      if (!selected_name.empty()) (*payload.as_map())["name"] = selected_name;
       ModelStreamOutput streamed(*output, output_format);
       auto response = intent(client, std::move(payload),
           [&streamed](const tokmon::SnowMessage& event) {
@@ -669,8 +669,8 @@ int tokmon::app::cli_main(int argc, char** argv) {
       if (!response) { print_error(response.error()); line.clear(); continue; }
       if (const auto* ray = tokmon::cbor::find(response->payload, "ray"))
         active_ray = std::string(ray->as_string());
-      if (const auto* provider = tokmon::cbor::find(response->payload, "provider"))
-        selected_provider = std::string(provider->as_string());
+      if (const auto* name = tokmon::cbor::find(response->payload, "name"))
+        selected_name = std::string(name->as_string());
       if (const auto* effort = tokmon::cbor::find(response->payload, "effort"))
         session_effort = std::string(effort->as_string());
       if (const auto* access = tokmon::cbor::find(response->payload, "access_mode"))

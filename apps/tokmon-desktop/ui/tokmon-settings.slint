@@ -33,7 +33,7 @@ export component SettingsOverlay inherits Rectangle {
     in-out property <bool> setting-network;
     in-out property <string> setting-nickname;
     in-out property <bool> setting-notifications;
-    in-out property <string> setting-provider;
+    in-out property <string> setting-name;
     in-out property <string> setting-provider-auth;
     in-out property <string> setting-provider-credential;
     in-out property <string> setting-provider-endpoint;
@@ -59,7 +59,7 @@ export component SettingsOverlay inherits Rectangle {
     pure callback startup-selected() -> int;
     callback store-provider-secret(string, string);
     callback test-provider(string);
-    callback setting-provider-at(int) -> string;
+    callback setting-name-at(int) -> string;
     callback setting-model-at(int) -> string;
 
         background: rgba(0, 0, 0, 0.35);
@@ -249,11 +249,11 @@ export component SettingsOverlay inherits Rectangle {
                                     RowShell {
                                         label: "默认智能体";
                                         SelectBox {
-                                            value: root.setting-provider == "" ? "选择智能体档案" : root.setting-provider;
+                                            value: root.setting-name == "" ? "选择智能体档案" : root.setting-name;
                                             options: root.agent-options;
                                             drop-up: false;
                                             selected(i, o) => {
-                                                root.setting-provider = root.setting-provider-at(i);
+                                                root.setting-name = root.setting-name-at(i);
                                                 root.setting-main-model = root.setting-model-at(i);
                                                 root.model-name = root.setting-model-at(i);
                                             }
@@ -302,7 +302,7 @@ export component SettingsOverlay inherits Rectangle {
                                             box-width: 237px;
                                             mono: true;
                                             selected(i, o) => {
-                                                root.setting-provider = root.setting-provider-at(i);
+                                                root.setting-name = root.setting-name-at(i);
                                                 root.setting-main-model = root.setting-model-at(i);
                                                 root.model-name = root.setting-model-at(i);
                                             }
@@ -330,7 +330,7 @@ export component SettingsOverlay inherits Rectangle {
                                                     Text { text: "保存密钥"; font-size: 11.5px; font-weight: 500; color: Palette.accent-text; vertical-alignment: center; }
                                                 }
                                                 TouchArea {
-                                                    clicked => { root.store-provider-secret(root.setting-provider, root.setting-provider-secret) }
+                                                    clicked => { root.store-provider-secret(root.setting-name, root.setting-provider-secret) }
                                                     mouse-cursor: pointer;
                                                 }
                                             }
@@ -367,7 +367,7 @@ export component SettingsOverlay inherits Rectangle {
                                                 Text { text: "测试当前提供商"; font-size: 11.5px; font-weight: 500; color: Palette.mid; vertical-alignment: center; }
                                             }
                                             TouchArea {
-                                                clicked => { root.test-provider(root.setting-provider) }
+                                                clicked => { root.test-provider(root.setting-name) }
                                                 mouse-cursor: pointer;
                                             }
                                         }
@@ -827,7 +827,7 @@ export component SettingsOverlay inherits Rectangle {
                                         }
                                         if root.settings-page == 1 : VerticalLayout {
                                             spacing: 8px;
-                                            OverviewLine { key: "默认智能体:"; val: root.setting-provider; }
+                                            OverviewLine { key: "默认配置:"; val: root.setting-name; }
                                             OverviewLine { key: "模型提供方:"; val: root.provider-kind == "自定义" ? "自定义" : "Tokmon 官方"; }
                                             OverviewLine { key: "主模型:"; val: root.setting-main-model; mono-value: true; }
                                         }

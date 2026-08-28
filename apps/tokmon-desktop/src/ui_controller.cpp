@@ -73,23 +73,23 @@ public:
     condition_.notify_all();
   }
 
-  void chat(std::string text, std::string provider, std::string model,
+  void chat(std::string text, std::string name, std::string model,
             std::string access_mode, std::string effort) {
     generation_interrupted_ = false;
     Command command{"chat", std::move(text)};
     command.payload =
-        tokmon::cbor::object({{"provider", std::move(provider)},
+        tokmon::cbor::object({{"name", std::move(name)},
                               {"model", std::move(model)},
                               {"access_mode", std::move(access_mode)},
                               {"effort", std::move(effort)}});
     enqueue_user(std::move(command));
   }
-  void slash_command(std::string text, std::string provider, std::string model,
+  void slash_command(std::string text, std::string name, std::string model,
                      std::string access_mode, std::string effort) {
     generation_interrupted_ = false;
     Command command{"slash-command", std::move(text)};
     command.payload =
-        tokmon::cbor::object({{"provider", std::move(provider)},
+        tokmon::cbor::object({{"name", std::move(name)},
                               {"model", std::move(model)},
                               {"access_mode", std::move(access_mode)},
                               {"effort", std::move(effort)},
@@ -139,20 +139,20 @@ public:
     command.payload = std::move(values);
     enqueue(std::move(command));
   }
-  void select_provider(std::string id) {
+  void select_provider(std::string name) {
     Command command{"provider-use", {}};
-    command.payload = tokmon::cbor::object({{"id", std::move(id)}});
+    command.payload = tokmon::cbor::object({{"name", std::move(name)}});
     enqueue(std::move(command));
   }
-  void store_provider_secret(std::string id, std::string secret) {
+  void store_provider_secret(std::string name, std::string secret) {
     Command command{"provider-secret", {}};
     command.payload = tokmon::cbor::object(
-        {{"id", std::move(id)}, {"secret", std::move(secret)}});
+        {{"name", std::move(name)}, {"secret", std::move(secret)}});
     enqueue(std::move(command));
   }
-  void test_provider(std::string id) {
+  void test_provider(std::string name) {
     Command command{"provider-test", {}};
-    command.payload = tokmon::cbor::object({{"provider", std::move(id)}});
+    command.payload = tokmon::cbor::object({{"name", std::move(name)}});
     enqueue(std::move(command));
   }
 
@@ -1078,7 +1078,7 @@ private:
             handle->set_trace_output_tokens(
                 static_cast<int>(std::min<std::int64_t>(
                     trace.output_tokens, std::numeric_limits<int>::max())));
-            handle->set_trace_provider(display_string(trace.provider));
+            handle->set_trace_name(display_string(trace.name));
             handle->set_trace_model(display_string(trace.model));
             handle->set_trace_result(display_string(trace.result));
             handle->set_workflow_done(workflow_complete ? 1 : 0);
@@ -1133,8 +1133,6 @@ private:
       else if (auto value = bool_value("autosave"))
         handle->set_setting_autosave(
             display_string(*value ? "5 分钟" : "关闭"));
-      if (auto value = string_value("provider"))
-        handle->set_setting_provider(*value);
       if (auto value = string_value("main_model")) {
         handle->set_setting_main_model(*value);
         handle->set_model_name(*value);
@@ -1250,23 +1248,26 @@ private:
     tokmon::cbor::Value chosen;
     std::vector<ModelChoice> choices;
     for (const auto &provider : *providers->as_array()) {
-      const auto *id = tokmon::cbor::find(provider, "id");
+      const auto *name = tokmon::cbor::find(provider, "name");
       const auto *model = tokmon::cbor::find(provider, "model");
       const auto *enabled = tokmon::cbor::find(provider, "enabled");
-      if (id && model && (!enabled || enabled->as_bool())) {
+      if (name && model && (!enabled || enabled->as_bool())) {
         ModelChoice choice;
-        choice.provider = display_string(id->as_string());
+        choice.name = display_string(name->as_string());
         choice.model = display_string(model->as_string());
-        choice.label = display_string(std::string(id->as_string()) + " · " +
+        choice.label = display_string(std::string(name->as_string()) + " · " +
                                       std::string(model->as_string()));
         choices.push_back(std::move(choice));
       }
-      if (const auto *id = tokmon::cbor::find(provider, "id");
-          id && id->as_string() == selected->as_string())
+      if (name && name->as_string() == selected->as_string())
         chosen = provider;
     }
     if (!chosen.as_map())
       return;
+    default_model_name_ = std::string(
+        tokmon::cbor::find(chosen, "name")->as_string());
+    default_model_ = std::string(
+        tokmon::cbor::find(chosen, "model")->as_string());
     auto window = window_;
     (void)slint::invoke_from_event_loop([window, chosen = std::move(chosen),
                                          choices =
@@ -1283,7 +1284,7 @@ private:
         const auto *value = tokmon::cbor::find(chosen, key);
         return display_string(value ? value->as_string() : std::string_view{});
       };
-      handle->set_setting_provider(string_field("id"));
+      handle->set_setting_name(string_field("name"));
       handle->set_setting_provider_protocol(string_field("protocol"));
       handle->set_setting_provider_endpoint(string_field("endpoint"));
       handle->set_setting_provider_auth(string_field("auth"));
@@ -1295,7 +1296,7 @@ private:
       handle->set_setting_provider_credential(
           credential && credential->as_bool() ? "凭据已安全保存（输入可轮换）"
                                               : "尚未配置 API Key");
-      handle->set_settings_status("provider 配置已由后台服务验证并载入");
+      handle->set_settings_status("模型配置已由后台服务验证并载入");
     });
   }
 
@@ -1330,7 +1331,7 @@ private:
     const auto copied = read_string("copy_text");
     const auto title = read_string("session_title");
     const auto model = read_string("model");
-    const auto provider = read_string("provider");
+    const auto name = read_string("name");
     const auto effort = read_string("effort");
     const auto access = read_string("access_mode");
     const auto clear = read_bool("clear_session");
@@ -1343,7 +1344,7 @@ private:
     auto code = code_;
     auto window = window_;
     (void)slint::invoke_from_event_loop(
-        [timeline, workflow, code, window, display, title, model, provider,
+        [timeline, workflow, code, window, display, title, model, name,
          effort, access, clear, settings, close, copied]() {
           if (clear) {
             timeline->clear();
@@ -1358,8 +1359,8 @@ private:
               handle->set_session_title(display_string(title));
             if (!model.empty())
               handle->set_model_name(display_string(model));
-            if (!provider.empty())
-              handle->set_setting_provider(display_string(provider));
+            if (!name.empty())
+              handle->set_setting_name(display_string(name));
             if (!effort.empty())
               handle->set_effort(effort == "low"      ? "低"
                                  : effort == "medium" ? "标准"
@@ -1501,6 +1502,8 @@ private:
     active_ray_.clear();
     photons_.clear();
     last_error_.clear();
+    default_model_name_.clear();
+    default_model_.clear();
     startup_loaded_ = false;
     {
       std::scoped_lock lock(files_mutex_);
@@ -1615,9 +1618,11 @@ private:
         auto code = code_;
         auto window = window_;
         const bool reset_environment_panel = command.kind == "new-session";
+        const auto default_model_name = default_model_name_;
+        const auto default_model = default_model_;
         (void)slint::invoke_from_event_loop(
             [timeline, workflow, blocks = assistant_blocks_, code, window,
-         reset_environment_panel] {
+         reset_environment_panel, default_model_name, default_model] {
               timeline->clear();
               workflow->clear();
               code->clear();
@@ -1631,6 +1636,11 @@ private:
                 handle->set_status_text("等待输入");
                 handle->set_chat_empty(true);
                 handle->set_workspace_locked(false);
+                if (reset_environment_panel && !default_model_name.empty()) {
+                  handle->set_setting_name(display_string(default_model_name));
+                  handle->set_setting_main_model(display_string(default_model));
+                  handle->set_model_name(display_string(default_model));
+                }
                 if (reset_environment_panel)
                   handle->set_environment_panel_open(false);
                 handle->set_selected_file_name("");
@@ -1981,6 +1991,10 @@ private:
   tokmon::RayId active_ray_;
   std::vector<tokmon::Photon> photons_;
   std::string last_error_;
+  // Authoritative models.default selection returned by the daemon. Every new
+  // session starts from it instead of inheriting the previous Ray/UI choice.
+  std::string default_model_name_;
+  std::string default_model_;
   // Set by the composer stop button; observed by photon publishes and cleared
   // when the turn's request round-trip ends or a new turn is submitted.
   std::atomic<bool> generation_interrupted_{false};

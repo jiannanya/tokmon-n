@@ -199,7 +199,7 @@ Result<void> merge_model_request_parameter(
     const std::filesystem::path& source) {
   static const std::set<std::string> protected_fields{
       "api_key", "secret", "secret_value", "secret_binding", "secret_purpose",
-      "authorization", "provider", "protocol", "endpoint", "model", "messages",
+      "authorization", "name", "protocol", "endpoint", "model", "messages",
       "contents", "tools", "prompt", "stream", "stream_options", "thinking",
       "reasoning_effort", "max_tokens", "max_output_tokens", "request_body", "fallbacks",
       "workspace_root", "access_mode", "effort", "idempotency_key"};
@@ -221,23 +221,23 @@ Result<void> parse_model_providers(RuntimeConfig& config, const cbor::Value& mod
   if (!models.as_map())
     return tl::unexpected(make_error(ErrorCode::schema_mismatch,
                                      source.string() + ": models must be a map"));
-  if (auto result = reject_unknown(models, {"default", "providers"}, source); !result)
+  if (auto result = reject_unknown(models, {"default", "goes"}, source); !result)
     return result;
   if (auto result = require_type<std::string>(models, "default", "a string", source);
       !result) return result;
   if (const auto* selected = cbor::find(models, "default"))
-    config.default_model_provider = std::string(selected->as_string());
-  const auto* providers = cbor::find(models, "providers");
-  if (!providers) return {};
-  if (!providers->as_map())
+    config.default_model_name = std::string(selected->as_string());
+  const auto* goes = cbor::find(models, "goes");
+  if (!goes) return {};
+  if (!goes->as_map())
     return tl::unexpected(make_error(ErrorCode::schema_mismatch,
-        source.string() + ": models.providers must be a map"));
+        source.string() + ": models.goes must be a map"));
   static const std::regex id_pattern("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$");
   static const std::set<std::string> protocols{
       "local", "openai-compatible", "anthropic", "gemini"};
   static const std::set<std::string> auth_modes{
       "protocol-default", "bearer", "x-api-key", "x-goog-api-key", "none"};
-  for (const auto& [id, value] : *providers->as_map()) {
+  for (const auto& [id, value] : *goes->as_map()) {
     if (!std::regex_match(id, id_pattern) || !value.as_map())
       return tl::unexpected(make_error(ErrorCode::schema_mismatch,
           source.string() + ": invalid model provider id or definition: " + id));
@@ -259,7 +259,7 @@ Result<void> parse_model_providers(RuntimeConfig& config, const cbor::Value& mod
     ModelProviderConfig provider;
     if (const auto found = config.model_providers.find(id);
         found != config.model_providers.end()) provider = found->second;
-    provider.id = id;
+    provider.name = id;
     const auto read_string = [&](const char* key, std::string& output) {
       if (const auto* field = cbor::find(value, key))
         output = std::string(field->as_string());
@@ -775,7 +775,7 @@ Result<RuntimeConfig> load_config(const std::optional<std::filesystem::path>& wo
   RuntimeConfig config;
   config.paths = *paths;
   config.model_providers.emplace("local", ModelProviderConfig{
-      .id = "local", .protocol = "local", .endpoint = "builtin://rhea",
+      .name = "local", .protocol = "local", .endpoint = "builtin://rhea",
       .model = "local-deterministic", .auth = "none", .allow_anonymous = true});
   for (const auto& short_id : official_lens_order()) {
     config.light_path.push_back(DesiredLens{
@@ -792,10 +792,10 @@ Result<RuntimeConfig> load_config(const std::optional<std::filesystem::path>& wo
     config.light_path.push_back(DesiredLens{
         .id = "org.tokmon.lens.calculator", .artifact = "builtin:calculator",
         .enabled = true, .runtime = RuntimeKind::in_process});
-  const auto selected = config.model_providers.find(config.default_model_provider);
+  const auto selected = config.model_providers.find(config.default_model_name);
   if (selected == config.model_providers.end() || !selected->second.enabled)
     return tl::unexpected(make_error(ErrorCode::schema_mismatch,
-        "models.default must name an enabled configured provider"));
+        "models.default must name an enabled model configuration"));
   if (auto result = merge_light_path(config, config.paths.user / "light-path.yaml"); !result)
     return tl::unexpected(result.error());
   if (auto result = merge_light_path(config, config.paths.project / "light-path.yaml"); !result)
@@ -852,14 +852,14 @@ Result<cbor::Value> update_light_path_document(
 
 Result<cbor::Value> resolve_model_provider_context(
     const RuntimeConfig& config, const cbor::Value& request) {
-  const auto* requested_provider = cbor::find(request, "provider");
-  const auto provider_id = requested_provider && !requested_provider->as_string().empty()
-      ? std::string(requested_provider->as_string())
-      : config.default_model_provider;
-  const auto found = config.model_providers.find(provider_id);
+  const auto* requested_name = cbor::find(request, "name");
+  const auto config_name = requested_name && !requested_name->as_string().empty()
+      ? std::string(requested_name->as_string())
+      : config.default_model_name;
+  const auto found = config.model_providers.find(config_name);
   if (found == config.model_providers.end() || !found->second.enabled)
     return tl::unexpected(make_error(ErrorCode::not_found,
-        "requested model provider is not configured or is disabled: " + provider_id));
+        "requested model configuration is not configured or is disabled: " + config_name));
 
   const auto& provider = found->second;
   const auto* requested_model = cbor::find(request, "model");
@@ -867,7 +867,7 @@ Result<cbor::Value> resolve_model_provider_context(
       requested_model->as_string() != provider.model)
     return tl::unexpected(make_error(ErrorCode::schema_mismatch,
         "requested model " + std::string(requested_model->as_string()) +
-        " does not belong to provider " + provider.id +
+        " does not belong to model configuration " + provider.name +
         "; configured model is " + provider.model));
 
   const auto requested_effort = cbor::find(request, "effort")
@@ -877,7 +877,7 @@ Result<cbor::Value> resolve_model_provider_context(
       ? std::string("medium") : requested_effort == "高" ? std::string("high") :
         requested_effort == "最高" ? std::string("max") : provider.reasoning_effort;
   auto context = cbor::object({
-      {"provider", provider.id}, {"protocol", provider.protocol},
+      {"name", provider.name}, {"protocol", provider.protocol},
       {"endpoint", provider.endpoint}, {"model", provider.model},
       {"auth", provider.auth}, {"allow_anonymous", provider.allow_anonymous},
       {"stream", provider.stream}, {"thinking", provider.thinking},

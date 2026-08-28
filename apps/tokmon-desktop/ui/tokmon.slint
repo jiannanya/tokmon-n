@@ -220,7 +220,7 @@ export component MainWindow inherits Window {
     in-out property <string> chat-time;
     in-out property <string> trace-duration: "-";
     in-out property <string> workflow-duration: "0ms";
-    in-out property <string> trace-provider: "-";
+    in-out property <string> trace-name: "-";
     in-out property <string> trace-model: "-";
     in-out property <string> trace-result: "等待输入";
     in-out property <string> trace-total-label: "0";
@@ -243,7 +243,7 @@ export component MainWindow inherits Window {
     in-out property <string> setting-channel: "稳定版";
     in-out property <string> setting-file-access: "受信路径";
     in-out property <string> provider-kind: "官方";
-    in-out property <string> setting-provider;
+    in-out property <string> setting-name;
     in-out property <string> setting-provider-protocol: "openai-compatible";
     in-out property <string> setting-provider-endpoint;
     in-out property <string> setting-provider-auth: "bearer";
@@ -348,7 +348,7 @@ export component MainWindow inherits Window {
     in-out property <length> sidebar-width: 240px;
     in-out property <length> code-panel-width: 440px;
     in property <[string]> agent-options;
-    in property <[string]> agent-providers;
+    in property <[string]> agent-names;
     in property <[string]> agent-models;
 
     callback send-message(string);
@@ -391,8 +391,8 @@ export component MainWindow inherits Window {
     pure callback project-in-group(string, string) -> bool;
     callback filter-preview(string);
 
-    select-model(provider, model) => {
-        root.setting-provider = provider;
+    select-model(name, model) => {
+        root.setting-name = name;
         root.setting-main-model = model;
         root.model-name = model;
     }
@@ -416,8 +416,8 @@ export component MainWindow inherits Window {
         root.trace-total == 0 ? "显示 0 条，共 0 条"
             : "显示 " + ((root.trace-page - 1) * root.trace-page-size + 1) + "-" + Math.min(root.trace-total, root.trace-page * root.trace-page-size) + " 条，共 " + root.trace-total + " 条"
     }
-    pure function setting-provider-at(i: int) -> string {
-        root.agent-providers[i]
+    pure function setting-name-at(i: int) -> string {
+        root.agent-names[i]
     }
     pure function setting-model-at(i: int) -> string {
         root.agent-models[i]
@@ -532,7 +532,7 @@ export component MainWindow inherits Window {
                 chat-time: root.chat-time;
                 trace-duration: root.trace-duration;
                 workflow-duration: root.workflow-duration;
-                trace-provider: root.trace-provider;
+                trace-name: root.trace-name;
                 trace-model: root.trace-model;
                 trace-result: root.trace-result;
                 trace-total-label: root.trace-total-label;
@@ -541,7 +541,7 @@ export component MainWindow inherits Window {
                 trace-search <=> root.trace-search;
                 selected-attachment <=> root.selected-attachment;
                 setting-command-approval: root.setting-command-approval;
-                setting-provider: root.setting-provider;
+                setting-name: root.setting-name;
                 setting-main-model <=> root.setting-main-model;
                 setting-workspace: root.setting-workspace;
                 workspace-group: root.workspace-group;
@@ -606,7 +606,7 @@ export component MainWindow inherits Window {
                     root.settings-page = 3;
                     root.settings-open = true;
                 }
-                select-model(provider, model) => { root.select-model(provider, model); }
+                select-model(name, model) => { root.select-model(name, model); }
                 return-focus => { hs.focus(); }
             }
             CodePanelSlot {
@@ -765,7 +765,7 @@ export component MainWindow inherits Window {
         setting-network <=> root.setting-network;
         setting-nickname <=> root.setting-nickname;
         setting-notifications <=> root.setting-notifications;
-        setting-provider <=> root.setting-provider;
+        setting-name <=> root.setting-name;
         setting-provider-auth <=> root.setting-provider-auth;
         setting-provider-credential <=> root.setting-provider-credential;
         setting-provider-endpoint <=> root.setting-provider-endpoint;
@@ -788,9 +788,9 @@ export component MainWindow inherits Window {
         save-settings => { root.save-settings(); }
         settings-searched(text) => { root.settings-searched(text); }
         startup-selected => { root.startup-selected() }
-        store-provider-secret(provider, secret) => { root.store-provider-secret(provider, secret); }
-        test-provider(provider) => { root.test-provider(provider); }
-        setting-provider-at(i) => { root.setting-provider-at(i) }
+        store-provider-secret(name, secret) => { root.store-provider-secret(name, secret); }
+        test-provider(name) => { root.test-provider(name); }
+        setting-name-at(i) => { root.setting-name-at(i) }
         setting-model-at(i) => { root.setting-model-at(i) }
         }
     }

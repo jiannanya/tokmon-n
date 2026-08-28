@@ -48,7 +48,7 @@ Result<void> CistaLens::view(const OpticalInput& photons, WavefrontBuilder& surf
     const auto id = field(photon.payload, "id", field(photon.payload, "ref"));
     if (id.empty()) continue;
     if (photon.kind == "secret.deleted") { references.erase(id); continue; }
-    references[id] = cbor::object({{"provider", "os-keyring"}, {"id", id},
+    references[id] = cbor::object({{"backend", "os-keyring"}, {"id", id},
         {"purpose", field(photon.payload, "purpose")}, {"available", true},
         {"last_rotated_ms", cbor::find(photon.payload, "last_rotated_ms")
             ? cbor::find(photon.payload, "last_rotated_ms")->as_integer() : 0},
@@ -83,7 +83,7 @@ Result<RefractionResult> CistaLens::refract(const PhotonWindow&, const Act& act,
     if (!metadata) return tl::unexpected(metadata.error());
     cbor::Value::Array items;
     for (const auto& item : *metadata)
-      items.push_back(cbor::object({{"provider", "os-keyring"}, {"id", item.id},
+      items.push_back(cbor::object({{"backend", "os-keyring"}, {"id", item.id},
           {"purpose", item.purpose}, {"last_rotated_ms", item.last_rotated_ms},
           {"available", true}, {"plaintext", false}}));
     return emit(beam, "secret.metadata-listed", "tokmon.secret.metadata.v1",
@@ -105,14 +105,14 @@ Result<RefractionResult> CistaLens::refract(const PhotonWindow&, const Act& act,
       return tl::unexpected(stored.error());
     const auto rotated = now_ms();
     return emit(beam, act.kind == "secret.create" ? "secret.created" : "secret.rotated",
-        "tokmon.secret.metadata.v1", cbor::object({{"provider", "os-keyring"},
+        "tokmon.secret.metadata.v1", cbor::object({{"backend", "os-keyring"},
           {"id", id}, {"purpose", purpose}, {"last_rotated_ms", rotated},
           {"available", true}, {"plaintext", false}}));
   }
   if (act.kind == "secret.delete") {
     if (auto removed = keyring_delete(id); !removed) return tl::unexpected(removed.error());
     return emit(beam, "secret.deleted", "tokmon.secret.metadata.v1",
-                cbor::object({{"provider", "os-keyring"}, {"id", id},
+                cbor::object({{"backend", "os-keyring"}, {"id", id},
                               {"plaintext", false}}));
   }
 

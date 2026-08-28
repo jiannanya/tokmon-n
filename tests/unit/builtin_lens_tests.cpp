@@ -210,7 +210,7 @@ TEST_CASE("Janus forwards a platform-neutral protocol envelope to Rhea") {
   tokmon::Photon input{.sequence = 1, .id = "input-provider", .ray = "ray-provider",
       .kind = "user.input", .schema = "tokmon.user.input.v1",
       .payload = tokmon::cbor::object({{"text", "hello"},
-          {"provider", "private-cloud"}, {"protocol", "openai-compatible"},
+          {"name", "private-cloud"}, {"protocol", "openai-compatible"},
           {"endpoint", "https://models.example.test/v1/chat/completions"},
           {"model", "custom-model"}, {"secret_ref", "model-provider/private-cloud"},
           {"auth", "bearer"}, {"stream", false}, {"thinking", true},
@@ -224,7 +224,7 @@ TEST_CASE("Janus forwards a platform-neutral protocol envelope to Rhea") {
   const auto& surface = viewed->surface;
   REQUIRE(surface.proposals.size() == 1);
   const auto& parameters = surface.proposals.front().parameters;
-  REQUIRE(tokmon::cbor::find(parameters, "provider")->as_string() == "private-cloud");
+  REQUIRE(tokmon::cbor::find(parameters, "name")->as_string() == "private-cloud");
   REQUIRE(tokmon::cbor::find(parameters, "protocol")->as_string() ==
           "openai-compatible");
   REQUIRE(tokmon::cbor::find(parameters, "model")->as_string() == "custom-model");
@@ -324,7 +324,7 @@ TEST_CASE("Rhea rejects dynamic parameters that would replace runtime-owned fiel
   RecordingHost host;
   auto result = refract(lens, "model.call", "tokmon.model.call.v1",
       tokmon::cbor::object({
-          {"provider", "fixture-cloud"}, {"protocol", "openai-compatible"},
+          {"name", "fixture-cloud"}, {"protocol", "openai-compatible"},
           {"model", "fixture-model"}, {"prompt", "hello"},
           {"endpoint", "http://127.0.0.1:1/v1/chat/completions"},
           {"allow_anonymous", true}, {"max_attempts", 1},
@@ -830,16 +830,28 @@ TEST_CASE("chhttp is the HTTP SSE and WebSocket transport behind network Lenses"
 
   const auto rhea = tokmon::make_builtin_lens("rhea");
   RecordingHost model_host;
+  const auto buffered_request_body = tokmon::cbor::object({
+      {"model", "fixture-model"},
+      {"messages", tokmon::cbor::Value::Array{tokmon::cbor::object({
+          {"role", "user"}, {"content", "hello"}})}}});
+  const auto buffered_request_parameters = tokmon::cbor::object({
+      {"provider", tokmon::cbor::object({
+          {"order", tokmon::cbor::Value::Array{"Cerebras"}}})}});
   auto buffered = refract(rhea, "model.call", "tokmon.model.call.v1",
-      tokmon::cbor::object({{"provider", "fixture-buffered"},
+      tokmon::cbor::object({{"name", "fixture-buffered"},
           {"protocol", "openai-compatible"}, {"model", "fixture-model"},
           {"prompt", "hello"}, {"stream", false},
+          {"request_body", buffered_request_body},
+          {"request_parameters", buffered_request_parameters},
           {"endpoint", base + "/model-buffered"}, {"allow_anonymous", true},
           {"max_attempts", 1}}), model_host);
   REQUIRE(buffered);
   auto buffered_body = tokmon::json::parse(buffered_model_request);
   REQUIRE(buffered_body);
   REQUIRE_FALSE(tokmon::cbor::find(*buffered_body, "stream")->as_bool());
+  REQUIRE(tokmon::cbor::find(
+      *tokmon::cbor::find(*buffered_body, "provider"), "order")->as_array()->front().as_string() ==
+          "Cerebras");
   const auto buffered_chunk = std::ranges::find_if(model_host.drafts,
       [](const auto& draft) { return draft.kind == "model.content-chunk"; });
   REQUIRE(buffered_chunk != model_host.drafts.end());
@@ -852,7 +864,7 @@ TEST_CASE("chhttp is the HTTP SSE and WebSocket transport behind network Lenses"
 
   RecordingHost default_stream_host;
   auto default_stream = refract(rhea, "model.call", "tokmon.model.call.v1",
-      tokmon::cbor::object({{"provider", "fixture-default-stream"},
+      tokmon::cbor::object({{"name", "fixture-default-stream"},
           {"protocol", "openai-compatible"}, {"model", "fixture-model"},
           {"prompt", "use a tool if needed"},
           {"tools", tokmon::cbor::Value::Array{tokmon::cbor::object({
@@ -904,7 +916,7 @@ TEST_CASE("Rhea streams an OpenAI-compatible provider and retries transient fail
   malformed_message.push_back(static_cast<char>(0xe4));
   malformed_message.append("\\tail");
   auto result = refract(lens, "model.call", "tokmon.model.call.v1",
-      tokmon::cbor::object({{"provider", "fixture-cloud"},
+      tokmon::cbor::object({{"name", "fixture-cloud"},
           {"protocol", "openai-compatible"}, {"model", "fixture-model"},
           {"prompt", "hello"},
           {"messages", tokmon::cbor::Value::Array{tokmon::cbor::object({
@@ -914,6 +926,9 @@ TEST_CASE("Rhea streams an OpenAI-compatible provider and retries transient fail
           {"retry_backoff_ms", 1},
           {"request_parameters", tokmon::cbor::object({
               {"temperature", 0.25}, {"top_p", 0.9},
+              {"provider", tokmon::cbor::object({
+                  {"order", tokmon::cbor::Value::Array{"Cerebras"}},
+                  {"allow_fallbacks", true}})},
               {"stop", tokmon::cbor::Value::Array{"END", "STOP"}},
               {"response_format", tokmon::cbor::object({{"type", "json_object"}})}})}}),
       host);
@@ -937,7 +952,7 @@ TEST_CASE("Rhea streams an OpenAI-compatible provider and retries transient fail
       [](const auto& draft) { return draft.kind == "assistant.message"; });
   REQUIRE(answer != host.drafts.end());
   REQUIRE(tokmon::cbor::find(answer->payload, "text")->as_string() == "hello world");
-  REQUIRE(tokmon::cbor::find(answer->payload, "provider")->as_string() ==
+  REQUIRE(tokmon::cbor::find(answer->payload, "name")->as_string() ==
           "fixture-cloud");
   const auto usage = std::find_if(host.drafts.begin(), host.drafts.end(),
       [](const auto& draft) { return draft.kind == "model.usage"; });
@@ -963,6 +978,11 @@ TEST_CASE("Rhea streams an OpenAI-compatible provider and retries transient fail
       *tokmon::cbor::find(*request_body, "response_format"), "type")->as_string() ==
       "json_object");
   REQUIRE(tokmon::cbor::find(*request_body, "stop")->as_array()->size() == 2);
+  const auto* upstream_provider = tokmon::cbor::find(*request_body, "provider");
+  REQUIRE(upstream_provider != nullptr);
+  REQUIRE(tokmon::cbor::find(*upstream_provider, "order")->as_array()->front().as_string() ==
+          "Cerebras");
+  REQUIRE(tokmon::cbor::find(*upstream_provider, "allow_fallbacks")->as_bool());
   REQUIRE(tokmon::cbor::find(*request_body, "model")->as_string() == "fixture-model");
   REQUIRE(tokmon::cbor::find(*request_body, "stream")->as_bool());
   const auto* captured_messages = tokmon::cbor::find(*request_body, "messages");
@@ -1001,7 +1021,7 @@ TEST_CASE("Rhea performs five retries before publishing a terminal model failure
   const auto lens = tokmon::make_builtin_lens("rhea");
   RecordingHost host;
   auto result = refract(lens, "model.call", "tokmon.model.call.v1",
-      tokmon::cbor::object({{"provider", "fixture-cloud"},
+      tokmon::cbor::object({{"name", "fixture-cloud"},
           {"protocol", "openai-compatible"}, {"model", "fixture-model"},
           {"prompt", "hello"},
           {"endpoint", "http://127.0.0.1:" + port + "/v1/chat/completions"},
@@ -1597,6 +1617,15 @@ TEST_CASE("Cista OS credential binding is exact one-shot and leaves no plaintext
   auto listed = refract(lens, "secret.list-metadata", "tokmon.secret.list-metadata.v1",
                          tokmon::cbor::Value::Map{}, host);
   REQUIRE(listed);
+  const auto* items = tokmon::cbor::find(host.drafts.back().payload, "items");
+  REQUIRE(items != nullptr);
+  const auto metadata_item = std::ranges::find_if(*items->as_array(), [&](const auto& item) {
+    const auto* item_id = tokmon::cbor::find(item, "id");
+    return item_id && item_id->as_string() == id;
+  });
+  REQUIRE(metadata_item != items->as_array()->end());
+  REQUIRE(tokmon::cbor::find(*metadata_item, "backend")->as_string() == "os-keyring");
+  REQUIRE(tokmon::cbor::find(*metadata_item, "provider") == nullptr);
   REQUIRE(tokmon::cbor::diagnostic(host.drafts.back().payload).find("fixture-credential") ==
           std::string::npos);
 #else

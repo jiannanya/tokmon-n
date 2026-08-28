@@ -748,7 +748,7 @@ fallen:
 
 ```yaml
 secret_ref:
-  provider: os-keyring
+  backend: os-keyring
   id: model/openai/default
   purpose: model-api
 ```

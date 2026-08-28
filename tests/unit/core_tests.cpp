@@ -863,7 +863,7 @@ TEST_CASE("calculator executes the complete Fact Lens Act photon loop") {
   tokmon::TokmonRuntime runtime;
   REQUIRE(runtime.open(root / "workspace", "tokmon-tests"));
   auto ray = runtime.submit("请计算 128 * 4", tokmon::cbor::object({
-      {"provider", "local"}, {"protocol", "local"},
+      {"name", "local"}, {"protocol", "local"},
       {"model", "local-deterministic"}, {"access_mode", "受限访问"},
       {"effort", "最高"}}));
   REQUIRE(ray);
@@ -1234,7 +1234,7 @@ TEST_CASE("model platforms merge by id while credentials remain SecretRefs") {
     std::ofstream user(root / "home" / ".tokmon" / "config.yaml");
     user << "models:\n"
             "  default: private-cloud\n"
-            "  providers:\n"
+            "  goes:\n"
             "    private-cloud:\n"
             "      protocol: openai-compatible\n"
             "      endpoint: https://models.example.test/v1/chat/completions\n"
@@ -1247,13 +1247,17 @@ TEST_CASE("model platforms merge by id while credentials remain SecretRefs") {
             "        - END\n"
             "        - STOP\n"
             "      request_parameters:\n"
+            "        provider:\n"
+            "          order:\n"
+            "            - Cerebras\n"
+            "          allow_fallbacks: true\n"
             "        response_format:\n"
             "          type: json_object\n";
   }
   {
     std::ofstream project(workspace / ".tokmon" / "config.yaml");
     project << "models:\n"
-               "  providers:\n"
+               "  goes:\n"
                "    private-cloud:\n"
                "      model: project-model\n"
                "      stream: false\n"
@@ -1262,7 +1266,7 @@ TEST_CASE("model platforms merge by id while credentials remain SecretRefs") {
   }
   auto config = tokmon::load_config(workspace);
   REQUIRE(config);
-  REQUIRE(config->default_model_provider == "private-cloud");
+  REQUIRE(config->default_model_name == "private-cloud");
   const auto& provider = config->model_providers.at("private-cloud");
   REQUIRE(provider.protocol == "openai-compatible");
   REQUIRE(provider.model == "project-model");
@@ -1277,34 +1281,40 @@ TEST_CASE("model platforms merge by id while credentials remain SecretRefs") {
   REQUIRE(std::get<double>(request_parameters->at("top_p").data) == 0.9);
   REQUIRE(request_parameters->at("stop").as_array() != nullptr);
   REQUIRE(request_parameters->at("stop").as_array()->size() == 2);
+  const auto* upstream_provider = request_parameters->at("provider").as_map();
+  REQUIRE(upstream_provider != nullptr);
+  REQUIRE(upstream_provider->at("order").as_array()->front().as_string() == "Cerebras");
+  REQUIRE(upstream_provider->at("allow_fallbacks").as_bool());
   const auto* response_format = request_parameters->at("response_format").as_map();
   REQUIRE(response_format != nullptr);
   REQUIRE(response_format->at("type").as_string() == "json_object");
 }
 
-TEST_CASE("model context keeps provider and configured model inseparable") {
+TEST_CASE("model context keeps configuration name and configured model inseparable") {
   tokmon::RuntimeConfig config;
   config.paths.project = "E:/workspace/.tokmon";
-  config.default_model_provider = "opencode";
+  config.default_model_name = "opencode";
   config.model_providers.emplace("opencode", tokmon::ModelProviderConfig{
-      .id = "opencode", .protocol = "openai-compatible",
+      .name = "opencode", .protocol = "openai-compatible",
       .endpoint = "https://opencode.example/v1/chat/completions",
       .model = "x-preview-f-free", .secret_ref = "model-provider/opencode",
       .auth = "bearer"});
   config.model_providers.emplace("deepseek", tokmon::ModelProviderConfig{
-      .id = "deepseek", .protocol = "openai-compatible",
+      .name = "deepseek", .protocol = "openai-compatible",
       .endpoint = "https://api.deepseek.com/chat/completions",
       .model = "deepseek-v4-flash", .secret_ref = "model-provider/deepseek",
       .auth = "bearer", .stream = false, .thinking = true,
       .reasoning_effort = "high",
-      .request_parameters = tokmon::cbor::object({{"temperature", 0.3}})});
+      .request_parameters = tokmon::cbor::object({
+          {"temperature", 0.3}, {"provider", tokmon::cbor::object({
+              {"order", tokmon::cbor::Value::Array{"Cerebras"}}})}})});
 
   auto selected = tokmon::resolve_model_provider_context(config,
-      tokmon::cbor::object({{"provider", "deepseek"},
+      tokmon::cbor::object({{"name", "deepseek"},
                             {"model", "deepseek-v4-flash"},
                             {"effort", "高"}}));
   REQUIRE(selected);
-  REQUIRE(tokmon::cbor::find(*selected, "provider")->as_string() == "deepseek");
+  REQUIRE(tokmon::cbor::find(*selected, "name")->as_string() == "deepseek");
   REQUIRE(tokmon::cbor::find(*selected, "model")->as_string() ==
           "deepseek-v4-flash");
   REQUIRE(tokmon::cbor::find(*selected, "endpoint")->as_string() ==
@@ -1315,9 +1325,10 @@ TEST_CASE("model context keeps provider and configured model inseparable") {
   REQUIRE(selected_parameters != nullptr);
   REQUIRE(std::get<double>(
       tokmon::cbor::find(*selected_parameters, "temperature")->data) == 0.3);
+  REQUIRE(tokmon::cbor::find(*selected_parameters, "provider")->as_map() != nullptr);
 
   auto mismatch = tokmon::resolve_model_provider_context(config,
-      tokmon::cbor::object({{"provider", "opencode"},
+      tokmon::cbor::object({{"name", "opencode"},
                             {"model", "deepseek-v4-flash"}}));
   REQUIRE_FALSE(mismatch);
   REQUIRE(mismatch.error().code == tokmon::ErrorCode::schema_mismatch);
@@ -1325,7 +1336,7 @@ TEST_CASE("model context keeps provider and configured model inseparable") {
   auto fallback = tokmon::resolve_model_provider_context(
       config, tokmon::cbor::Value::Map{});
   REQUIRE(fallback);
-  REQUIRE(tokmon::cbor::find(*fallback, "provider")->as_string() == "opencode");
+  REQUIRE(tokmon::cbor::find(*fallback, "name")->as_string() == "opencode");
   REQUIRE(tokmon::cbor::find(*fallback, "stream")->as_bool());
   REQUIRE(tokmon::cbor::find(*fallback, "model")->as_string() ==
           "x-preview-f-free");
@@ -1339,7 +1350,7 @@ TEST_CASE("model configuration rejects plaintext keys and insecure remote endpoi
   const auto file = workspace / ".tokmon" / "config.yaml";
   {
     std::ofstream output(file);
-    output << "models:\n  providers:\n    unsafe:\n"
+    output << "models:\n  goes:\n    unsafe:\n"
               "      protocol: openai-compatible\n"
               "      endpoint: https://example.test/v1/chat/completions\n"
               "      model: test\n      api_key: plaintext-is-forbidden\n";
@@ -1349,7 +1360,7 @@ TEST_CASE("model configuration rejects plaintext keys and insecure remote endpoi
   REQUIRE(plaintext.error().code == tokmon::ErrorCode::permission_denied);
   {
     std::ofstream output(file, std::ios::trunc);
-    output << "models:\n  providers:\n    unsafe:\n"
+    output << "models:\n  goes:\n    unsafe:\n"
               "      protocol: openai-compatible\n"
               "      endpoint: http://models.example.test/v1/chat/completions\n"
               "      model: test\n      secret_ref: model-provider/unsafe\n";
@@ -1359,7 +1370,7 @@ TEST_CASE("model configuration rejects plaintext keys and insecure remote endpoi
   REQUIRE(insecure.error().code == tokmon::ErrorCode::permission_denied);
   {
     std::ofstream output(file, std::ios::trunc);
-    output << "models:\n  providers:\n    unsafe:\n"
+    output << "models:\n  goes:\n    unsafe:\n"
               "      protocol: openai-compatible\n"
               "      endpoint: https://models.example.test/v1/chat/completions\n"
               "      model: test\n      secret_ref: model-provider/unsafe\n"

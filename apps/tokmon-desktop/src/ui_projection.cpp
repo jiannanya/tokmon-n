@@ -89,8 +89,9 @@ std::string act_field(const tokmon::Photon &photon,
 
 std::string attempt_detail(const tokmon::Photon &photon) {
   const auto attempt = payload_text(photon.payload, "attempt");
+  auto name = payload_text(photon.payload, "name");
   return joined_detail(
-      {payload_text(photon.payload, "provider"),
+      {std::move(name),
        payload_text(photon.payload, "model"),
        attempt.empty() ? std::string{} : "第 " + attempt + " 次"});
 }
@@ -916,10 +917,10 @@ TraceSummary trace_summary_from(const std::vector<tokmon::Photon> &photons) {
     }
     if (photon.kind.starts_with("model.") ||
         photon.kind == "assistant.message") {
-      const auto provider = payload_text(photon.payload, "provider");
+      const auto name = payload_text(photon.payload, "name");
       const auto model = payload_text(photon.payload, "model");
-      if (!provider.empty())
-        summary.provider = provider;
+      if (!name.empty())
+        summary.name = name;
       if (!model.empty())
         summary.model = model;
     }

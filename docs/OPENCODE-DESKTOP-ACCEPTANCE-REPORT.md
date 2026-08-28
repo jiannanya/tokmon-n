@@ -60,7 +60,7 @@ E:\cc\AI\tokmon\tokmon_work_test\test2\.tokmon\config.yaml
 ```yaml
 models:
   default: opencode
-  providers:
+  goes:
     opencode:
       protocol: openai-compatible
       endpoint: https://opencode.ai/zen/v1/chat/completions

@@ -89,8 +89,8 @@ int main()
     advance_time(10);
 
     ui->invoke_test_select_model("deepseek", "deepseek-v4-flash");
-    expect(as_string(ui->get_test_setting_provider()) == "deepseek",
-           "model selection must switch the provider and model as one pair");
+    expect(as_string(ui->get_test_setting_name()) == "deepseek",
+           "model selection must switch the configuration name and model as one pair");
     expect(as_string(ui->get_test_setting_main_model()) == "deepseek-v4-flash" &&
                    as_string(ui->get_test_model_name()) == "deepseek-v4-flash",
            "model selection must keep settings and composer labels synchronized");
@@ -170,13 +170,13 @@ int main()
     expect(as_string(ui->get_test_session_title()) == "Enter save",
            "Enter must retain the edited title");
 
-    const auto edit_button = find_element(ui, "edit-title-button");
-    const auto edit_position = edit_button.absolute_position();
-    const auto edit_size = edit_button.size();
+    const auto mode_switch = find_element(ui, "mode-switch");
+    const auto mode_switch_position = mode_switch.absolute_position();
+    const auto mode_switch_size = mode_switch.size();
     const auto drag_space = find_element(ui, "titlebar-blank-space");
     const auto drag_position = drag_space.absolute_position();
-    expect(drag_position.x - (edit_position.x + edit_size.width) <= 1.0F,
-           "the drag region must start immediately after the title controls");
+    expect(drag_position.x - (mode_switch_position.x + mode_switch_size.width) <= 1.0F,
+           "the drag region must start immediately after the last header control");
     click_element(ui, "titlebar-blank-space", 0.02F);
     expect(ui->get_drag_count() == 1,
            "the title-adjacent blank region must start native window dragging");

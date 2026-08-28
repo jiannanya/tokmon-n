@@ -54,11 +54,12 @@ struct FallenPolicy {
   bool configured{false};
 };
 
-// `id` names the platform/account while `protocol` selects the wire adapter.
+// `name` selects this Tokmon-local configuration while `protocol` selects the
+// wire adapter. The name never enters the upstream model request body.
 // DeepSeek, OpenRouter and private gateways can therefore share the same
 // openai-compatible adapter without becoming special cases in Rhea.
 struct ModelProviderConfig {
-  std::string id;
+  std::string name;
   std::string protocol{"openai-compatible"};
   std::string endpoint;
   std::string model;
@@ -98,7 +99,7 @@ struct RuntimeConfig {
   std::unordered_map<std::string, std::string> trusted_signers;
   FallenPolicy user_policy;
   FallenPolicy project_policy;
-  std::string default_model_provider{"local"};
+  std::string default_model_name{"local"};
   std::unordered_map<std::string, ModelProviderConfig> model_providers;
 };
 

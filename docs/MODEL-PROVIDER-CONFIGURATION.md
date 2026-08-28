@@ -6,10 +6,11 @@
 
 真实模型接入仍然遵循 Tokmon 的统一语义：用户输入首先成为 Fact，Janus 根据已验证的配置形成 `model.call` Act，Rhea 将 Act 聚焦为具体协议请求，结果以只能追加的 Photon 回到同一条因果光流。模型平台不是 Nyxia 的特例，也不会绕过 Fact → Lens → Act。
 
-Rhea 不绑定 DeepSeek 或任何单一厂商。配置中的两个身份必须分开理解：
+Rhea 不绑定 DeepSeek 或任何单一厂商。配置选择与上游请求参数必须分开理解：
 
-- `id` 是平台或账户的本地名字，例如 `deepseek`、`openrouter`、`company-gateway`；
+- `name` 是 Tokmon 内部使用的配置名称，也就是 `models.goes` 的 map key，例如 `deepseek`、`openrouter`、`company-gateway`；它只用于选择配置，绝不进入上游 HTTP body；
 - `protocol` 是 Rhea 使用的线协议适配器，例如 `openai-compatible`、`anthropic`、`gemini`。
+- `provider` 不再是 Tokmon 内部路由字段；它是普通的用户请求参数，可供 OpenRouter 等 API 作为嵌套 JSON 接收。
 
 因此 DeepSeek 只是 `openai-compatible` 的一个配置实例。OpenAI、OpenRouter、LiteLLM、vLLM、自建 API 网关以及其他兼容端点均可复用同一适配器；Rhea 内部没有 DeepSeek 专属分支。
 
@@ -58,11 +59,11 @@ tokmon model test deepseek
 普通真实对话：
 
 ```powershell
-tokmon run --provider deepseek "解释这个项目的光流调度逻辑"
-tokmon chat --provider deepseek
+tokmon run --name deepseek "解释这个项目的光流调度逻辑"
+tokmon chat --name deepseek
 ```
 
-若已设为默认 provider，可省略 `--provider deepseek`。
+若 `models.default` 已设为 `deepseek`，可省略 `--name deepseek`。Desktop 每次新建会话也会重新采用这个默认配置，不继承上一会话的临时选择。
 
 DeepSeek 的端点与模型会继续演进，示例不会被编译进 Rhea。请以 DeepSeek 官方的 [Chat Completion API](https://api-docs.deepseek.com/api/create-chat-completion) 和 [模型/价格页面](https://api-docs.deepseek.com/quick_start/pricing/) 为准，只需修改 YAML/CLI 配置，无需重新编译 Tokmon。
 
@@ -133,7 +134,7 @@ CLI 原子生成的项目配置如下：
 ```yaml
 models:
   default: company-gateway
-  providers:
+  goes:
     company-gateway:
       protocol: openai-compatible
       endpoint: https://models.example.com/v1/chat/completions
@@ -153,16 +154,39 @@ models:
       idle_timeout_ms: 30000
       temperature: 0.2
       top_p: 0.95
+      provider:
+        order:
+          - Cerebras
+        allow_fallbacks: true
       response_format:
         type: json_object
 ```
 
 `secret_env` 是可选的非交互式引导来源，不是保存 Key 的位置。名称必须是大写环境变量格式（例如 `OPENCODE_API_KEY`），YAML 仍必须提供严格命名空间化的 `secret_ref`。`tokmond` 启动时先读取当前进程环境；Windows 还会读取当前用户和本机环境变量注册表，以支持在 Desktop/终端启动之后才写入的变量。读取成功后立即导入操作系统凭据库，后续调用只使用 `secret_ref`，临时明文缓冲区会被覆写。环境变量不存在时不会降低为匿名调用。
 
-provider 字段分成两类：
+配置项分成两类：
 
-- Tokmon 固定字段负责平台身份、传输、安全、重试和超时，例如 `protocol`、`endpoint`、`model`、`secret_ref`、`auth`、`stream`、`thinking`、`reasoning_effort`、`max_output_tokens`、`max_attempts`、`retry_backoff_ms`、`first_token_timeout_ms`、`idle_timeout_ms`；
+- Tokmon 固定字段负责配置选择、传输、安全、重试和超时，例如 map key 对应的内部 `name`，以及 `protocol`、`endpoint`、`model`、`secret_ref`、`auth`、`stream`、`thinking`、`reasoning_effort`、`max_output_tokens`、`max_attempts`、`retry_backoff_ms`、`first_token_timeout_ms`、`idle_timeout_ms`；
 - 固定字段之外的任意 YAML 字段都作为模型请求参数原样保留，可使用字符串、整数、浮点数、布尔值、null、数组和嵌套对象。Rhea 会把它们合并到厂商请求 JSON 中，因此无需为 `temperature`、`top_p`、`seed`、`response_format` 或未来厂商参数修改、重新编译 Tokmon。
+
+OpenRouter 的 `provider` 偏好可以直接写在配置项下，或放进 `request_parameters`；两者都会生成相同的上游 JSON：
+
+```yaml
+models:
+  default: openrouter-fast
+  goes:
+    openrouter-fast:
+      protocol: openai-compatible
+      endpoint: https://openrouter.ai/api/v1/chat/completions
+      model: openai/gpt-5
+      secret_ref: model-provider/openrouter-fast
+      auth: bearer
+      provider:
+        order: [Cerebras, Groq]
+        allow_fallbacks: true
+```
+
+这里 `openrouter-fast` 是 Tokmon 内部配置 `name`，请求体中的 `provider` 则完整透传给 OpenRouter；二者没有字段复用。
 
 动态参数也可以集中写在 `request_parameters` 下；两种写法语义相同：
 
@@ -173,14 +197,14 @@ provider 字段分成两类：
           type: json_object
 ```
 
-同一个参数不能既直接声明又出现在 `request_parameters` 中。`model`、`messages`、`tools`、`stream` 等因果与协议控制字段，以及所有凭据字段，由 Tokmon 独占；尝试通过动态参数覆盖会使整个候选配置明确失败，不会忽略、回退或部分生效。
+同一个参数不能既直接声明又出现在 `request_parameters` 中。内部 `name`、`model`、`messages`、`tools`、`stream` 等因果与协议控制字段，以及所有凭据字段，由 Tokmon 独占；`provider` 明确不在保护名单中。尝试覆盖其他受保护字段会使整个候选配置明确失败，不会忽略、回退或部分生效。
 
 OpenCode 验收配置示例：
 
 ```yaml
 models:
   default: opencode
-  providers:
+  goes:
     opencode:
       protocol: openai-compatible
       endpoint: https://opencode.ai/zen/v1/chat/completions
@@ -199,7 +223,7 @@ models:
 
 `x-preview-f-free` 不接受 `medium`，应使用 `low`、`high` 或 `max`。本次 Windows 现场验收使用 `high`。远程模型默认执行 1 次初始请求和 5 次重试，确定性等待为 5 秒、10 秒、20 秒、40 秒、60 秒；只有五次重试都失败后才追加最终 `model.failed`。每次等待前追加 `model.retry-scheduled`，对话页显示人类可读状态，轨迹页保留完整 Photon。完整 CLI/Desktop 记录见 [OPENCODE-DESKTOP-ACCEPTANCE-REPORT.md](OPENCODE-DESKTOP-ACCEPTANCE-REPORT.md)。
 
-用户级 `~/.tokmon/config.yaml` 与项目级 `<workspace>/.tokmon/config.yaml` 使用同一 schema。先合并用户级，再按 provider id 合并项目级；项目可以覆盖 model、endpoint 或预算，但 SecretRef 必须严格等于自己的 `model-provider/<id>`，不能引用其他 provider 或其他透镜的凭据。`models.default` 必须指向存在且启用的 provider。
+用户级 `~/.tokmon/config.yaml` 与项目级 `<workspace>/.tokmon/config.yaml` 使用同一 schema。先合并用户级，再按配置名称合并项目级；项目可以覆盖 model、endpoint 或预算，但 SecretRef 必须严格等于自己的 `model-provider/<name>`，不能引用其他配置或其他透镜的凭据。`models.default` 必须指向存在且启用的配置名称。
 
 配置由 `tokmond` 使用临时文件和原子替换发布。daemon 监视用户级和项目级配置文件，外部编辑后会重新读取、完整验证并锁存失败状态；非法固定字段、非 HTTPS 远程地址、越权 SecretRef、受保护的动态参数或越界预算会拒绝整个候选配置。
 
@@ -209,11 +233,11 @@ Desktop 和 CLI 都会在启动后台服务前预检配置。Desktop 先创建�
 
 打开“设置 → 智能体与模型”：
 
-1. 填写平台 ID、协议适配器、HTTPS Endpoint、模型和鉴权方式；
+1. 填写配置名称、协议适配器、HTTPS Endpoint、模型和鉴权方式；
 2. 点击“保存平台配置”，Desktop 通过 Snow 交给 `tokmond` 原子保存并热重载；
 3. 在密码输入框填写 Key，点击“安全保存 Key”；输入框立即清空，Key 只写入系统凭据库；
 4. 点击“测试真实连接”，结果会同时显示在对话区和轨迹区；
-5. 后续普通会话自动使用这个默认 provider。
+5. 后续新会话自动使用这个 `models.default` 配置名称。
 
 密码框使用 Slint password 输入类型。Desktop 与 CLI 共享同一个 tokmond 和同一个 provider 配置，不需要先启动 launcher，也不需要重复配置。
 
@@ -221,16 +245,16 @@ Desktop 和 CLI 都会在启动后台服务前预检配置。Desktop 先创建�
 
 ```text
 tokmon model list
-tokmon model configure <id> --protocol <protocol> --endpoint <url> --model <model> [options]
-tokmon model use <id>
-tokmon model secret set <id>
-tokmon model secret delete <id>
-tokmon model test <id> [text]
-tokmon run --provider <id> <message>
-tokmon chat --provider <id>
+tokmon model configure <name> --protocol <protocol> --endpoint <url> --model <model> [options]
+tokmon model use <name>
+tokmon model secret set <name>
+tokmon model secret delete <name>
+tokmon model test <name> [text]
+tokmon run --name <configuration> <message>
+tokmon chat --name <configuration>
 ```
 
-`model list` 只报告 `ready`/`missing`，绝不读取或显示 Key。轮换 Key 只需再次执行 `model secret set <id>`；删除使用 `model secret delete <id>`。
+`model list` 只报告 `ready`/`missing`，绝不读取或显示 Key。轮换 Key 只需再次执行 `model secret set <name>`；删除使用 `model secret delete <name>`。
 
 ## 9. 安全与因果不变量
 
@@ -238,7 +262,7 @@ tokmon chat --provider <id>
 - Cista 从操作系统凭据库创建与 `act_hash + target + generation + epoch` 精确绑定、最多两分钟有效的一次性凭据绑定；Rhea消费后立即失效。
 - YAML、Photon、Act、Surface、日志和 CLI 响应仅携带 SecretRef、`credential_present` 或 `opaque-binding`，不携带 Key。
 - 配置拒绝 `api_key`、`secret_value` 等未知明文字段；Rhea 再次拒绝携带明文凭据的 Act。
-- SecretRef 被 provider id 命名空间约束，项目配置不能借模型调用读取其他秘密。
+- SecretRef 被配置名称命名空间约束，项目配置不能借模型调用读取其他秘密。
 - endpoint 在配置层与 Rhea 层双重验证：远程只允许 HTTPS，HTTP 仅允许 loopback。
 - 模型调用的请求、流式 chunk、usage、完成或失败均追加为新 Photon；历史 Photon 从不编辑、撤销或覆盖。
 
@@ -249,12 +273,12 @@ tokmon chat --provider <id>
 ```powershell
 tokmon model list
 tokmon doctor
-tokmon model test <id>
+tokmon model test <name>
 ```
 
 常见结果：
 
-- `credential missing`：执行 `tokmon model secret set <id>`；
+- `credential missing`：执行 `tokmon model secret set <name>`；
 - `secret reference was not found`：系统凭据库中没有对应条目，或当前 Windows 用户不同；
 - `401/403`：Key、鉴权 header 或平台账户权限错误；
 - `404`：endpoint 路径或 model id 错误；

@@ -13,7 +13,7 @@ export component TrajectoryPanel inherits Rectangle {
     in property <string> assistant-text;
     in property <string> setting-command-approval;
     in property <string> trace-duration;
-    in property <string> trace-provider;
+    in property <string> trace-name;
     in property <string> trace-model;
     in property <string> trace-result;
     in property <string> trace-total-label;
@@ -490,7 +490,7 @@ export component TrajectoryPanel inherits Rectangle {
                                 spacing: 8px;
                                 if root.request-tab == 0 : VerticalLayout {
                                     spacing: 8px;
-                                    HorizontalLayout { spacing: 8px; Text { text: "Provider"; width: 84px; horizontal-stretch: 0; font-size: 12px; color: Palette.dim; vertical-alignment: center; } Text { text: root.trace-provider; font-family: "MiSans VF"; font-size: 12px; color: Palette.body; overflow: elide; vertical-alignment: center; } }
+                                    HorizontalLayout { spacing: 8px; Text { text: "配置名称"; width: 84px; horizontal-stretch: 0; font-size: 12px; color: Palette.dim; vertical-alignment: center; } Text { text: root.trace-name; font-family: "MiSans VF"; font-size: 12px; color: Palette.body; overflow: elide; vertical-alignment: center; } }
                                     HorizontalLayout { spacing: 8px; Text { text: "Model"; width: 84px; horizontal-stretch: 0; font-size: 12px; color: Palette.dim; vertical-alignment: center; } Text { text: root.trace-model; font-family: "MiSans VF"; font-size: 12px; color: Palette.body; overflow: elide; vertical-alignment: center; } }
                                     HorizontalLayout { spacing: 8px; Text { text: "Tool calls"; width: 84px; horizontal-stretch: 0; font-size: 12px; color: Palette.dim; vertical-alignment: center; } Text { text: root.trace-calls; font-family: "MiSans VF"; font-size: 12px; color: Palette.body; vertical-alignment: center; } }
                                     HorizontalLayout { spacing: 8px; Text { text: "Result"; width: 84px; horizontal-stretch: 0; font-size: 12px; color: Palette.dim; vertical-alignment: top; } Text { text: root.assistant-text == "" ? "-" : root.assistant-text; font-size: 12px; color: Palette.body; wrap: word-wrap; overflow: elide; } }

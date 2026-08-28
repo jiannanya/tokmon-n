@@ -31,7 +31,7 @@ export component WorkspacePanel inherits Rectangle {
     in property <string> chat-time;
     in property <string> trace-duration;
     in property <string> workflow-duration;
-    in property <string> trace-provider;
+    in property <string> trace-name;
     in property <string> trace-model;
     in property <string> trace-result;
     in property <string> trace-total-label;
@@ -40,7 +40,7 @@ export component WorkspacePanel inherits Rectangle {
     in-out property <string> trace-search;
     in-out property <string> selected-attachment;
     in property <string> setting-command-approval;
-    in property <string> setting-provider;
+    in property <string> setting-name;
     in-out property <string> setting-main-model;
     in property <string> setting-workspace;
     in property <string> workspace-group;
@@ -949,7 +949,7 @@ export component WorkspacePanel inherits Rectangle {
                                                             padding-right: 8px;
                                                             spacing: 6px;
                                                             Text {
-                                                                text: root.setting-provider + " · " + root.model-name;
+                                                                text: root.setting-name + " · " + root.model-name;
                                                                 font-family: "MiSans VF";
                                                                 font-size: 12px;
                                                                 font-weight: 500;
@@ -1177,9 +1177,9 @@ export component WorkspacePanel inherits Rectangle {
                                                 }
                                                 for choice in root.model-choices : MenuOption {
                                                     label: choice.label;
-                                                    active: choice.provider == root.setting-provider && choice.model == root.model-name;
+                                                    active: choice.name == root.setting-name && choice.model == root.model-name;
                                                     chosen => {
-                                                        root.select-model(choice.provider, choice.model);
+                                                        root.select-model(choice.name, choice.model);
                                                         root.model-menu-open = false;
                                                         root.return-focus();
                                                     }
@@ -1410,7 +1410,7 @@ if root.trajectory-selected : TrajectoryPanel {
     assistant-text: root.assistant-text;
     setting-command-approval: root.setting-command-approval;
     trace-duration: root.trace-duration;
-    trace-provider: root.trace-provider;
+    trace-name: root.trace-name;
     trace-model: root.trace-model;
     trace-result: root.trace-result;
     trace-total-label: root.trace-total-label;

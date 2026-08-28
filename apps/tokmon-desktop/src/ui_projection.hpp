@@ -19,7 +19,7 @@ struct TraceSummary final {
   int calls{0};
   std::int64_t input_tokens{0};
   std::int64_t output_tokens{0};
-  std::string provider{"-"};
+  std::string name{"-"};
   std::string model{"-"};
   std::string result{"等待输入"};
 };

@@ -371,13 +371,13 @@ int run_application(int argc, char **argv) {
     window->set_workspace_locked(true);
     if (slash_command)
       controller->slash_command(message,
-                                std::string(window->get_setting_provider()),
+                                std::string(window->get_setting_name()),
                                 std::string(window->get_model_name()),
                                 std::string(window->get_access_mode()),
                                 std::string(window->get_effort()));
     else
       controller->chat(message,
-                       std::string(window->get_setting_provider()),
+                       std::string(window->get_setting_name()),
                        std::string(window->get_model_name()),
                        std::string(window->get_access_mode()),
                        std::string(window->get_effort()));
@@ -763,7 +763,7 @@ int run_application(int argc, char **argv) {
       [&controller] { controller->refresh_workspace(); });
   window->on_configure_provider(
       [&controller](
-          const slint::SharedString &id, const slint::SharedString &protocol,
+          const slint::SharedString &name, const slint::SharedString &protocol,
           const slint::SharedString &endpoint, const slint::SharedString &model,
           const slint::SharedString &auth, bool thinking,
           const slint::SharedString &effort) {
@@ -772,7 +772,7 @@ int run_application(int argc, char **argv) {
                                   : std::string(effort) == "高"   ? "high"
                                                                   : "max";
         controller->configure_provider(
-            tokmon::cbor::object({{"id", std::string(id)},
+            tokmon::cbor::object({{"name", std::string(name)},
                                   {"protocol", std::string(protocol)},
                                   {"endpoint", std::string(endpoint)},
                                   {"model", std::string(model)},
@@ -798,7 +798,6 @@ int run_application(int argc, char **argv) {
         {{"language", std::string(window->get_setting_language())},
          {"startup", std::string(window->get_setting_startup())},
          {"autosave", std::string(window->get_setting_autosave())},
-         {"provider", std::string(window->get_setting_provider())},
          {"main_model", std::string(window->get_setting_main_model())},
          {"reasoning", std::string(window->get_setting_reasoning())},
          {"command_approval",
@@ -828,7 +827,7 @@ int run_application(int argc, char **argv) {
          {"task_expanded", window->get_task_expanded()},
          {"update_channel", std::string(window->get_setting_channel())},
          {"file_access", std::string(window->get_setting_file_access())}}));
-    controller->select_provider(std::string(window->get_setting_provider()));
+    controller->select_provider(std::string(window->get_setting_name()));
     window->set_model_name(window->get_setting_main_model());
     window->set_effort(window->get_setting_reasoning());
     window->set_settings_status("正在通过后台服务原子保存…");

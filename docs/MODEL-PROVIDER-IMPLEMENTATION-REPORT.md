@@ -8,15 +8,15 @@ Tokmon 已从“UI 中存在模型名称但 Janus 固定调用本地 mock”升�
 
 ### 配置与热重载
 
-- 新增强类型 `ModelProviderConfig` 与 `RuntimeConfig::model_providers/default_model_provider`；
-- YAML 新增 `models.default` 和 `models.providers.<id>`；
+- 新增强类型 `ModelProviderConfig` 与 `RuntimeConfig::model_providers/default_model_name`；
+- YAML 新增 `models.default` 和 `models.goes.<name>`；
 - 用户级、项目级配置按 id 合并，项目级覆盖用户级；
 - 严格 schema、协议/auth 白名单、HTTPS/loopback、预算范围、默认项和 SecretRef 命名空间验证；
 - tokmond 原子写入项目 `.tokmon/config.yaml`，并监听两级 config/light-path 文件热重载。
 
 ### 平台中立的 Rhea
 
-- provider id 与 wire protocol 完全分离；
+- Tokmon 内部配置 `name` 与 wire protocol、上游 `provider` 请求参数完全分离；
 - `openai-compatible`、`anthropic`、`gemini` 与 `local` 四类适配器；
 - 自定义 endpoint/model/auth，不含 DeepSeek 特判；
 - OpenAI-compatible thinking/reasoning 参数、基于 chhttp 的增量 SSE/JSON、tool call、usage、reasoning chunk；
@@ -33,7 +33,7 @@ Tokmon 已从“UI 中存在模型名称但 Janus 固定调用本地 mock”升�
 ### CLI
 
 - `model list/configure/use/secret set/secret delete/test`；
-- `run/chat --provider <id>`；
+- `run/chat --name <configuration>`；
 - Windows Console 与 POSIX tty 均关闭 Key 输入回显；重定向 stdin 可用于 CI；
 - 不提供明文 Key 命令行参数；provider 列表只返回 `ready/missing`。
 

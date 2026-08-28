@@ -8,7 +8,7 @@ export component TitleEditHarness inherits MainWindow {
 
     in-out property <string> test-session-title <=> root.session-title;
     in-out property <bool> test-title-editing <=> root.title-editing;
-    in-out property <string> test-setting-provider <=> root.setting-provider;
+    in-out property <string> test-setting-name <=> root.setting-name;
     in-out property <string> test-setting-main-model <=> root.setting-main-model;
     in-out property <string> test-model-name <=> root.model-name;
     in-out property <bool> test-error-open <=> root.error-dialog-open;
@@ -23,7 +23,7 @@ export component TitleEditHarness inherits MainWindow {
     out property <int> error-dismiss-count;
 
     callback test-select-model(string, string);
-    test-select-model(provider, model) => { root.select-model(provider, model); }
+    test-select-model(name, model) => { root.select-model(name, model); }
 
     rename-session(title) => {
         root.rename-count += 1;
