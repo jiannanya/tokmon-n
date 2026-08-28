@@ -26,7 +26,6 @@ struct ProviderPlan {
   std::string endpoint;
   std::string secret_ref;
   std::string auth{"protocol-default"};
-  std::string curl_executable{"curl"};
 };
 
 struct ToolCall {
@@ -89,8 +88,7 @@ std::optional<std::string> arithmetic_expression(const std::string& value) {
 }
 
 bool local_endpoint(const std::string_view endpoint) {
-  return endpoint.starts_with("http://127.0.0.1") ||
-      endpoint.starts_with("http://localhost") || endpoint.starts_with("http://[::1]");
+  return endpoint.starts_with("http://") && is_loopback_network_url(endpoint);
 }
 
 Result<ProviderPlan> provider_plan(const cbor::Value& value,
@@ -106,8 +104,6 @@ Result<ProviderPlan> provider_plan(const cbor::Value& value,
   if (const auto reference = string_field(value, "secret_ref"); !reference.empty())
     plan.secret_ref = reference;
   if (const auto auth = string_field(value, "auth"); !auth.empty()) plan.auth = auth;
-  if (const auto curl = string_field(value, "curl_executable"); !curl.empty())
-    plan.curl_executable = curl;
   if (plan.provider.empty() || plan.model.empty())
     return tl::unexpected(make_error(ErrorCode::schema_mismatch,
                                      "model provider and model are required"));
@@ -388,30 +384,18 @@ void parse_event(const ProviderPlan& plan, const cbor::Value& event,
 }
 
 Result<ParsedResponse> parse_response(const ProviderPlan& plan,
-                                      const std::string_view body) {
+                                      const HttpResponse& response) {
   ParsedResponse parsed;
-  std::size_t cursor = 0;
-  bool saw_sse = false;
-  while (cursor <= body.size()) {
-    const auto end = body.find('\n', cursor);
-    auto line = body.substr(cursor, end == std::string_view::npos ? body.size() - cursor
-                                                                  : end - cursor);
-    if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
-    if (line.starts_with("data:")) {
-      saw_sse = true;
-      line.remove_prefix(5);
-      while (!line.empty() && line.front() == ' ') line.remove_prefix(1);
-      if (line != "[DONE]" && !line.empty()) {
-        auto event = json::parse(line);
+  if (response.server_sent_events) {
+    for (const auto& frame : response.events) {
+      if (frame.data != "[DONE]" && !frame.data.empty()) {
+        auto event = json::parse(frame.data);
         if (!event) return tl::unexpected(event.error());
         parse_event(plan, *event, parsed);
       }
     }
-    if (end == std::string_view::npos) break;
-    cursor = end + 1u;
-  }
-  if (!saw_sse) {
-    auto event = json::parse(body);
+  } else {
+    auto event = json::parse(response.body);
     if (!event) return tl::unexpected(event.error());
     parse_event(plan, *event, parsed);
   }
@@ -452,7 +436,7 @@ Result<void> RheaLens::view(const OpticalInput& photons, WavefrontBuilder& surfa
       {"providers", providers}, {"credential", "SecretRef/binding only"},
       {"last_failure", failure ? failure->payload : cbor::Value(nullptr)},
       {"last_usage", usage ? usage->payload : cbor::Value(nullptr)},
-      {"streaming", true}, {"provider_broker", true}}));
+      {"streaming", true}, {"transport", "chhttp"}, {"provider_broker", true}}));
 }
 
 Result<RefractionResult> RheaLens::refract(const PhotonWindow& photons, const Act& act,
@@ -585,7 +569,7 @@ Result<RefractionResult> RheaLens::refract(const PhotonWindow& photons, const Ac
           .headers = headers(plan, secret_buffer.value), .body = body, .timeout = act.timeout,
           .first_byte_timeout = first_token_timeout, .idle_timeout = idle_timeout,
           .max_response_bytes = 16u * 1024u * 1024u,
-          .cwd = std::filesystem::current_path(), .executable = plan.curl_executable,
+          .response_mode = HttpResponseMode::server_sent_events,
           .stop = beam.stop_token()});
       if (!response) {
         last_error = response.error();
@@ -599,11 +583,8 @@ Result<RefractionResult> RheaLens::refract(const PhotonWindow& photons, const Ac
             "model provider HTTP " + std::to_string(response->status) + ": " +
                 redact(response->body.substr(0, 1024)), retryable_status(response->status));
         if (!retryable_status(response->status)) attempt_index = attempts_per_provider;
-      } else if (response->truncated) {
-        last_error = make_error(ErrorCode::protocol_error,
-                                "model response exceeded the configured limit");
       } else {
-        auto parsed = parse_response(plan, response->body);
+        auto parsed = parse_response(plan, *response);
         if (!parsed) {
           last_error = parsed.error();
         } else if (parsed->reasoning_chunks.empty() && parsed->content_chunks.empty() &&

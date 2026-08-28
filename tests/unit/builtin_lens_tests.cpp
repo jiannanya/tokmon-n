@@ -10,6 +10,8 @@
 #include <thread>
 #include <vector>
 
+#include <chhttp/chhttp.hpp>
+
 #include "tests/support/test_framework.hpp"
 #include "tests/support/optical_harness.hpp"
 
@@ -629,6 +631,89 @@ TEST_CASE("native C ABI Lens runs in a supervised replaceable worker") {
   (*lens)->request_stop();
 }
 
+TEST_CASE("chhttp is the HTTP SSE and WebSocket transport behind network Lenses") {
+  REQUIRE(tokmon::builtin::is_loopback_network_url("http://localhost:8080/path"));
+  REQUIRE(tokmon::builtin::is_loopback_network_url("ws://[::1]:8080/rpc"));
+  REQUIRE_FALSE(tokmon::builtin::is_loopback_network_url(
+      "http://localhost.example.test/path"));
+  REQUIRE_FALSE(tokmon::builtin::is_loopback_network_url(
+      "http://localhost@remote.example.test/path"));
+  chhttp::Server server;
+  server.post("/echo", [](const chhttp::Request& request,
+                          chhttp::Response& response) {
+    response.headers.set("Retry-After", "7");
+    response.set_content(request.body, "application/json");
+  });
+  server.post_async("/events", [](const chhttp::Request&,
+                                  chhttp::Response& response)
+      -> chhttp::Task<void> {
+    response.set_sse([](chhttp::SseWriter& events) -> chhttp::Task<void> {
+      co_await events.send({.data = "first\nsecond", .event = "delta",
+                            .id = "event-1",
+                            .retry = std::chrono::milliseconds(125)});
+      co_await events.data("[DONE]");
+    });
+    co_return;
+  });
+  server.websocket("/rpc", [](const chhttp::Request&,
+                               chhttp::WebSocket& socket)
+      -> chhttp::Task<void> {
+    auto request = co_await socket.read();
+    if (request && request->type == chhttp::WebSocket::MessageType::text)
+      co_await socket.send_text(
+          R"({"jsonrpc":"2.0","id":"act-scenario","result":{"ok":true}})");
+  });
+  REQUIRE(server.start("127.0.0.1", 0));
+  const auto base = "http://127.0.0.1:" + std::to_string(server.port());
+
+  auto http = tokmon::builtin::perform_http(tokmon::builtin::HttpRequest{
+      .url = base + "/echo", .headers = {{"Content-Type", "application/json"}},
+      .body = R"({"lens":true})", .timeout = std::chrono::seconds(3)});
+  REQUIRE(http);
+  REQUIRE(http->status == 200);
+  REQUIRE(http->body == R"({"lens":true})");
+  REQUIRE(http->retry_after == "7");
+
+  auto sse = tokmon::builtin::perform_http(tokmon::builtin::HttpRequest{
+      .url = base + "/events", .timeout = std::chrono::seconds(3),
+      .response_mode = tokmon::builtin::HttpResponseMode::server_sent_events});
+  REQUIRE(sse);
+  REQUIRE(sse->server_sent_events);
+  REQUIRE(sse->events.size() == 2);
+  REQUIRE(sse->events.front().data == "first\nsecond");
+  REQUIRE(sse->events.front().event == "delta");
+  REQUIRE(sse->events.front().id == "event-1");
+  REQUIRE(sse->events.front().retry == std::chrono::milliseconds(125));
+  REQUIRE(sse->events.back().data == "[DONE]");
+
+  const auto lens = tokmon::make_builtin_lens("iris");
+  RecordingHost host;
+  auto connected = refract(lens, "external.connect", "tokmon.external.connect.v1",
+      tokmon::cbor::object({{"endpoint_ref", "endpoint:websocket-fixture"},
+          {"transport", "websocket"}, {"protocol", "jsonrpc"},
+          {"url", "ws://127.0.0.1:" + std::to_string(server.port()) + "/rpc"}}), host);
+  REQUIRE(connected);
+  const auto connection_payload = host.drafts.back().payload;
+  const auto reference = std::string(
+      tokmon::cbor::find(connection_payload, "connection_ref")->as_string());
+  tokmon::Photon connection_photon{.sequence = 1, .id = "websocket-connection",
+      .ray = "ray-scenario", .kind = "external.connection-opened",
+      .schema = "tokmon.external.connection.v1", .payload = connection_payload,
+      .epoch = 7, .hash = std::string(64, 'e')};
+  host.drafts.clear();
+  auto called = refract(lens, "external.call", "tokmon.external.call.v1",
+      tokmon::cbor::object({{"connection_ref", reference}, {"operation", "ping"},
+          {"schema_hash", std::string(64, 'f')},
+          {"arguments", tokmon::cbor::Value::Map{}}}), host,
+      tokmon::PhotonWindow({connection_photon}));
+  server.stop();
+  REQUIRE(called);
+  REQUIRE(host.drafts.size() == 1);
+  REQUIRE(host.drafts.back().kind == "external.call-completed");
+  REQUIRE(tokmon::cbor::find(
+      *tokmon::cbor::find(host.drafts.back().payload, "result"), "ok")->as_bool());
+}
+
 #if defined(TOKMON_PYTHON_EXECUTABLE)
 TEST_CASE("Rhea streams an OpenAI-compatible provider and retries transient failure") {
   const auto root = lens_temporary_directory("rhea-http");
@@ -1023,7 +1108,7 @@ TEST_CASE("Nota exports real OTLP metrics to a collector and Prometheus text") {
   REQUIRE(url != nullptr);
   auto scraped = tokmon::builtin::perform_http(tokmon::builtin::HttpRequest{
       .url = std::string(url->as_string()), .method = "GET", .timeout = std::chrono::seconds(3),
-      .max_response_bytes = 64u * 1024u, .cwd = root});
+      .max_response_bytes = 64u * 1024u});
   REQUIRE(scraped);
   REQUIRE(scraped->status == 200);
   REQUIRE(scraped->body.find("tokmon_input_tokens_total 12") != std::string::npos);

@@ -86,8 +86,8 @@ tokmon lens reconcile
 | --- | --- | --- |
 | Ignis | manifest/lock/signature/SBOM/schema evidence、依赖与冲突、dark lane、desired/current diff、mount/replace/unmount/reconcile、generation 换代 | C ABI 换代测试验证更高 epoch 原子发布；未知 YAML 不发布候选路径 |
 | Lemon | typed frame、容量/单帧/批量上限、单消费者/消费组/广播、producer tail、consumer cursor、背压、gap、durable cursor、epoch bridge | cursor 倒退、越界 frame 和 afterglow 由契约测试覆盖 |
-| Iris | MCP client、stdio/HTTP JSON-RPC、工具/资源/提示 catalog、真实健康探测、latency/capability hash、重连观察；LSP initialize/initialized/didOpen/request/shutdown/exit 与结果归一化；MCP server 以受管 server Act 接入 | Python MCP fixture 的真实发现/调用；Iris catalog → Techor → Iris 组合链；真实 LSP hover 生命周期 |
-| Rhea | OpenAI、Anthropic、DeepSeek、Gemini 与 local deterministic adapter；SSE/JSON 解析；reasoning/content/tool-call/usage 分流；timeout、Retry-After、指数退避、确定性 jitter、fallback broker、usage/cost、响应 hash、Cista binding | 本地 HTTP fixture 验证 503 重试、reasoning 隔离、content streaming 和 usage |
+| Iris | MCP client、stdio/chhttp HTTP/WebSocket JSON-RPC、工具/资源/提示 catalog、真实健康探测、latency/capability hash、重连观察；LSP initialize/initialized/didOpen/request/shutdown/exit 与结果归一化；MCP server 以受管 server Act 接入 | Python MCP fixture 的真实发现/调用；Iris catalog → Techor → Iris 组合链；真实 WebSocket JSON-RPC 与 LSP hover 生命周期 |
+| Rhea | OpenAI、Anthropic、DeepSeek、Gemini 与 local deterministic adapter；chhttp 增量 SSE/JSON 传输；reasoning/content/tool-call/usage 分流；timeout、Retry-After、指数退避、确定性 jitter、fallback broker、usage/cost、响应 hash、Cista binding | 本地 HTTP fixture 验证 503 重试、reasoning 隔离、content streaming 和 usage |
 | Janus | 从 Photon 重建 turn/step；need-model、tool result 后续拍、预算、重复 Act/无进展检测、steer/cancel/stop、状态显像 | Calculator golden ray 完成多拍模型—工具—模型闭环，并验证同一 ray 多轮追加 |
 | Clotho | YAML DAG、依赖/环/权限/schema 验证、模板、条件、fan-out/fan-in、join、全局/分组并发、retry attempt、timeout 元数据、continue/stop/compensate、pause/resume/cancel | DAG、确定性 ready、fan-out、group limit、显式 compensation 专项测试 |
 | Aya | fork/spawn、独立 child ray、预算/deadline/ActKind 上界、受控引用继承、禁止 secret 继承、只读 workspace、真实 Git worktree、parent/child/sibling message、progress/help/heartbeat/usage、取消传播、all/any/quorum/manual join、摘要/artifact/conflict、Cove merge proposal | 真实 Git 仓库创建隔离 worktree；进度/心跳/usage 只从 Photon 折叠 |

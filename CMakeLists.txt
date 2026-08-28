@@ -1,5 +1,14 @@
 cmake_minimum_required(VERSION 3.25)
 
+# Prefer manifest-mode vcpkg when the developer has exposed VCPKG_ROOT, while
+# still allowing distro/package-manager installations on other build hosts.
+if(NOT DEFINED CMAKE_TOOLCHAIN_FILE AND DEFINED ENV{VCPKG_ROOT} AND
+    EXISTS "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
+  set(CMAKE_TOOLCHAIN_FILE
+    "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+    CACHE FILEPATH "vcpkg toolchain file")
+endif()
+
 project(tokmon VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -104,6 +113,7 @@ target_link_libraries(tokmon_core
     chjson
     chyaml::chyaml
   PRIVATE
+    chhttp::chhttp
     tokmon_sqlite3)
 
 target_compile_definitions(tokmon_core PRIVATE
@@ -268,6 +278,21 @@ if(BUILD_TESTING AND TOKMON_BUILD_TESTS)
 endif()
 
 install(TARGETS ${TOKMON_RUNTIME_TARGETS} RUNTIME DESTINATION bin)
+if(WIN32)
+  install(FILES $<TARGET_RUNTIME_DLLS:tokmon> DESTINATION bin)
+  if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
+    install(DIRECTORY
+      "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/"
+      DESTINATION bin
+      CONFIGURATIONS Release RelWithDebInfo MinSizeRel
+      FILES_MATCHING PATTERN "*.dll")
+    install(DIRECTORY
+      "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin/"
+      DESTINATION bin
+      CONFIGURATIONS Debug
+      FILES_MATCHING PATTERN "*.dll")
+  endif()
+endif()
 if(TARGET tokmon-desktop)
   install(TARGETS tokmon-desktop RUNTIME DESTINATION bin)
   install(DIRECTORY apps/tokmon-desktop/assets/ DESTINATION bin/assets)

@@ -12,6 +12,8 @@ set(CHLOG_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
 set(CHJSON_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(CHJSON_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
 set(CHJSON_BUILD_COMPARE_BENCH OFF CACHE BOOL "" FORCE)
+set(CHHTTP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(CHHTTP_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(CHYAML_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(CHYAML_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
 set(CHYAML_BUILD_CONFORMANCE OFF CACHE BOOL "" FORCE)
@@ -36,6 +38,11 @@ FetchContent_Declare(chyaml
 FetchContent_Declare(chjson
   GIT_REPOSITORY https://github.com/jiannanya/chjson.git
   GIT_TAG f98fc8d8b228559ec584a331deab911eff6df8ab
+  GIT_SUBMODULES ""
+  GIT_SHALLOW TRUE)
+FetchContent_Declare(chhttp
+  GIT_REPOSITORY https://github.com/jiannanya/chhttp.git
+  GIT_TAG 0e11978d228dd1e7be728378c8898f67ab4cf36b
   GIT_SUBMODULES ""
   GIT_SHALLOW TRUE)
 FetchContent_Declare(sqlite3
@@ -64,6 +71,7 @@ tokmon_make_dependency_available(tl_expected)
 tokmon_make_dependency_available(chlog)
 tokmon_make_dependency_available(chyaml)
 tokmon_make_dependency_available(chjson)
+tokmon_make_dependency_available(chhttp)
 tokmon_make_dependency_available(sqlite3)
 
 # Only fetch md4c's sources; its own CMake tree is skipped because tokmon_md4c

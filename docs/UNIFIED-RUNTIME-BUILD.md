@@ -105,7 +105,7 @@ bin/
 
 ## 4. 依赖库替换与版本固定
 
-四个目标库均通过 CMake `FetchContent` 接入，并固定到完整 Git 提交 SHA：
+五个目标库均通过 CMake `FetchContent` 接入，并固定到完整 Git 提交 SHA：
 
 | 用途 | 仓库 | 固定提交 |
 | --- | --- | --- |
@@ -113,13 +113,15 @@ bin/
 | 日志 | `https://github.com/jiannanya/chlog.git` | `d63ceda126cc6165c8cf1101ae5f16db8978882d` |
 | JSON | `https://github.com/jiannanya/chjson.git` | `f98fc8d8b228559ec584a331deab911eff6df8ab` |
 | YAML | `https://github.com/jiannanya/chyaml.git` | `0586cd91a7b497feb7df1de90da37c6d1728cf1d` |
+| HTTP/HTTPS、SSE、WebSocket | `https://github.com/jiannanya/chhttp.git` | `0e11978d228dd1e7be728378c8898f67ab4cf36b` |
 
 “固定提交”表示构建始终取得已经验证过的同一版源码，不会因为远程默认分支后来变化而产生
 不可复现的编译结果。升级依赖时应显式修改 SHA，并重新执行 Release 与合同测试。
 
-`chlog`、`chjson` 和 `chyaml` 以库目标链接进 Tokmon，不在发行包中增加独立运行时 DLL；
-`chtest` 只在启用 `TOKMON_BUILD_TESTS` 时下载和构建。四个依赖自身的示例、基准和测试目标
-默认关闭，避免扩大 Tokmon 的构建与发行产物。
+`chlog`、`chjson`、`chyaml` 和 `chhttp` 以库目标链接进 Tokmon；`chhttp` 的 libuv、
+OpenSSL 和压缩库由根目录 vcpkg manifest 固定并随 Windows 产物部署。`chtest` 只在启用
+`TOKMON_BUILD_TESTS` 时下载和构建。依赖自身的示例、基准和测试目标默认关闭，避免扩大
+Tokmon 的构建与发行产物。
 
 ## 5. Windows VS 2022 v143 Release
 

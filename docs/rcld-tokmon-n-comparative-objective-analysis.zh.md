@@ -154,7 +154,7 @@ tokmon-n/
 
 | 层级 | 透镜 | 评估 |
 |---|---|---|
-| **厚重真实**（400-700 行，含专项测试） | Iris（MCP stdio/HTTP client + LSP，配真实 Python fixture 往返测试）、Rhea（多厂商网关、SSE 解析、curl 发包、指数退避×5 重试、SecretBuffer 清零）、Clotho（YAML DAG 校验/环检测/fan-out/补偿 Act）、Enso（SKILL.md 引用链加载、RAG 混合检索、append-only 记忆提案链）、Techor（工具目录+JSON Schema 强校验+Code Mode）、Styx*（argv 无 shell、Job Object/PTY 真 PTY、有界输出、协作取消；WASM/容器 adapter 已编码但 fail-closed）、Cove（实体扫描、guarded write、路径逃逸防护、Git worktree 证据）、Chora（内容寻址 Blob、DPAPI 加密） | 核心能力可信 |
+| **厚重真实**（400-700 行，含专项测试） | Iris（MCP stdio/HTTP client + LSP，配真实 Python fixture 往返测试）、Rhea（多厂商网关、chhttp SSE 解析与传输、指数退避×5 重试、SecretBuffer 清零）、Clotho（YAML DAG 校验/环检测/fan-out/补偿 Act）、Enso（SKILL.md 引用链加载、RAG 混合检索、append-only 记忆提案链）、Techor（工具目录+JSON Schema 强校验+Code Mode）、Styx*（argv 无 shell、Job Object/PTY 真 PTY、有界输出、协作取消；WASM/容器 adapter 已编码但 fail-closed）、Cove（实体扫描、guarded write、路径逃逸防护、Git worktree 证据）、Chora（内容寻址 Blob、DPAPI 加密） | 核心能力可信 |
 | **中等真实** | Lemon（背压/游标/订阅记账）、Janus（turn/step 状态机重建）、Aya（子 ray fork、真实 Git worktree 隔离测试）、Textus（token 预算/滑窗/截断）、Nota（OTLP 导出+Prometheus 回环 server，真实 collector 测试）、Tracket（哈希链校验/分级回放）、Fallen（deny>allow>ask 优先级）、Cista（Windows Credential Manager + 一次性绑定；非 Windows 明确不支持不降级） | 可信但范围较窄 |
 | **薄壳委托** | Ignis（41 行，投影 desired/committed 差异并 propose reconcile；实际装卸逻辑在 runtime）、Snow（38 行，实体在 protocol/snow_protocol.cpp）、Termon（95 行，13 个 ui.* 通道投影）、calculator（62 行参考实现） | 设计上职责外移，不算缺陷但与文档口径需对齐 |
 

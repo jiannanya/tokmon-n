@@ -263,7 +263,7 @@ Result<RefractionResult> NotaLens::refract(const PhotonWindow& photons, const Ac
           .headers = {{"Content-Type", format == "prometheus"
               ? "text/plain; version=0.0.4" : "application/json"}}, .body = body,
           .timeout = act.timeout, .max_response_bytes = 256u * 1024u,
-          .cwd = std::filesystem::current_path(), .stop = beam.stop_token()});
+          .stop = beam.stop_token()});
       if (!response) return tl::unexpected(response.error());
       if (response->status < 200 || response->status >= 300)
         return tl::unexpected(make_error(ErrorCode::io_error,

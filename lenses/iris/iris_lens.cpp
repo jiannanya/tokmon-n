@@ -163,8 +163,15 @@ Result<cbor::Value> call_stdio(const cbor::Value& endpoint,
 }
 
 bool loopback_url(const std::string_view url) {
-  return url.starts_with("http://127.0.0.1") || url.starts_with("http://localhost") ||
-      url.starts_with("http://[::1]");
+  return is_loopback_network_url(url);
+}
+
+bool loopback_http_url(const std::string_view url) {
+  return url.starts_with("http://") && loopback_url(url);
+}
+
+bool loopback_websocket_url(const std::string_view url) {
+  return url.starts_with("ws://") && loopback_url(url);
 }
 
 Result<cbor::Value> call_http(const cbor::Value& endpoint,
@@ -176,7 +183,7 @@ Result<cbor::Value> call_http(const cbor::Value& endpoint,
                                      "HTTP endpoint requires url"));
   std::vector<std::pair<std::string, std::string>> headers{
       {"Content-Type", "application/json"}, {"Accept", "application/json, text/event-stream"}};
-  if (!url.starts_with("https://") && !loopback_url(url))
+  if (!url.starts_with("https://") && !loopback_http_url(url))
     return tl::unexpected(make_error(ErrorCode::permission_denied,
                                      "external HTTP requires HTTPS or loopback HTTP"));
   std::string secret;
@@ -188,15 +195,14 @@ Result<cbor::Value> call_http(const cbor::Value& endpoint,
     secret = std::move(*resolved);
     headers.emplace_back(string_field(endpoint, "credential_header", "Authorization"),
         string_field(endpoint, "credential_prefix", "Bearer ") + secret);
-  } else if (!loopback_url(url)) {
+  } else if (!loopback_http_url(url)) {
     return tl::unexpected(make_error(ErrorCode::permission_denied,
         "external HTTP credentials require a one-shot Cista binding"));
   }
   auto response = perform_http(HttpRequest{.url = url, .headers = std::move(headers),
       .body = json::stringify(request), .timeout = act.timeout,
       .max_response_bytes = 16u * 1024u * 1024u,
-      .cwd = std::filesystem::current_path(),
-      .executable = string_field(endpoint, "curl_executable", "curl"),
+      .response_mode = HttpResponseMode::server_sent_events,
       .stop = beam.stop_token()});
   std::fill(secret.begin(), secret.end(), '\0');
   if (!response) return tl::unexpected(response.error());
@@ -205,13 +211,59 @@ Result<cbor::Value> call_http(const cbor::Value& endpoint,
                                                               : ErrorCode::protocol_error,
         "external HTTP " + std::to_string(response->status) + ": " +
             redact(response->body.substr(0, 1024)), response->status >= 500));
-  auto body = std::string_view(response->body);
-  if (body.starts_with("data:")) {
-    body.remove_prefix(5);
-    while (!body.empty() && body.front() == ' ') body.remove_prefix(1);
-    body = body.substr(0, body.find('\n'));
+  if (response->server_sent_events) {
+    Result<cbor::Value> fallback = tl::unexpected(make_error(
+        ErrorCode::protocol_error, "SSE response contains no JSON-RPC message"));
+    for (const auto& frame : response->events) {
+      if (frame.data == "[DONE]" || frame.data.empty()) continue;
+      auto parsed = json::parse(frame.data);
+      if (!parsed) return tl::unexpected(parsed.error());
+      fallback = *parsed;
+      const auto* id = cbor::find(*parsed, "id");
+      if (id && id->as_string() == string_field(request, "id")) return *parsed;
+    }
+    return fallback;
   }
-  return json::parse(body);
+  return json::parse(response->body);
+}
+
+Result<cbor::Value> call_websocket(const cbor::Value& endpoint,
+                                  const cbor::Value& request,
+                                  const Act& act, RefractionBeam& beam) {
+  const auto url = string_field(endpoint, "url");
+  if (url.empty())
+    return tl::unexpected(make_error(ErrorCode::schema_mismatch,
+                                     "WebSocket endpoint requires url"));
+  if (!url.starts_with("wss://") && !loopback_websocket_url(url))
+    return tl::unexpected(make_error(ErrorCode::permission_denied,
+        "external WebSocket requires WSS or loopback WS"));
+  std::vector<std::pair<std::string, std::string>> headers;
+  if (const auto protocol = string_field(endpoint, "subprotocol"); !protocol.empty())
+    headers.emplace_back("Sec-WebSocket-Protocol", protocol);
+  std::string secret;
+  if (const auto binding = string_field(act.parameters, "secret_binding");
+      !binding.empty()) {
+    auto resolved = resolve_secret_binding(binding,
+        string_field(act.parameters, "secret_purpose", "external-api"),
+        act_secret_scope_hash(act), act.target, act.generation, act.epoch);
+    if (!resolved) return tl::unexpected(resolved.error());
+    secret = std::move(*resolved);
+    headers.emplace_back(string_field(endpoint, "credential_header", "Authorization"),
+        string_field(endpoint, "credential_prefix", "Bearer ") + secret);
+  } else if (!loopback_websocket_url(url)) {
+    return tl::unexpected(make_error(ErrorCode::permission_denied,
+        "external WebSocket credentials require a one-shot Cista binding"));
+  }
+  auto response = perform_websocket(WebSocketRequest{.url = url,
+      .headers = std::move(headers), .message = json::stringify(request),
+      .timeout = act.timeout, .max_response_bytes = 16u * 1024u * 1024u,
+      .stop = beam.stop_token()});
+  std::fill(secret.begin(), secret.end(), '\0');
+  if (!response) return tl::unexpected(response.error());
+  if (response->binary)
+    return tl::unexpected(make_error(ErrorCode::protocol_error,
+        "JSON-RPC WebSocket response must be a text message"));
+  return json::parse(response->message);
 }
 
 Result<cbor::Value> rpc_result(const cbor::Value& response) {
@@ -275,7 +327,9 @@ Result<void> IrisLens::view(const OpticalInput& photons, WavefrontBuilder& surfa
   return identify(surface, "diagnostic.external", cbor::object({
       {"endpoints", std::move(endpoints)}, {"remote_text_class", "data"},
       {"schema_hash_required", true}, {"endpoint_ref_only", true},
-      {"mcp_client", true}, {"mcp_server", true}, {"lsp_client", true}}));
+      {"mcp_client", true}, {"mcp_server", true}, {"lsp_client", true},
+      {"network_library", "chhttp"},
+      {"transports", cbor::Value::Array{"stdio", "http", "websocket"}}}));
 }
 
 Result<RefractionResult> IrisLens::refract(const PhotonWindow& photons, const Act& act,
@@ -286,7 +340,7 @@ Result<RefractionResult> IrisLens::refract(const PhotonWindow& photons, const Ac
     const auto transport = string_field(act.parameters, "transport");
     const auto protocol = string_field(act.parameters, "protocol");
     if (endpoint_ref.empty() || endpoint_ref.find("://") != std::string::npos ||
-        (transport != "stdio" && transport != "http") ||
+        (transport != "stdio" && transport != "http" && transport != "websocket") ||
         (protocol != "mcp" && protocol != "lsp" && protocol != "jsonrpc"))
       return tl::unexpected(make_error(ErrorCode::schema_mismatch,
           "external.connect requires opaque endpoint_ref, transport and protocol"));
@@ -299,9 +353,14 @@ Result<RefractionResult> IrisLens::refract(const PhotonWindow& photons, const Ac
       if (url.empty())
         return tl::unexpected(make_error(ErrorCode::schema_mismatch,
                                          "HTTP endpoint requires url"));
-      if (!url.starts_with("https://") && !loopback_url(url))
+      const bool allowed = transport == "websocket"
+          ? url.starts_with("wss://") || loopback_websocket_url(url)
+          : url.starts_with("https://") || loopback_http_url(url);
+      if (!allowed)
         return tl::unexpected(make_error(ErrorCode::permission_denied,
-                                         "external HTTP requires HTTPS or loopback HTTP"));
+            transport == "websocket"
+                ? "external WebSocket requires WSS or loopback WS"
+                : "external HTTP requires HTTPS or loopback HTTP"));
     }
     for (const auto* forbidden : {"credential_env", "api_key", "token", "password",
                                   "secret_value", "secret_binding"})
@@ -316,7 +375,7 @@ Result<RefractionResult> IrisLens::refract(const PhotonWindow& photons, const Ac
         {"framing", string_field(act.parameters, "framing",
             protocol == "lsp" ? "content-length" : "newline")},
         {"url", string_field(act.parameters, "url")},
-        {"curl_executable", string_field(act.parameters, "curl_executable", "curl")},
+        {"subprotocol", string_field(act.parameters, "subprotocol")},
         {"credential_header", string_field(act.parameters, "credential_header", "Authorization")},
         {"credential_prefix", string_field(act.parameters, "credential_prefix", "Bearer ")},
         {"secret_ref", string_field(act.parameters, "secret_ref")},
@@ -354,8 +413,12 @@ Result<RefractionResult> IrisLens::refract(const PhotonWindow& photons, const Ac
     const auto request = cbor::object({{"jsonrpc", "2.0"}, {"id", act.id},
         {"method", operation}, {"params", std::move(arguments)}});
     const auto started = std::chrono::steady_clock::now();
-    Result<cbor::Value> response = string_field(*endpoint, "transport") == "stdio"
-        ? call_stdio(*endpoint, request, act, beam) : call_http(*endpoint, request, act, beam);
+    const auto transport = string_field(*endpoint, "transport");
+    Result<cbor::Value> response = transport == "stdio"
+        ? call_stdio(*endpoint, request, act, beam)
+        : transport == "websocket"
+            ? call_websocket(*endpoint, request, act, beam)
+            : call_http(*endpoint, request, act, beam);
     const auto latency = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - started).count();
     if (!response) {
@@ -417,8 +480,12 @@ Result<RefractionResult> IrisLens::refract(const PhotonWindow& photons, const Ac
       {"params", cbor::find(act.parameters, "arguments")
           ? *cbor::find(act.parameters, "arguments") : cbor::Value::Map{}}});
   const auto started = std::chrono::steady_clock::now();
-  Result<cbor::Value> response = string_field(*endpoint, "transport") == "stdio"
-      ? call_stdio(*endpoint, request, act, beam) : call_http(*endpoint, request, act, beam);
+  const auto transport = string_field(*endpoint, "transport");
+  Result<cbor::Value> response = transport == "stdio"
+      ? call_stdio(*endpoint, request, act, beam)
+      : transport == "websocket"
+          ? call_websocket(*endpoint, request, act, beam)
+          : call_http(*endpoint, request, act, beam);
   const auto latency = std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - started).count();
   if (!response) {

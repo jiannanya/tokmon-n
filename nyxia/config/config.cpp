@@ -202,7 +202,7 @@ Result<void> merge_model_request_parameter(
       "authorization", "provider", "protocol", "endpoint", "model", "messages",
       "contents", "tools", "prompt", "stream", "stream_options", "thinking",
       "reasoning_effort", "max_tokens", "max_output_tokens", "request_body", "fallbacks",
-      "curl_executable", "workspace_root", "access_mode", "effort", "idempotency_key"};
+      "workspace_root", "access_mode", "effort", "idempotency_key"};
   if (key.empty())
     return tl::unexpected(make_error(ErrorCode::schema_mismatch,
         source.string() + ": model request parameter names cannot be empty"));

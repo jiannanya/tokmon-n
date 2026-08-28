@@ -24,6 +24,7 @@ add_executable(tokmon-tests
   ../lenses/calculator/tests/calculator_contract.cpp)
 
 target_link_libraries(tokmon-tests PRIVATE
+  chhttp::chhttp
   tokmon_core
   tokmon_sqlite3
   chtest)

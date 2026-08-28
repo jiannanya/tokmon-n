@@ -19,7 +19,7 @@ Tokmon 已从“UI 中存在模型名称但 Janus 固定调用本地 mock”升�
 - provider id 与 wire protocol 完全分离；
 - `openai-compatible`、`anthropic`、`gemini` 与 `local` 四类适配器；
 - 自定义 endpoint/model/auth，不含 DeepSeek 特判；
-- OpenAI-compatible thinking/reasoning 参数、SSE/JSON、tool call、usage、reasoning chunk；
+- OpenAI-compatible thinking/reasoning 参数、基于 chhttp 的增量 SSE/JSON、tool call、usage、reasoning chunk；
 - Cista SecretRef 即时创建精确的一次性 binding，Rhea 只消费 binding 后的短生命周期明文；
 - 明文凭据、越权 SecretRef、不安全 endpoint 在 Rhea 边界再次拒绝。
 
