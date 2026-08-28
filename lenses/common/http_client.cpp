@@ -165,11 +165,17 @@ Result<HttpResponse> perform_http(HttpRequest request) {
 
   HttpResponse result;
   chhttp::ErrorInfo parser_error;
+  std::optional<Error> event_error;
   chhttp::SseParser parser({.max_line_size = request.max_response_bytes,
                             .max_event_size = request.max_response_bytes});
   parser.on_message([&](const chhttp::SseEvent& event) {
-    result.events.push_back(ServerSentEvent{.data = event.data,
-        .event = event.event, .id = event.id, .retry = event.retry});
+    ServerSentEvent translated{.data = event.data, .event = event.event,
+        .id = event.id, .retry = event.retry};
+    result.events.push_back(translated);
+    if (request.on_server_sent_event && !event_error) {
+      auto observed = request.on_server_sent_event(translated);
+      if (!observed) event_error = observed.error();
+    }
   });
 
   chhttp::RequestOptions options;
@@ -195,12 +201,13 @@ Result<HttpResponse> perform_http(HttpRequest request) {
         return true;
       }
       parser_error = parser.feed(bytes);
-      return !parser_error;
+      return !parser_error && !event_error;
     };
   }
 
   auto response = http_client(request.url)->request(std::move(outgoing),
                                                     std::move(options));
+  if (event_error) return tl::unexpected(std::move(*event_error));
   if (parser_error)
     return tl::unexpected(transport_error(parser_error, "SSE parsing"));
   if (!response)
@@ -219,6 +226,7 @@ Result<HttpResponse> perform_http(HttpRequest request) {
     // still using chhttp's incremental WHATWG parser rather than line splitting.
     if (const auto error = parser.feed(result.body); error)
       return tl::unexpected(transport_error(error, "SSE parsing"));
+    if (event_error) return tl::unexpected(std::move(*event_error));
     if (const auto error = parser.finish(); error)
       return tl::unexpected(transport_error(error, "SSE parsing"));
     if (!result.events.empty()) {

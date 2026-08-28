@@ -270,6 +270,7 @@ Result<SnowMessage> SnowClient::request_stream(const SnowMessage& message,
 struct SnowServer::Impl {
   std::filesystem::path endpoint;
   Handler handler;
+  bool replay_response_photons{false};
   std::jthread worker;
   std::mutex clients_mutex;
   std::vector<std::jthread> clients;
@@ -294,11 +295,22 @@ struct SnowServer::Impl {
   }
 
   void serve_channel(const Channel channel) {
+    std::mutex write_mutex;
     while (active.load(std::memory_order_acquire)) {
       auto request = read_message(channel);
       if (!request) break;
       SnowMessage response;
-      try { response = handler(*request); }
+      const auto send_stream = [&, request_id = request->request_id,
+                                cursor = request->cursor](const SnowMessage& message)
+          -> Result<void> {
+        auto event = message;
+        event.kind = SnowMessageKind::stream;
+        event.request_id = request_id;
+        if (event.cursor == 0) event.cursor = cursor;
+        std::scoped_lock write_lock(write_mutex);
+        return write_message(channel, event);
+      };
+      try { response = handler(*request, send_stream); }
       catch (const std::exception& exception) {
         response = error_message(*request,
             make_error(ErrorCode::internal_error, exception.what()));
@@ -306,7 +318,7 @@ struct SnowServer::Impl {
         response = error_message(*request,
             make_error(ErrorCode::internal_error, "unknown Snow handler failure"));
       }
-      if (response.kind == SnowMessageKind::intent_result) {
+      if (replay_response_photons && response.kind == SnowMessageKind::intent_result) {
         if (const auto* photons = cbor::find(response.payload, "photons");
             photons && photons->as_array()) {
           std::uint64_t event_index = 0;
@@ -315,10 +327,11 @@ struct SnowServer::Impl {
                 .request_id = request->request_id, .cursor = response.cursor,
                 .payload = cbor::object({{"event_index", static_cast<std::int64_t>(event_index++)},
                     {"event", "photon"}, {"photon", photon}})};
-            if (auto written = write_message(channel, event); !written) return;
+            if (auto written = send_stream(event); !written) return;
           }
         }
       }
+      std::scoped_lock write_lock(write_mutex);
       if (auto written = write_message(channel, response); !written) break;
     }
   }
@@ -374,6 +387,25 @@ Result<void> SnowServer::start(std::filesystem::path endpoint, Handler handler) 
     return tl::unexpected(make_error(ErrorCode::invalid_argument, "Snow handler is required"));
   }
   impl_->endpoint = std::move(endpoint); impl_->handler = std::move(handler);
+  impl_->replay_response_photons = false;
+  impl_->worker = std::jthread([this] { impl_->run(); });
+  return {};
+}
+
+Result<void> SnowServer::start(std::filesystem::path endpoint, LegacyHandler handler) {
+  if (impl_->active.exchange(true, std::memory_order_acq_rel))
+    return tl::unexpected(make_error(ErrorCode::invalid_state,
+                                     "Snow server is already active"));
+  if (!handler)
+  {
+    impl_->active.store(false, std::memory_order_release);
+    return tl::unexpected(make_error(ErrorCode::invalid_argument,
+                                     "Snow handler is required"));
+  }
+  impl_->endpoint = std::move(endpoint);
+  impl_->handler = [legacy = std::move(handler)](
+      const SnowMessage& request, const StreamSender&) { return legacy(request); };
+  impl_->replay_response_photons = true;
   impl_->worker = std::jthread([this] { impl_->run(); });
   return {};
 }

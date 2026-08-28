@@ -379,17 +379,24 @@ export component WorkspacePanel inherits Rectangle {
                             horizontal-stretch: 0;
                         }
                         mode-switch := Rectangle {
-                            height: 24px;
-                            border-radius: 8px;
-                            background: Palette.pill;
+                            width: chat-mode-label.preferred-width + trace-mode-label.preferred-width + 44px;
                             horizontal-stretch: 0;
-                            animate background { duration: 120ms; }
-                            HorizontalLayout {
-                                padding-left: 2px;
-                                padding-right: 2px;
-                                padding-top: 2px;
-                                padding-bottom: 2px;
-                                spacing: 0px;
+                            // A fixed-height child of a layout would be pinned
+                            // to the top edge, so the 46px wrapper stretches
+                            // and the 24px capsule is centered explicitly.
+                            mode-pill := Rectangle {
+                                y: (parent.height - 24px) / 2;
+                                height: 24px;
+                                width: parent.width;
+                                border-radius: 8px;
+                                background: Palette.pill;
+                                animate background { duration: 120ms; }
+                                HorizontalLayout {
+                                    padding-left: 2px;
+                                    padding-right: 2px;
+                                    padding-top: 2px;
+                                    padding-bottom: 2px;
+                                    spacing: 0px;
                                 Rectangle {
                                     width: chat-mode-label.preferred-width + 20px;
                                     border-radius: 6px;
@@ -431,6 +438,7 @@ export component WorkspacePanel inherits Rectangle {
                                         clicked => { root.trajectory-selected = true; root.return-focus(); }
                                         mouse-cursor: pointer;
                                     }
+                                }
                                 }
                             }
                         }

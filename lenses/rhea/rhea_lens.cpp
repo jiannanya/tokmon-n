@@ -215,14 +215,23 @@ Result<cbor::Value> merge_request_parameters(cbor::Value body,
 
 Result<cbor::Value> request_body(const ProviderPlan& plan, const cbor::Value& parameters,
                                  const std::string& prompt) {
+  const bool stream = !cbor::find(parameters, "stream") ||
+      cbor::find(parameters, "stream")->as_bool();
   if (const auto* supplied = cbor::find(parameters, "request_body");
-      supplied && supplied->is_map()) return *supplied;
+      supplied && supplied->is_map()) {
+    auto body = *supplied;
+    if (plan.protocol != "gemini")
+      (*body.as_map())["stream"] = stream;
+    else
+      body.as_map()->erase("stream");
+    return body;
+  }
   const auto max_tokens = cbor::find(parameters, "max_output_tokens")
       ? cbor::find(parameters, "max_output_tokens")->as_integer(4096) : 4096;
   auto messages = request_messages(parameters, prompt);
   if (plan.protocol == "anthropic") {
     auto body = cbor::object({{"model", plan.model}, {"messages", std::move(messages)},
-        {"max_tokens", max_tokens}, {"stream", true}});
+        {"max_tokens", max_tokens}, {"stream", stream}});
     if (const auto* tools = cbor::find(parameters, "tools"))
       (*body.as_map())["tools"] = request_tools(plan, *tools);
     return merge_request_parameters(std::move(body), parameters);
@@ -235,15 +244,14 @@ Result<cbor::Value> request_body(const ProviderPlan& plan, const cbor::Value& pa
       contents.push_back(cbor::object({{"role", role},
           {"parts", cbor::Value::Array{cbor::object({{"text", content}})}}}));
     }
+    // Gemini selects SSE with the streamGenerateContent endpoint. `stream` is
+    // Tokmon's semantic switch here; it is not a valid generateContent field.
     auto body = cbor::object({{"contents", std::move(contents)}});
     if (const auto* tools = cbor::find(parameters, "tools"))
       (*body.as_map())["tools"] = request_tools(plan, *tools);
     return merge_request_parameters(std::move(body), parameters);
   }
   const auto* tools = cbor::find(parameters, "tools");
-  const bool has_tools = tools && tools->as_array() && !tools->as_array()->empty();
-  const bool stream = cbor::find(parameters, "stream")
-      ? cbor::find(parameters, "stream")->as_bool() : !has_tools;
   auto body = cbor::object({{"model", plan.model}, {"messages", std::move(messages)},
       {"stream", stream}, {"max_tokens", max_tokens}});
   if (stream)
@@ -558,19 +566,58 @@ Result<RefractionResult> RheaLens::refract(const PhotonWindow& photons, const Ac
         return tl::unexpected(make_error(ErrorCode::cancelled, "model call cancelled"));
       auto requested_body = request_body(plan, act.parameters, prompt);
       if (!requested_body) return tl::unexpected(requested_body.error());
+      const auto* body_stream = cbor::find(*requested_body, "stream");
+      const auto* configured_stream = cbor::find(act.parameters, "stream");
+      const bool streaming = body_stream ? body_stream->as_bool()
+          : configured_stream ? configured_stream->as_bool() : true;
       const auto body = json::stringify(*requested_body);
       if (auto result = append("model.dispatched", "tokmon.model.dispatch.v1",
           cbor::object({{"model", plan.model}, {"provider", plan.provider},
               {"endpoint", plan.endpoint}, {"attempt", global_attempt},
+              {"stream", streaming},
               {"request_bytes", static_cast<std::int64_t>(body.size())},
               {"request_hash", sha256_hex(body)}})); !result)
         return tl::unexpected(result.error());
-      auto response = perform_http(HttpRequest{.url = plan.endpoint,
+
+      ParsedResponse parsed;
+      std::size_t emitted_reasoning = 0;
+      std::size_t emitted_content = 0;
+      std::string final_text;
+      const auto emit_parsed_chunks = [&]() -> Result<void> {
+        while (emitted_reasoning < parsed.reasoning_chunks.size()) {
+          const auto& chunk = parsed.reasoning_chunks[emitted_reasoning++];
+          if (auto result = append("model.reasoning-chunk", "tokmon.model.reasoning.v1",
+              cbor::object({{"text", chunk}, {"provider", plan.provider},
+                            {"model", plan.model}, {"attempt", global_attempt},
+                            {"stream", streaming}, {"visibility", "reasoning"}})); !result)
+            return result;
+        }
+        while (emitted_content < parsed.content_chunks.size()) {
+          const auto& chunk = parsed.content_chunks[emitted_content++];
+          final_text.append(chunk);
+          if (auto result = append("model.content-chunk", "tokmon.model.chunk.v1",
+              cbor::object({{"text", chunk}, {"provider", plan.provider},
+                            {"model", plan.model}, {"attempt", global_attempt},
+                            {"stream", streaming}})); !result)
+            return result;
+        }
+        return {};
+      };
+      const auto observe_event = [&](const ServerSentEvent& frame) -> Result<void> {
+        if (frame.data.empty() || frame.data == "[DONE]") return {};
+        auto event = json::parse(frame.data);
+        if (!event) return tl::unexpected(event.error());
+        parse_event(plan, *event, parsed);
+        return emit_parsed_chunks();
+      };
+      HttpRequest http_request{.url = plan.endpoint,
           .headers = headers(plan, secret_buffer.value), .body = body, .timeout = act.timeout,
           .first_byte_timeout = first_token_timeout, .idle_timeout = idle_timeout,
           .max_response_bytes = 16u * 1024u * 1024u,
           .response_mode = HttpResponseMode::server_sent_events,
-          .stop = beam.stop_token()});
+          .stop = beam.stop_token()};
+      if (streaming) http_request.on_server_sent_event = observe_event;
+      auto response = perform_http(std::move(http_request));
       if (!response) {
         last_error = response.error();
       } else if (response->status < 200 || response->status >= 300) {
@@ -584,29 +631,25 @@ Result<RefractionResult> RheaLens::refract(const PhotonWindow& photons, const Ac
                 redact(response->body.substr(0, 1024)), retryable_status(response->status));
         if (!retryable_status(response->status)) attempt_index = attempts_per_provider;
       } else {
-        auto parsed = parse_response(plan, *response);
-        if (!parsed) {
-          last_error = parsed.error();
-        } else if (parsed->reasoning_chunks.empty() && parsed->content_chunks.empty() &&
-                   parsed->tools.empty()) {
+        std::optional<Error> response_error;
+        if (!streaming || !response->server_sent_events) {
+          auto complete = parse_response(plan, *response);
+          if (!complete) {
+            response_error = complete.error();
+          } else {
+            parsed = std::move(*complete);
+            if (auto emitted_chunks = emit_parsed_chunks(); !emitted_chunks)
+              return tl::unexpected(emitted_chunks.error());
+          }
+        }
+        if (response_error) {
+          last_error = std::move(*response_error);
+        } else if (parsed.reasoning_chunks.empty() && parsed.content_chunks.empty() &&
+                   parsed.tools.empty()) {
           last_error = make_error(ErrorCode::protocol_error,
                                    "model response contained no content or tool call");
         } else {
-          std::string final_text;
-          for (const auto& chunk : parsed->reasoning_chunks)
-            if (auto result = append("model.reasoning-chunk", "tokmon.model.reasoning.v1",
-                cbor::object({{"text", chunk}, {"provider", plan.provider},
-                              {"model", plan.model}, {"attempt", global_attempt},
-                              {"visibility", "reasoning"}})); !result)
-              return tl::unexpected(result.error());
-          for (const auto& chunk : parsed->content_chunks) {
-            final_text.append(chunk);
-            if (auto result = append("model.content-chunk", "tokmon.model.chunk.v1",
-                cbor::object({{"text", chunk}, {"provider", plan.provider},
-                              {"model", plan.model}, {"attempt", global_attempt}})); !result)
-              return tl::unexpected(result.error());
-          }
-          for (auto& [key, tool] : parsed->tools) {
+          for (auto& [key, tool] : parsed.tools) {
             (void)key;
             cbor::Value arguments = tool.direct_arguments;
             if (!tool.arguments.empty()) {
@@ -637,14 +680,14 @@ Result<RefractionResult> RheaLens::refract(const PhotonWindow& photons, const Ac
           // Some OpenAI-compatible gateways omit usage from otherwise valid
           // streaming responses. Preserve useful accounting for the trace UI,
           // while making the fallback explicit in the append-only Photon.
-          const auto input_tokens = parsed->input_tokens > 0
-              ? parsed->input_tokens
+          const auto input_tokens = parsed.input_tokens > 0
+              ? parsed.input_tokens
               : static_cast<std::int64_t>(prompt.size() / 3u + 1u);
-          const auto output_tokens = parsed->output_tokens > 0
-              ? parsed->output_tokens
+          const auto output_tokens = parsed.output_tokens > 0
+              ? parsed.output_tokens
               : static_cast<std::int64_t>(final_text.size() / 3u + 1u);
-          const auto usage_estimated = parsed->input_tokens <= 0 ||
-              parsed->output_tokens <= 0;
+          const auto usage_estimated = parsed.input_tokens <= 0 ||
+              parsed.output_tokens <= 0;
           if (auto result = append("model.usage", "tokmon.model.usage.v1",
               cbor::object({{"input_tokens", input_tokens},
                             {"output_tokens", output_tokens},
@@ -660,7 +703,9 @@ Result<RefractionResult> RheaLens::refract(const PhotonWindow& photons, const Ac
           if (auto result = append("model.completed", "tokmon.model.completed.v1",
               cbor::object({{"provider", plan.provider}, {"model", plan.model},
                             {"attempt", global_attempt},
-                            {"response_hash", sha256_hex(response->body)},
+                            {"stream", streaming},
+                            {"response_hash", sha256_hex(
+                                response->body.empty() ? final_text : response->body)},
                             {"outcome", "complete"}})); !result)
             return tl::unexpected(result.error());
           return RefractionResult{.status = RefractionStatus::completed,

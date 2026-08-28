@@ -389,6 +389,10 @@ tokmon::Result<void> update_project_model_provider(const std::filesystem::path& 
     entry["enabled"] = !tokmon::cbor::find(payload, "enabled") ||
         tokmon::cbor::find(payload, "enabled")->as_bool();
     entry["allow_anonymous"] = allow_anonymous;
+    if (const auto* stream = tokmon::cbor::find(payload, "stream"))
+      entry["stream"] = stream->as_bool();
+    else if (!entry.contains("stream"))
+      entry["stream"] = true;
     entry["thinking"] = tokmon::cbor::find(payload, "thinking") &&
         tokmon::cbor::find(payload, "thinking")->as_bool();
     entry["reasoning_effort"] = read("reasoning_effort");
@@ -418,7 +422,8 @@ tokmon::cbor::Value provider_value(const tokmon::ModelProviderConfig& provider,
       {"id", provider.id}, {"protocol", provider.protocol},
       {"endpoint", provider.endpoint}, {"model", provider.model},
       {"auth", provider.auth}, {"enabled", provider.enabled},
-      {"allow_anonymous", provider.allow_anonymous}, {"thinking", provider.thinking},
+      {"allow_anonymous", provider.allow_anonymous}, {"stream", provider.stream},
+      {"thinking", provider.thinking},
       {"reasoning_effort", provider.reasoning_effort},
       {"max_output_tokens", provider.max_output_tokens},
       {"max_attempts", provider.max_attempts},
@@ -967,6 +972,50 @@ int tokmon::app::daemon_main(int argc, char** argv) {
   std::unordered_map<std::string, ClientLease> client_leases;
   std::optional<std::chrono::steady_clock::time_point> idle_shutdown_at;
   bool daemon_pinned = false;
+  struct LiveSnowRequest {
+    tokmon::SnowServer::StreamSender send;
+    std::optional<tokmon::RayId> ray;
+    std::atomic_uint64_t event_index{0};
+  };
+  using LiveSnowStreams =
+      std::unordered_map<std::uint64_t, std::shared_ptr<LiveSnowRequest>>;
+  struct LiveSnowLease {
+    std::mutex* mutex{};
+    LiveSnowStreams* streams{};
+    std::uint64_t request_id{};
+    ~LiveSnowLease() {
+      if (!mutex || !streams) return;
+      std::scoped_lock lock(*mutex);
+      streams->erase(request_id);
+    }
+  };
+  std::mutex stream_mutex;
+  LiveSnowStreams live_streams;
+  const tokmon::PhotonStore::Observer stream_observer =
+      [&stream_mutex, &live_streams](const tokmon::Photon& photon) {
+    const bool user_input = photon.kind == "user.input";
+    const bool model_chunk = photon.kind == "model.reasoning-chunk" ||
+        photon.kind == "model.content-chunk";
+    const auto* streaming = model_chunk
+        ? tokmon::cbor::find(photon.payload, "stream") : nullptr;
+    if (!user_input && (!model_chunk || !streaming || !streaming->as_bool())) return;
+    std::vector<std::shared_ptr<LiveSnowRequest>> destinations;
+    {
+      std::scoped_lock stream_lock(stream_mutex);
+      for (const auto& [_, destination] : live_streams)
+        if (!destination->ray || *destination->ray == photon.ray)
+          destinations.push_back(destination);
+    }
+    for (const auto& destination : destinations) {
+      const auto index = destination->event_index.fetch_add(1, std::memory_order_relaxed);
+      (void)destination->send(tokmon::SnowMessage{.kind = tokmon::SnowMessageKind::stream,
+          .cursor = photon.sequence,
+          .payload = tokmon::cbor::object({
+              {"event_index", static_cast<std::int64_t>(index)},
+              {"event", "photon"}, {"photon", tokmon::to_cbor(photon)}})});
+    }
+  };
+  runtime->store().subscribe(stream_observer);
   tokmon::SnowServer snow;
   const auto endpoint = endpoint_override.value_or(tokmon::workspace_snow_endpoint(
       early_paths->run, early_paths->project.parent_path()));
@@ -981,8 +1030,10 @@ int tokmon::app::daemon_main(int argc, char** argv) {
                                         &startup_state, &startup_error,
                                         &boot_mutex, &request_validation,
                                         &startup_payload, &early_paths,
-                                        &boot_condition, &credential_condition](
-      const tokmon::SnowMessage& request) -> tokmon::SnowMessage {
+                                        &boot_condition, &credential_condition,
+                                        &stream_mutex, &live_streams](
+      const tokmon::SnowMessage& request,
+      const tokmon::SnowServer::StreamSender& send_stream) -> tokmon::SnowMessage {
     if (request.kind == tokmon::SnowMessageKind::cancel) {
       const auto* target = tokmon::cbor::find(request.payload, "request_id");
       std::optional<tokmon::RayId> active_ray;
@@ -1301,8 +1352,19 @@ int tokmon::app::daemon_main(int argc, char** argv) {
       auto command_payload = request.payload;
       if (!command_payload.as_map()) command_payload = tokmon::cbor::Value::Map{};
       (*command_payload.as_map())["snow_request_id"] = std::to_string(request.request_id);
+      auto live = std::make_shared<LiveSnowRequest>();
+      live->send = send_stream;
+      {
+        std::scoped_lock stream_lock(stream_mutex);
+        live_streams[request.request_id] = live;
+      }
+      LiveSnowLease live_lease{&stream_mutex, &live_streams, request.request_id};
       auto result = execute_slash_command(*runtime, command_payload,
           [&request_validation] { request_validation(true); });
+      {
+        std::scoped_lock stream_lock(stream_mutex);
+        live_streams.erase(request.request_id);
+      }
       if (!result) {
         const auto* ray_field = tokmon::cbor::find(command_payload, "ray");
         const auto failure_ray = ray_field && !ray_field->as_string().empty()
@@ -1339,14 +1401,29 @@ int tokmon::app::daemon_main(int argc, char** argv) {
       const auto* requested_ray = tokmon::cbor::find(request.payload, "ray");
       auto context = resolved_model_context(runtime->config(), request.payload);
       if (!context) return snow_error(request, context.error());
+      auto live = std::make_shared<LiveSnowRequest>();
+      live->send = send_stream;
+      {
+        std::scoped_lock stream_lock(stream_mutex);
+        live_streams[request.request_id] = live;
+      }
+      LiveSnowLease live_lease{&stream_mutex, &live_streams, request.request_id};
       auto ray = requested_ray && !requested_ray->as_string().empty()
           ? runtime->submit_to(std::string(requested_ray->as_string()), text, *context)
           : runtime->submit(text, *context);
-      if (!ray) return snow_error(request, ray.error());
+      if (!ray) {
+        std::scoped_lock stream_lock(stream_mutex);
+        live_streams.erase(request.request_id);
+        return snow_error(request, ray.error());
+      }
       {
         std::scoped_lock state_lock(request_mutex);
         active_requests[request.request_id] = *ray;
         if (cancelled_requests.contains(request.request_id)) runtime->cancel(*ray);
+      }
+      {
+        std::scoped_lock stream_lock(stream_mutex);
+        live->ray = *ray;
       }
       std::mutex deadline_mutex;
       std::condition_variable_any deadline_condition;
@@ -1374,6 +1451,10 @@ int tokmon::app::daemon_main(int argc, char** argv) {
       {
         std::scoped_lock state_lock(request_mutex);
         active_requests.erase(request.request_id);
+      }
+      {
+        std::scoped_lock stream_lock(stream_mutex);
+        live_streams.erase(request.request_id);
       }
       if (!advanced && deadline_expired.load(std::memory_order_acquire))
         return snow_error(request, tokmon::make_error(tokmon::ErrorCode::timeout,
@@ -1546,6 +1627,7 @@ int tokmon::app::daemon_main(int argc, char** argv) {
           // A failed first mount may have opened storage or workers. Recreate
           // the runtime so a corrected configuration can be retried cleanly.
           runtime = std::make_unique<tokmon::TokmonRuntime>();
+          runtime->store().subscribe(stream_observer);
         }
         if (checked) {
           std::scoped_lock credential_lock(credential_mutex);

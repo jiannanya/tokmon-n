@@ -42,7 +42,9 @@ class SnowClient final {
 
 class SnowServer final {
  public:
-  using Handler = std::function<SnowMessage(const SnowMessage&)>;
+  using StreamSender = std::function<Result<void>(const SnowMessage&)>;
+  using Handler = std::function<SnowMessage(const SnowMessage&, const StreamSender&)>;
+  using LegacyHandler = std::function<SnowMessage(const SnowMessage&)>;
 
   SnowServer();
   ~SnowServer();
@@ -50,6 +52,7 @@ class SnowServer final {
   SnowServer& operator=(const SnowServer&) = delete;
 
   Result<void> start(std::filesystem::path endpoint, Handler handler);
+  Result<void> start(std::filesystem::path endpoint, LegacyHandler handler);
   void stop() noexcept;
   [[nodiscard]] bool running() const noexcept;
 

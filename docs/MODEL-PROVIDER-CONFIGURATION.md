@@ -22,7 +22,7 @@ Rhea 不绑定 DeepSeek 或任何单一厂商。配置中的两个身份必须�
 | `anthropic` | Messages 风格请求、SSE、thinking/text/tool use、usage | `x-api-key` |
 | `gemini` | generateContent 风格请求、SSE、thought/text/functionCall、usage | `x-goog-api-key` |
 
-Rhea 同时提供超时、取消、响应体上限、重试、指数退避、Retry-After、provider fallback、首 token 与流空闲超时。所有平台响应最终归一化为相同 Photon 类型，Desktop 与 CLI 不需要感知厂商事件格式。
+Rhea 同时提供超时、取消、响应体上限、重试、指数退避、Retry-After、provider fallback、首 token 与流空闲超时。除非 provider 配置显式写入 `stream: false`（CLI 可传 `--no-stream`），模型调用默认使用流式响应。OpenAI-compatible 与 Anthropic 映射为请求体的 `stream: true`；Gemini 由 `streamGenerateContent?alt=sse` endpoint 表达同一语义。reasoning 与 content chunk 会在 Photon 提交时经 Snow 实时推送，Desktop 和 CLI 无需等待最终响应；非流式配置仍在完整响应到达后一次性发布。
 
 ## 3. 最快开始：DeepSeek
 
@@ -143,6 +143,7 @@ models:
       auth: bearer
       enabled: true
       allow_anonymous: false
+      stream: true
       thinking: false
       reasoning_effort: ""
       max_output_tokens: 8192
@@ -160,7 +161,7 @@ models:
 
 provider 字段分成两类：
 
-- Tokmon 固定字段负责平台身份、传输、安全、重试和超时，例如 `protocol`、`endpoint`、`model`、`secret_ref`、`auth`、`thinking`、`reasoning_effort`、`max_output_tokens`、`max_attempts`、`retry_backoff_ms`、`first_token_timeout_ms`、`idle_timeout_ms`；
+- Tokmon 固定字段负责平台身份、传输、安全、重试和超时，例如 `protocol`、`endpoint`、`model`、`secret_ref`、`auth`、`stream`、`thinking`、`reasoning_effort`、`max_output_tokens`、`max_attempts`、`retry_backoff_ms`、`first_token_timeout_ms`、`idle_timeout_ms`；
 - 固定字段之外的任意 YAML 字段都作为模型请求参数原样保留，可使用字符串、整数、浮点数、布尔值、null、数组和嵌套对象。Rhea 会把它们合并到厂商请求 JSON 中，因此无需为 `temperature`、`top_p`、`seed`、`response_format` 或未来厂商参数修改、重新编译 Tokmon。
 
 动态参数也可以集中写在 `request_parameters` 下；两种写法语义相同：

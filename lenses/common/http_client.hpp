@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <functional>
 #include <optional>
 #include <stop_token>
 #include <string>
@@ -31,6 +32,7 @@ struct HttpRequest {
   std::chrono::milliseconds idle_timeout{0};
   std::size_t max_response_bytes{8u * 1024u * 1024u};
   HttpResponseMode response_mode{HttpResponseMode::buffered};
+  std::function<Result<void>(const ServerSentEvent&)> on_server_sent_event;
   std::stop_token stop;
 };
 

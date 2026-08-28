@@ -4,10 +4,12 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -57,6 +59,66 @@ void print_photon(std::ostream& output, const tokmon::Photon& photon,
   else write_value(output, tokmon::to_cbor(photon), format);
 }
 
+class ModelStreamOutput final {
+ public:
+  ModelStreamOutput(std::ostream& output, const OutputFormat format)
+      : output_(output), format_(format) {}
+
+  tokmon::Result<void> observe(const tokmon::SnowMessage& event) {
+    const auto* encoded = tokmon::cbor::find(event.payload, "photon");
+    if (!encoded) return {};
+    auto photon = tokmon::photon_from_cbor(*encoded);
+    if (!photon) return tl::unexpected(photon.error());
+    const bool reasoning = photon->kind == "model.reasoning-chunk";
+    const bool content = photon->kind == "model.content-chunk";
+    if (!reasoning && !content) return {};
+    streamed_sequences_.insert(photon->sequence);
+    if (format_ != OutputFormat::human) {
+      print_photon(output_, *photon, format_);
+      return {};
+    }
+    const auto* text = tokmon::cbor::find(photon->payload, "text");
+    if (!text) return {};
+    if (reasoning && section_ != Section::reasoning) {
+      if (section_ != Section::none) output_ << '\n';
+      output_ << "[thinking] ";
+      section_ = Section::reasoning;
+    } else if (content && section_ != Section::content) {
+      if (section_ != Section::none) output_ << '\n';
+      output_ << "[assistant] ";
+      section_ = Section::content;
+    }
+    output_ << text->as_string();
+    output_.flush();
+    content_streamed_ = content_streamed_ || content;
+    return {};
+  }
+
+  void finish() {
+    if (format_ == OutputFormat::human && section_ != Section::none) {
+      output_ << '\n';
+      output_.flush();
+      section_ = Section::none;
+    }
+  }
+
+  [[nodiscard]] bool skip_final(const tokmon::Photon& photon) const {
+    return streamed_sequences_.contains(photon.sequence) ||
+        (format_ == OutputFormat::human && content_streamed_ &&
+         photon.kind == "assistant.message");
+  }
+
+  [[nodiscard]] bool content_streamed() const noexcept { return content_streamed_; }
+
+ private:
+  enum class Section { none, reasoning, content };
+  std::ostream& output_;
+  OutputFormat format_;
+  std::set<std::uint64_t> streamed_sequences_;
+  Section section_{Section::none};
+  bool content_streamed_{false};
+};
+
 std::string join(const std::vector<std::string>& arguments, const std::size_t start) {
   std::string result;
   for (std::size_t index = start; index < arguments.size(); ++index) {
@@ -87,7 +149,7 @@ Usage:
   tokmon config paths            Print resolved .tokmon directories
   tokmon model list              List configured platforms (credentials redacted)
   tokmon model configure <id> --protocol <wire> --endpoint <url> --model <name>
-                                [--auth <mode>] [--default] [--thinking]
+                                [--auth <mode>] [--default] [--thinking] [--no-stream]
   tokmon model use <id>          Select the project default platform
   tokmon model secret set <id>   Read a key with terminal echo disabled
   tokmon model secret delete <id>
@@ -218,11 +280,13 @@ int run_stdio(const tokmon::SnowClient& client) {
 
 tokmon::Result<tokmon::SnowMessage> intent(const tokmon::SnowClient& client,
                                             tokmon::cbor::Value payload,
+                                            const std::function<tokmon::Result<void>(
+                                                const tokmon::SnowMessage&)>& on_stream = {},
                                             const std::uint64_t cursor = 0) {
   tokmon::SnowMessage message{.kind = tokmon::SnowMessageKind::intent,
       .request_id = tokmon::next_snow_request_id(), .cursor = cursor,
       .payload = std::move(payload)};
-  auto response = client.request(message);
+  auto response = client.request_stream(message, on_stream);
   if (!response) return tl::unexpected(response.error());
   if (response->kind == tokmon::SnowMessageKind::error) {
     const auto* field = tokmon::cbor::find(response->payload, "message");
@@ -479,6 +543,7 @@ int tokmon::app::cli_main(int argc, char** argv) {
         {"auth", option_value(arguments, "--auth").value_or("protocol-default")},
         {"default", has_option(arguments, "--default")},
         {"allow_anonymous", has_option(arguments, "--anonymous")},
+        {"stream", !has_option(arguments, "--no-stream")},
         {"thinking", has_option(arguments, "--thinking")},
         {"reasoning_effort", option_value(arguments, "--reasoning-effort").value_or("")}});
     const auto integer_option = [&arguments, &payload](const char* option, const char* field,
@@ -532,15 +597,21 @@ int tokmon::app::cli_main(int argc, char** argv) {
   }
   if (arguments[0] == "model" && arguments.size() > 2 && arguments[1] == "test") {
     const auto text = arguments.size() > 3 ? join(arguments, 3) : std::string{};
+    ModelStreamOutput streamed(*output, output_format);
     auto response = intent(client, tokmon::cbor::object({
         {"action", "model.provider.test"}, {"provider", arguments[2]},
-        {"text", text}, {"deadline_ms", deadline_ms}}));
+        {"text", text}, {"deadline_ms", deadline_ms}}),
+        [&streamed](const tokmon::SnowMessage& event) {
+          return streamed.observe(event);
+        });
+    streamed.finish();
     if (!response) { print_error(response.error()); return 1; }
     auto photons = response_photons(*response);
     if (!photons) { print_error(photons.error()); return 1; }
     bool failed = false;
     for (const auto& photon : *photons) {
       if (photon.kind == "model.failed" || photon.kind == "act.failed") failed = true;
+      if (streamed.skip_final(photon)) continue;
       if (output_format != OutputFormat::human || photon.kind == "assistant.message" ||
           photon.kind == "model.usage" || photon.kind == "model.failed")
         print_photon(*output, photon, output_format);
@@ -557,11 +628,17 @@ int tokmon::app::cli_main(int argc, char** argv) {
     auto payload = tokmon::cbor::object({{"action", "chat"},
         {"text", input}, {"deadline_ms", deadline_ms}});
     if (!selected_provider.empty()) (*payload.as_map())["provider"] = selected_provider;
-    auto response = intent(client, std::move(payload));
+    ModelStreamOutput streamed(*output, output_format);
+    auto response = intent(client, std::move(payload),
+        [&streamed](const tokmon::SnowMessage& event) {
+          return streamed.observe(event);
+        });
+    streamed.finish();
     if (!response) { print_error(response.error()); return 1; }
     auto photons = response_photons(*response);
     if (!photons) { print_error(photons.error()); return 1; }
-    for (const auto& photon : *photons) print_photon(*output, photon, output_format);
+    for (const auto& photon : *photons)
+      if (!streamed.skip_final(photon)) print_photon(*output, photon, output_format);
     return 0;
   }
   if (arguments[0] == "chat") {
@@ -583,7 +660,12 @@ int tokmon::app::cli_main(int argc, char** argv) {
           {"surface", "cli"}, {"effort", session_effort},
           {"access_mode", session_access_mode}});
       if (!selected_provider.empty()) (*payload.as_map())["provider"] = selected_provider;
-      auto response = intent(client, std::move(payload));
+      ModelStreamOutput streamed(*output, output_format);
+      auto response = intent(client, std::move(payload),
+          [&streamed](const tokmon::SnowMessage& event) {
+            return streamed.observe(event);
+          });
+      streamed.finish();
       if (!response) { print_error(response.error()); line.clear(); continue; }
       if (const auto* ray = tokmon::cbor::find(response->payload, "ray"))
         active_ray = std::string(ray->as_string());
@@ -595,7 +677,8 @@ int tokmon::app::cli_main(int argc, char** argv) {
         session_access_mode = std::string(access->as_string());
       if (slash) {
         if (const auto* display = tokmon::cbor::find(response->payload, "display");
-            display && !display->as_string().empty()) *output << display->as_string() << '\n';
+            display && !display->as_string().empty() && !streamed.content_streamed())
+          *output << display->as_string() << '\n';
         if (const auto* copied = tokmon::cbor::find(response->payload, "copy_text");
             copied && !copied->as_string().empty()) *output << copied->as_string() << '\n';
         leave = tokmon::cbor::find(response->payload, "close_client") &&
@@ -606,7 +689,8 @@ int tokmon::app::cli_main(int argc, char** argv) {
       auto photons = response_photons(*response);
       if (!photons) { print_error(photons.error()); continue; }
       for (const auto& photon : *photons)
-        if (photon.kind == "assistant.message" || photon.kind == "tool.result")
+        if (!streamed.skip_final(photon) &&
+            (photon.kind == "assistant.message" || photon.kind == "tool.result"))
           print_photon(*output, photon, output_format);
       line.clear();
     }

@@ -187,7 +187,7 @@ Result<RuntimeProfile> parse_runtime_profile(const std::string_view text) {
 const std::set<std::string>& fixed_model_provider_fields() {
   static const std::set<std::string> fields{
       "protocol", "endpoint", "model", "secret_ref", "secret_env", "auth", "enabled",
-      "allow_anonymous", "thinking", "reasoning_effort", "max_output_tokens",
+      "allow_anonymous", "stream", "thinking", "reasoning_effort", "max_output_tokens",
       "max_attempts", "retry_backoff_ms", "first_token_timeout_ms", "idle_timeout_ms",
       "request_parameters"};
   return fields;
@@ -245,7 +245,7 @@ Result<void> parse_model_providers(RuntimeConfig& config, const cbor::Value& mod
                             "auth", "reasoning_effort"})
       if (auto result = require_type<std::string>(value, key, "a string", source); !result)
         return result;
-    for (const auto* key : {"enabled", "allow_anonymous", "thinking"})
+    for (const auto* key : {"enabled", "allow_anonymous", "stream", "thinking"})
       if (auto result = require_type<bool>(value, key, "a boolean", source); !result)
         return result;
     for (const auto* key : {"max_output_tokens", "max_attempts", "retry_backoff_ms",
@@ -274,6 +274,8 @@ Result<void> parse_model_providers(RuntimeConfig& config, const cbor::Value& mod
     if (const auto* field = cbor::find(value, "enabled")) provider.enabled = field->as_bool();
     if (const auto* field = cbor::find(value, "allow_anonymous"))
       provider.allow_anonymous = field->as_bool();
+    if (const auto* field = cbor::find(value, "stream"))
+      provider.stream = field->as_bool();
     if (const auto* field = cbor::find(value, "thinking"))
       provider.thinking = field->as_bool();
     if (const auto* field = cbor::find(value, "max_output_tokens"))
@@ -878,7 +880,8 @@ Result<cbor::Value> resolve_model_provider_context(
       {"provider", provider.id}, {"protocol", provider.protocol},
       {"endpoint", provider.endpoint}, {"model", provider.model},
       {"auth", provider.auth}, {"allow_anonymous", provider.allow_anonymous},
-      {"thinking", provider.thinking}, {"reasoning_effort", normalized_effort},
+      {"stream", provider.stream}, {"thinking", provider.thinking},
+      {"reasoning_effort", normalized_effort},
       {"max_output_tokens", provider.max_output_tokens},
       {"max_attempts", provider.max_attempts},
       {"retry_backoff_ms", provider.retry_backoff_ms},

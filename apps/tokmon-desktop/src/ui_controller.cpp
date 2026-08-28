@@ -978,6 +978,14 @@ private:
       break;
     }
     std::string state = "正在沿光路执行";
+    std::string streamed_assistant;
+    for (const auto &photon : photons_) {
+      if (photon.sequence < turn_start_sequence ||
+          photon.kind != "model.content-chunk")
+        continue;
+      if (const auto *text = tokmon::cbor::find(photon.payload, "text"))
+        streamed_assistant.append(text->as_string());
+    }
     for (auto iterator = photons_.rbegin(); iterator != photons_.rend();
          ++iterator) {
       if (iterator->sequence < turn_start_sequence)
@@ -990,6 +998,7 @@ private:
           iterator->kind == "assistant.message")
         state = "审阅完成";
     }
+    if (assistant.empty()) assistant = std::move(streamed_assistant);
     if (assistant.empty())
       for (auto iterator = photons_.rbegin(); iterator != photons_.rend();
            ++iterator)
@@ -1719,7 +1728,35 @@ private:
       const auto &request_endpoint =
           command.kind == "navigation-save" ? navigation_endpoint_ : endpoint_;
       tokmon::SnowClient client(request_endpoint);
-      auto response = client.request(request);
+      std::vector<tokmon::Photon> streamed_photons;
+      auto last_stream_publish = std::chrono::steady_clock::now();
+      bool published_model_chunk = false;
+      auto response = client.request_stream(request,
+          [this, &streamed_photons, &last_stream_publish,
+           &published_model_chunk](
+              const tokmon::SnowMessage& event) -> tokmon::Result<void> {
+            const auto* encoded = tokmon::cbor::find(event.payload, "photon");
+            if (!encoded) return {};
+            auto photon = tokmon::photon_from_cbor(*encoded);
+            if (!photon) return tl::unexpected(photon.error());
+            cursor_ = std::max(cursor_, photon->sequence);
+            const bool model_chunk = photon->kind == "model.reasoning-chunk" ||
+                photon->kind == "model.content-chunk";
+            const bool publish_now = photon->kind == "user.input" ||
+                (model_chunk && !published_model_chunk) ||
+                std::chrono::steady_clock::now() - last_stream_publish >=
+                    std::chrono::milliseconds(16);
+            streamed_photons.push_back(std::move(*photon));
+            if (publish_now) {
+              apply_photons(std::move(streamed_photons), false);
+              streamed_photons.clear();
+              last_stream_publish = std::chrono::steady_clock::now();
+              published_model_chunk = published_model_chunk || model_chunk;
+            }
+            return {};
+          });
+      if (!streamed_photons.empty())
+        apply_photons(std::move(streamed_photons), false);
       if (!response) {
         const auto message = response.error().describe();
         if (message != last_error_) {

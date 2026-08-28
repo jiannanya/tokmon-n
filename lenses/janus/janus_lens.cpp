@@ -247,7 +247,7 @@ Result<void> JanusLens::view(const OpticalInput& photons, WavefrontBuilder& surf
   // tokmond resolved this envelope from trusted YAML. Plaintext credentials
   // are never part of a Photon or Act.
   for (const auto* key : {"provider", "protocol", "endpoint", "secret_ref", "auth",
-                          "allow_anonymous", "thinking", "reasoning_effort",
+                          "allow_anonymous", "stream", "thinking", "reasoning_effort",
                           "max_output_tokens", "max_attempts", "retry_backoff_ms",
                           "first_token_timeout_ms", "idle_timeout_ms", "request_parameters",
                           "workspace_root"})

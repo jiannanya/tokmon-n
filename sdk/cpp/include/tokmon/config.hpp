@@ -70,6 +70,7 @@ struct ModelProviderConfig {
   std::string auth{"protocol-default"};
   bool enabled{true};
   bool allow_anonymous{false};
+  bool stream{true};
   bool thinking{false};
   std::string reasoning_effort;
   std::int64_t max_output_tokens{4096};

@@ -213,7 +213,8 @@ TEST_CASE("Janus forwards a platform-neutral protocol envelope to Rhea") {
           {"provider", "private-cloud"}, {"protocol", "openai-compatible"},
           {"endpoint", "https://models.example.test/v1/chat/completions"},
           {"model", "custom-model"}, {"secret_ref", "model-provider/private-cloud"},
-          {"auth", "bearer"}, {"thinking", true}, {"max_output_tokens", 8192},
+          {"auth", "bearer"}, {"stream", false}, {"thinking", true},
+          {"max_output_tokens", 8192},
           {"max_attempts", 6}, {"retry_backoff_ms", 5'000},
           {"request_parameters", tokmon::cbor::object({
               {"temperature", 0.25}, {"top_p", 0.9}})}}),
@@ -229,6 +230,7 @@ TEST_CASE("Janus forwards a platform-neutral protocol envelope to Rhea") {
   REQUIRE(tokmon::cbor::find(parameters, "model")->as_string() == "custom-model");
   REQUIRE(tokmon::cbor::find(parameters, "secret_ref")->as_string() ==
           "model-provider/private-cloud");
+  REQUIRE_FALSE(tokmon::cbor::find(parameters, "stream")->as_bool());
   REQUIRE(tokmon::cbor::find(parameters, "api_key") == nullptr);
   const auto* request_parameters =
       tokmon::cbor::find(parameters, "request_parameters");
@@ -576,6 +578,97 @@ TEST_CASE("Snow CLI stdio carries concurrent stream events and closes in order")
   }));
 }
 
+TEST_CASE("Snow CLI renders model reasoning and content before the final response") {
+  using namespace std::chrono_literals;
+  const auto root = lens_temporary_directory("snow-cli-model-stream");
+  auto paths = tokmon::resolve_paths(root);
+  REQUIRE(paths);
+  std::atomic_bool cli_rendered_stream{false};
+  std::atomic_bool rendered_before_final{false};
+  std::atomic_bool stream_send_succeeded{true};
+  std::mutex stdout_mutex;
+  std::string incremental_stdout;
+  tokmon::SnowServer server;
+  REQUIRE(server.start(tokmon::workspace_snow_endpoint(paths->run, root),
+      [&](const tokmon::SnowMessage& request,
+          const tokmon::SnowServer::StreamSender& send) {
+        if (request.kind == tokmon::SnowMessageKind::ping)
+          return tokmon::SnowMessage{.kind = tokmon::SnowMessageKind::pong,
+              .request_id = request.request_id};
+        const auto* action = tokmon::cbor::find(request.payload, "action");
+        if (action && action->as_string() == "daemon.status")
+          return tokmon::SnowMessage{.kind = tokmon::SnowMessageKind::intent_result,
+              .request_id = request.request_id,
+              .payload = tokmon::cbor::object({{"state", "ready"}})};
+        if (!action || action->as_string() != "chat")
+          return tokmon::SnowMessage{.kind = tokmon::SnowMessageKind::intent_result,
+              .request_id = request.request_id,
+              .payload = tokmon::cbor::Value::Map{}};
+
+        const auto photon = [](const std::uint64_t sequence, std::string id,
+                                std::string kind, std::string schema,
+                                std::string text) {
+          return tokmon::Photon{.sequence = sequence, .id = std::move(id),
+              .ray = "cli-stream-ray", .kind = std::move(kind),
+              .schema = std::move(schema),
+              .payload = tokmon::cbor::object({{"text", std::move(text)},
+                                                {"stream", true}}),
+              .epoch = 1, .hash = std::string(64, 'a')};
+        };
+        const auto reasoning = photon(1, "cli-reasoning", "model.reasoning-chunk",
+            "tokmon.model.reasoning.v1", "fixture reasoning");
+        const auto content = photon(2, "cli-content", "model.content-chunk",
+            "tokmon.model.chunk.v1", "fixture answer");
+        const auto assistant = photon(3, "cli-assistant", "assistant.message",
+            "tokmon.assistant.message.v1", "fixture answer");
+        if (!send(tokmon::SnowMessage{.cursor = reasoning.sequence,
+                .payload = tokmon::cbor::object(
+                    {{"photon", tokmon::to_cbor(reasoning)}})}))
+          stream_send_succeeded.store(false, std::memory_order_release);
+        if (!send(tokmon::SnowMessage{.cursor = content.sequence,
+                .payload = tokmon::cbor::object(
+                    {{"photon", tokmon::to_cbor(content)}})}))
+          stream_send_succeeded.store(false, std::memory_order_release);
+        const auto deadline = std::chrono::steady_clock::now() + 2s;
+        while (!cli_rendered_stream.load(std::memory_order_acquire) &&
+               std::chrono::steady_clock::now() < deadline)
+          std::this_thread::yield();
+        rendered_before_final.store(
+            cli_rendered_stream.load(std::memory_order_acquire),
+            std::memory_order_release);
+        return tokmon::SnowMessage{.kind = tokmon::SnowMessageKind::intent_result,
+            .request_id = request.request_id, .cursor = assistant.sequence,
+            .payload = tokmon::cbor::object({
+                {"photons", tokmon::cbor::Value::Array{tokmon::to_cbor(reasoning),
+                    tokmon::to_cbor(content), tokmon::to_cbor(assistant)}}})};
+      }));
+  auto output = tokmon::builtin::run_process(tokmon::builtin::ProcessRequest{
+      .argv = {TOKMON_CLI_EXECUTABLE, "--workspace", root.generic_string(),
+               "run", "stream fixture"},
+      .cwd = root, .timeout = 10s, .max_output_bytes = 1024u * 1024u,
+      .on_stdout = [&](const std::string_view chunk) {
+        std::scoped_lock lock(stdout_mutex);
+        incremental_stdout.append(chunk);
+        if (incremental_stdout.find("fixture reasoning") != std::string::npos &&
+            incremental_stdout.find("fixture answer") != std::string::npos)
+          cli_rendered_stream.store(true, std::memory_order_release);
+      }});
+  server.stop();
+  REQUIRE(output);
+  REQUIRE(output->exit_code == 0);
+  REQUIRE(stream_send_succeeded.load(std::memory_order_acquire));
+  REQUIRE(rendered_before_final.load(std::memory_order_acquire));
+  const auto reasoning_position = output->stdout_text.find("[thinking] fixture reasoning");
+  const auto answer_position = output->stdout_text.find("[assistant] fixture answer");
+  REQUIRE(reasoning_position != std::string::npos);
+  REQUIRE(answer_position > reasoning_position);
+  const auto answer_text_position = output->stdout_text.find("fixture answer",
+                                                              answer_position);
+  REQUIRE(output->stdout_text.find("fixture answer",
+      answer_text_position + std::string_view("fixture answer").size()) ==
+          std::string::npos);
+}
+
 TEST_CASE("Snow client detects a disconnect and reconnects from its cursor") {
   const auto root = lens_temporary_directory("snow-reconnect");
   const auto endpoint = tokmon::default_snow_endpoint(root);
@@ -663,6 +756,22 @@ TEST_CASE("chhttp is the HTTP SSE and WebSocket transport behind network Lenses"
       co_await socket.send_text(
           R"({"jsonrpc":"2.0","id":"act-scenario","result":{"ok":true}})");
   });
+  std::string buffered_model_request;
+  std::string default_stream_model_request;
+  server.post("/model-buffered", [&buffered_model_request](
+      const chhttp::Request& request, chhttp::Response& response) {
+    buffered_model_request = request.body;
+    response.set_content(
+        R"({"choices":[{"message":{"content":"buffered answer"}}],"usage":{"prompt_tokens":2,"completion_tokens":2}})",
+        "application/json");
+  });
+  server.post("/model-default-stream", [&default_stream_model_request](
+      const chhttp::Request& request, chhttp::Response& response) {
+    default_stream_model_request = request.body;
+    response.set_content(
+        R"({"choices":[{"message":{"content":"tool-capable answer"}}]})",
+        "application/json");
+  });
   REQUIRE(server.start("127.0.0.1", 0));
   const auto base = "http://127.0.0.1:" + std::to_string(server.port());
 
@@ -674,9 +783,15 @@ TEST_CASE("chhttp is the HTTP SSE and WebSocket transport behind network Lenses"
   REQUIRE(http->body == R"({"lens":true})");
   REQUIRE(http->retry_after == "7");
 
+  std::vector<tokmon::builtin::ServerSentEvent> observed_events;
   auto sse = tokmon::builtin::perform_http(tokmon::builtin::HttpRequest{
       .url = base + "/events", .timeout = std::chrono::seconds(3),
-      .response_mode = tokmon::builtin::HttpResponseMode::server_sent_events});
+      .response_mode = tokmon::builtin::HttpResponseMode::server_sent_events,
+      .on_server_sent_event = [&observed_events](
+          const tokmon::builtin::ServerSentEvent& event) -> tokmon::Result<void> {
+        observed_events.push_back(event);
+        return {};
+      }});
   REQUIRE(sse);
   REQUIRE(sse->server_sent_events);
   REQUIRE(sse->events.size() == 2);
@@ -685,6 +800,7 @@ TEST_CASE("chhttp is the HTTP SSE and WebSocket transport behind network Lenses"
   REQUIRE(sse->events.front().id == "event-1");
   REQUIRE(sse->events.front().retry == std::chrono::milliseconds(125));
   REQUIRE(sse->events.back().data == "[DONE]");
+  REQUIRE(observed_events.size() == 2);
 
   const auto lens = tokmon::make_builtin_lens("iris");
   RecordingHost host;
@@ -706,12 +822,55 @@ TEST_CASE("chhttp is the HTTP SSE and WebSocket transport behind network Lenses"
           {"schema_hash", std::string(64, 'f')},
           {"arguments", tokmon::cbor::Value::Map{}}}), host,
       tokmon::PhotonWindow({connection_photon}));
-  server.stop();
   REQUIRE(called);
   REQUIRE(host.drafts.size() == 1);
   REQUIRE(host.drafts.back().kind == "external.call-completed");
   REQUIRE(tokmon::cbor::find(
       *tokmon::cbor::find(host.drafts.back().payload, "result"), "ok")->as_bool());
+
+  const auto rhea = tokmon::make_builtin_lens("rhea");
+  RecordingHost model_host;
+  auto buffered = refract(rhea, "model.call", "tokmon.model.call.v1",
+      tokmon::cbor::object({{"provider", "fixture-buffered"},
+          {"protocol", "openai-compatible"}, {"model", "fixture-model"},
+          {"prompt", "hello"}, {"stream", false},
+          {"endpoint", base + "/model-buffered"}, {"allow_anonymous", true},
+          {"max_attempts", 1}}), model_host);
+  REQUIRE(buffered);
+  auto buffered_body = tokmon::json::parse(buffered_model_request);
+  REQUIRE(buffered_body);
+  REQUIRE_FALSE(tokmon::cbor::find(*buffered_body, "stream")->as_bool());
+  const auto buffered_chunk = std::ranges::find_if(model_host.drafts,
+      [](const auto& draft) { return draft.kind == "model.content-chunk"; });
+  REQUIRE(buffered_chunk != model_host.drafts.end());
+  REQUIRE_FALSE(tokmon::cbor::find(buffered_chunk->payload, "stream")->as_bool());
+  const auto buffered_answer = std::ranges::find_if(model_host.drafts,
+      [](const auto& draft) { return draft.kind == "assistant.message"; });
+  REQUIRE(buffered_answer != model_host.drafts.end());
+  REQUIRE(tokmon::cbor::find(buffered_answer->payload, "text")->as_string() ==
+          "buffered answer");
+
+  RecordingHost default_stream_host;
+  auto default_stream = refract(rhea, "model.call", "tokmon.model.call.v1",
+      tokmon::cbor::object({{"provider", "fixture-default-stream"},
+          {"protocol", "openai-compatible"}, {"model", "fixture-model"},
+          {"prompt", "use a tool if needed"},
+          {"tools", tokmon::cbor::Value::Array{tokmon::cbor::object({
+              {"name", "lookup"}, {"description", "Lookup a value"},
+              {"input_schema", tokmon::cbor::object({{"type", "object"}})}})}},
+          {"endpoint", base + "/model-default-stream"},
+          {"allow_anonymous", true}, {"max_attempts", 1}}),
+      default_stream_host);
+  server.stop();
+  REQUIRE(default_stream);
+  auto default_stream_body = tokmon::json::parse(default_stream_model_request);
+  REQUIRE(default_stream_body);
+  REQUIRE(tokmon::cbor::find(*default_stream_body, "stream")->as_bool());
+  REQUIRE(tokmon::cbor::find(*default_stream_body, "tools")->as_array()->size() == 1u);
+  const auto default_stream_chunk = std::ranges::find_if(default_stream_host.drafts,
+      [](const auto& draft) { return draft.kind == "model.content-chunk"; });
+  REQUIRE(default_stream_chunk != default_stream_host.drafts.end());
+  REQUIRE(tokmon::cbor::find(default_stream_chunk->payload, "stream")->as_bool());
 }
 
 #if defined(TOKMON_PYTHON_EXECUTABLE)
@@ -805,6 +964,7 @@ TEST_CASE("Rhea streams an OpenAI-compatible provider and retries transient fail
       "json_object");
   REQUIRE(tokmon::cbor::find(*request_body, "stop")->as_array()->size() == 2);
   REQUIRE(tokmon::cbor::find(*request_body, "model")->as_string() == "fixture-model");
+  REQUIRE(tokmon::cbor::find(*request_body, "stream")->as_bool());
   const auto* captured_messages = tokmon::cbor::find(*request_body, "messages");
   REQUIRE(captured_messages != nullptr);
   REQUIRE(captured_messages->as_array()->size() == 1u);

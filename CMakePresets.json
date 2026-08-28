@@ -3,7 +3,14 @@
   "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
   "configurePresets": [
     {
+      "name": "windows-vcpkg",
+      "hidden": true,
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
       "name": "windows-msvc-debug",
+      "inherits": "windows-vcpkg",
       "displayName": "Windows MSVC Debug - Desktop",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/windows-msvc-ui-debug",
@@ -19,6 +26,7 @@
     },
     {
       "name": "windows-msvc-release",
+      "inherits": "windows-vcpkg",
       "displayName": "Windows MSVC Release - Unified CLI",
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
@@ -36,6 +44,7 @@
     },
     {
       "name": "windows-msvc-release-desktop",
+      "inherits": "windows-vcpkg",
       "displayName": "Windows MSVC Release - Desktop",
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
@@ -54,6 +63,7 @@
     },
     {
       "name": "windows-msvc-release-external-lenses",
+      "inherits": "windows-vcpkg",
       "displayName": "Windows MSVC Release - External Lens Plugins",
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",

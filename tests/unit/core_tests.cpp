@@ -670,6 +670,41 @@ TEST_CASE("Snow framing carries canonical requests and responses") {
   server.stop();
 }
 
+TEST_CASE("Snow server pushes stream frames before the final response") {
+  const auto root = temporary_directory("snow-live-stream");
+  const auto endpoint = tokmon::default_snow_endpoint(root);
+  std::atomic_bool observed{false};
+  std::atomic_bool observed_before_final{false};
+  tokmon::SnowServer server;
+  REQUIRE(server.start(endpoint, [&observed, &observed_before_final](
+      const tokmon::SnowMessage& request,
+      const tokmon::SnowServer::StreamSender& send) {
+    (void)send(tokmon::SnowMessage{.cursor = 8,
+        .payload = tokmon::cbor::object({{"event", "fixture"}})});
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!observed.load(std::memory_order_acquire) &&
+           std::chrono::steady_clock::now() < deadline)
+      std::this_thread::yield();
+    observed_before_final.store(observed.load(std::memory_order_acquire),
+                                std::memory_order_release);
+    return tokmon::SnowMessage{.kind = tokmon::SnowMessageKind::pong,
+        .request_id = request.request_id, .cursor = 9};
+  }));
+  tokmon::SnowClient client(endpoint);
+  auto response = client.request_stream(tokmon::SnowMessage{
+      .kind = tokmon::SnowMessageKind::ping, .request_id = 91},
+      [&observed](const tokmon::SnowMessage& event) -> tokmon::Result<void> {
+        REQUIRE(event.kind == tokmon::SnowMessageKind::stream);
+        REQUIRE(event.request_id == 91);
+        observed.store(true, std::memory_order_release);
+        return {};
+      });
+  server.stop();
+  REQUIRE(response);
+  REQUIRE(response->kind == tokmon::SnowMessageKind::pong);
+  REQUIRE(observed_before_final.load(std::memory_order_acquire));
+}
+
 TEST_CASE("Snow local transport serves independent clients concurrently") {
   const auto root = temporary_directory("snow-concurrent");
   const auto endpoint = tokmon::default_snow_endpoint(root);
@@ -1221,6 +1256,7 @@ TEST_CASE("model platforms merge by id while credentials remain SecretRefs") {
                "  providers:\n"
                "    private-cloud:\n"
                "      model: project-model\n"
+               "      stream: false\n"
                "      thinking: true\n"
                "      top_p: 0.9\n";
   }
@@ -1233,6 +1269,7 @@ TEST_CASE("model platforms merge by id while credentials remain SecretRefs") {
   REQUIRE(provider.endpoint == "https://models.example.test/v1/chat/completions");
   REQUIRE(provider.secret_ref == "model-provider/private-cloud");
   REQUIRE(provider.secret_env == "PRIVATE_CLOUD_API_KEY");
+  REQUIRE_FALSE(provider.stream);
   REQUIRE(provider.thinking);
   const auto* request_parameters = provider.request_parameters.as_map();
   REQUIRE(request_parameters != nullptr);
@@ -1258,7 +1295,8 @@ TEST_CASE("model context keeps provider and configured model inseparable") {
       .id = "deepseek", .protocol = "openai-compatible",
       .endpoint = "https://api.deepseek.com/chat/completions",
       .model = "deepseek-v4-flash", .secret_ref = "model-provider/deepseek",
-      .auth = "bearer", .thinking = true, .reasoning_effort = "high",
+      .auth = "bearer", .stream = false, .thinking = true,
+      .reasoning_effort = "high",
       .request_parameters = tokmon::cbor::object({{"temperature", 0.3}})});
 
   auto selected = tokmon::resolve_model_provider_context(config,
@@ -1271,6 +1309,7 @@ TEST_CASE("model context keeps provider and configured model inseparable") {
           "deepseek-v4-flash");
   REQUIRE(tokmon::cbor::find(*selected, "endpoint")->as_string() ==
           "https://api.deepseek.com/chat/completions");
+  REQUIRE_FALSE(tokmon::cbor::find(*selected, "stream")->as_bool());
   const auto* selected_parameters =
       tokmon::cbor::find(*selected, "request_parameters");
   REQUIRE(selected_parameters != nullptr);
@@ -1287,6 +1326,7 @@ TEST_CASE("model context keeps provider and configured model inseparable") {
       config, tokmon::cbor::Value::Map{});
   REQUIRE(fallback);
   REQUIRE(tokmon::cbor::find(*fallback, "provider")->as_string() == "opencode");
+  REQUIRE(tokmon::cbor::find(*fallback, "stream")->as_bool());
   REQUIRE(tokmon::cbor::find(*fallback, "model")->as_string() ==
           "x-preview-f-free");
 }

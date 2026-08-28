@@ -446,10 +446,14 @@ export component SidebarRow inherits Rectangle {
     border-radius: 6px;
     background: root.item.selected ? Palette.accent-bg : (ta.has-hover ? rgba(0, 0, 0, 0.03) : transparent);
     HorizontalLayout {
-        padding-left: 8px;
+        // Tree staircase from the navigation level: group 0, project 1,
+        // session 2 (prototype indent rhythm, 16px per level).
+        padding-left: 6px + root.item.indent * 16px;
         padding-right: 8px;
         spacing: 6px;
-        alignment: start;
+        // No explicit alignment: the title's horizontal-stretch absorbs the
+        // remaining width so the quick-create plus stays flush right on every
+        // expandable row.
         Rectangle {
             width: 12px;
             horizontal-stretch: 0;
@@ -460,11 +464,6 @@ export component SidebarRow inherits Rectangle {
                 height: 12px;
                 y: (parent.height - 12px) / 2;
             }
-        }
-        Rectangle {
-            width: 12px;
-            horizontal-stretch: 0;
-            visible: !root.item.expandable;
         }
         Image {
             source: root.item.icon;
@@ -484,7 +483,6 @@ export component SidebarRow inherits Rectangle {
         }
         Rectangle {
             width: 22px;
-            height: 22px;
             horizontal-stretch: 0;
             border-radius: 6px;
             visible: root.item.expandable && ta.has-hover && !qta.has-hover;

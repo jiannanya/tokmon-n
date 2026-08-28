@@ -125,6 +125,24 @@ Tokmon 的构建与发行产物。
 
 ## 5. Windows VS 2022 v143 Release
 
+Windows preset 使用根目录 `vcpkg.json` 的 manifest mode。配置前需要让
+`VCPKG_ROOT` 指向已 bootstrap 的 vcpkg；preset 会从第一次配置开始显式加载该
+toolchain：
+
+```powershell
+$env:VCPKG_ROOT = "C:\\path\\to\\vcpkg"
+Test-Path "$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+```
+
+如果构建目录是在项目引入 chhttp/libuv 之前生成的，旧 cache 可能只有
+`CMAKE_TOOLCHAIN_FILE` 字符串、却没有初始化 manifest mode。升级一次时使用：
+
+```powershell
+cmake --fresh --preset=windows-msvc-release-desktop
+```
+
+之后正常的 `cmake --build --preset=windows-msvc-release-desktop` 会直接工作。
+
 ### 5.1 默认统一 CLI
 
 ```powershell
