@@ -174,19 +174,25 @@ export component ComposerContextTab inherits Rectangle {
     callback change-workspace();
 
     width: Math.min(430px, Math.max(238px, project-label.preferred-width + branch-label.preferred-width + 116px));
-    height: 30px;
+    height: 28px;
     horizontal-stretch: 0;
-    border-radius: 11px;
-    background: tab-touch.has-hover && root.can-change-workspace ? Palette.pill-deep : #F0EEE9;
-    border-width: 0.67px;
-    border-color: Palette.card-line;
-    drop-shadow-color: rgba(0, 0, 0, 0.025);
-    drop-shadow-offset-y: 1px;
-    drop-shadow-blur: 2px;
+    // Backing tab: only the top corners are rounded, frameless, flat light-gray
+    // fill. The bottom edge is tucked behind the opaque composer card that
+    // draws over it, so the tab appears to grow out of the dialog (prototype
+    // "Embedded Backing Workspace Tab").
+    border-top-left-radius: 12px;
+    border-top-right-radius: 12px;
+    border-bottom-left-radius: 0px;
+    border-bottom-right-radius: 0px;
+    background: tab-touch.has-hover && root.can-change-workspace ? #ECECEC : #F4F4F4;
+    border-width: 0px;
 
     HorizontalLayout {
         padding-left: 12px;
         padding-right: 12px;
+        // Bottom padding keeps the row visually centered within the part of
+        // the tab that stays visible above the composer card's top edge.
+        padding-bottom: 4px;
         spacing: 8px;
         Image { source: Icons.folder-open; width: 14px; height: 14px; y: 8px; }
         project-label := Text {

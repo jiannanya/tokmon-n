@@ -798,16 +798,19 @@ export component WorkspacePanel inherits Rectangle {
                                 width: parent.width;
                                 height: 156px;
                                 background: @linear-gradient(0deg, rgba(250, 250, 249, 1) 0%, rgba(250, 250, 249, 0.92) 55%, rgba(250, 250, 249, 0) 100%);
-                                HorizontalLayout {
-                                    alignment: center;
-                                    Rectangle {
-                                        width: Math.min(760px, parent.width - 48px);
-                                        height: 130px;
-                                        vertical-stretch: 0;
-                                        y: 18px;
-                                        VerticalLayout {
-                                            spacing: 0px;
+                                    HorizontalLayout {
+                                        alignment: center;
+                                        Rectangle {
+                                            width: Math.min(760px, parent.width - 48px);
+                                            height: 130px;
+                                            vertical-stretch: 0;
+                                            y: 18px;
+                                            // The workspace tab is absolutely positioned so its
+                                            // bottom edge slips behind the composer card instead
+                                            // of stacking above it (prototype embedded-tab look).
                                             ComposerContextTab {
+                                                x: 20px;
+                                                y: 6px;
                                                 z: 2;
                                                 workspace-project: root.workspace-project;
                                                 workspace-path: root.workspace-short-path == "" ? root.setting-workspace : root.workspace-short-path;
@@ -820,6 +823,10 @@ export component WorkspacePanel inherits Rectangle {
                                                 // Keep the composer surface above the workspace badge.
                                                 // A menu's z value cannot escape its parent's stacking
                                                 // context, which previously let the badge cover it.
+                                                x: 0px;
+                                                y: 30px;
+                                                width: parent.width;
+                                                height: 100px;
                                                 z: 3;
                                                 border-radius: 16px;
                                                 background: Palette.white;
@@ -1364,7 +1371,6 @@ export component WorkspacePanel inherits Rectangle {
                                                     }
                                                 }
                                             }
-                                        }
                                         }
                                     }
                                     }
