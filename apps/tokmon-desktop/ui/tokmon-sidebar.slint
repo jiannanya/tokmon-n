@@ -100,15 +100,13 @@ export component SidebarPanel inherits HorizontalLayout {
                                 // the draggable spacer never reaches that button.
                                 Rectangle { width: 18px; horizontal-stretch: 0; }
                             }
+                            // Minimal solid card: no outer border, no shadow —
+                            // hover deepens the warm fill (prototype).
                             Rectangle {
                                 height: 42px;
                                 border-radius: 12px;
-                                background: Palette.accent-bg;
-                                border-width: 0.67px;
-                                border-color: Palette.accent-border;
-                                drop-shadow-color: Palette.shadow;
-                                drop-shadow-offset-y: 1px;
-                                drop-shadow-blur: 0px;
+                                background: new-chat-touch.has-hover ? Palette.new-chat-hover : Palette.new-chat;
+                                animate background { duration: 120ms; }
                                 HorizontalLayout {
                                     padding-left: 16px;
                                     padding-right: 16px;
@@ -124,20 +122,27 @@ export component SidebarPanel inherits HorizontalLayout {
                                         text: "新建会话";
                                         font-size: 13.5px;
                                         font-weight: 500;
-                                        color: Palette.accent-text;
+                                        color: Palette.new-chat-ink;
                                         vertical-alignment: center;
                                     }
                                 }
-                                TouchArea {
+                                new-chat-touch := TouchArea {
                                     clicked => { root.new-session() }
                                     mouse-cursor: pointer;
                                 }
                             }
                             Rectangle { height: 14px; }
+                            // Frameless search field: neutral warm fill, no hard
+                            // border; focusing fades to white with a soft accent
+                            // ring (prototype focus:ring-[#c86a28]/40).
                             Rectangle {
                                 height: 32px;
                                 border-radius: 12px;
-                                background: Palette.input-deep;
+                                background: search-input.has-focus ? Palette.white : Palette.pill;
+                                border-width: 1px;
+                                border-color: search-input.has-focus ? rgba(200, 106, 40, 0.4) : transparent;
+                                animate background { duration: 150ms; }
+                                animate border-color { duration: 150ms; }
                                 Image {
                                     source: Icons.search;
                                     x: 12px;
@@ -145,7 +150,7 @@ export component SidebarPanel inherits HorizontalLayout {
                                     width: 16px;
                                     height: 16px;
                                 }
-                                TextInput {
+                                search-input := TextInput {
                                     x: 36px;
                                     width: parent.width - 44px;
                                     height: parent.height;
@@ -322,13 +327,13 @@ export component SidebarPanel inherits HorizontalLayout {
                     y: 46px;
                     height: 0.67px;
                     width: parent.width;
-                    background: Palette.border;
+                    background: Palette.line-soft;
                 }
             }
             Rectangle {
                 visible: root.sidebar-visible;
                 width: root.sidebar-visible ? 1px : 0px;
-                background: sbt.has-hover || sbt.pressed ? Palette.accent : Palette.border;
+                background: sbt.has-hover || sbt.pressed ? Palette.accent : Palette.line-soft;
                 z: 10;
                 sbt := TouchArea {
                     x: -3px;

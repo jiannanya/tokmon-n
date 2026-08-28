@@ -265,6 +265,10 @@ export component MainWindow inherits Window {
     in property <int> workspace-indexed-files: 0;
     in property <bool> workspace-has-git: false;
     in-out property <bool> workspace-locked: false;
+    // True while a submitted turn is still running (thinking or streaming).
+    // Drives the composer stop button and the thinking animations.
+    in-out property <bool> generation-active: false;
+    in-out property <int> thinking-seconds: 0;
     in-out property <bool> environment-panel-open: false;
     in-out property <string> selected-file-name;
     in-out property <string> preview-search;
@@ -348,6 +352,7 @@ export component MainWindow inherits Window {
     in property <[string]> agent-models;
 
     callback send-message(string);
+    callback stop-generation();
     callback new-session();
     callback select-navigation(int);
     callback search-changed(string);
@@ -577,6 +582,9 @@ export component MainWindow inherits Window {
                 context-close-pending <=> root.context-close-pending;
                 trace-filter-open <=> root.trace-filter-open;
                 send-message(text) => { root.send-message(text); }
+                stop-generation => { root.stop-generation(); }
+                generation-active <=> root.generation-active;
+                thinking-seconds <=> root.thinking-seconds;
                 rename-session(title) => { root.rename-session(title); }
                 choose-attachment(dir) => { root.choose-attachment(dir) }
                 refresh-trace => { root.refresh-trace(); }

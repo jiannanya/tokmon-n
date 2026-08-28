@@ -17,6 +17,9 @@ public:
   virtual void backend_connected() = 0;
   virtual void chat(std::string text, std::string provider, std::string model,
                     std::string access_mode, std::string effort) = 0;
+  // User pressed the composer stop button: leave the generating presentation
+  // immediately and keep whatever content was already produced.
+  virtual void interrupt_generation() = 0;
   virtual void slash_command(std::string text, std::string provider,
                              std::string model, std::string access_mode,
                              std::string effort) = 0;

@@ -25,6 +25,74 @@ export component ToolIcon inherits Rectangle {
     }
 }
 
+// Rotating terracotta ring matching the prototype's `animate-spin` loader.
+// The whole ring image (faint track + bright 90° arc) spins around its center.
+export component SpinnerRing inherits Rectangle {
+    in property <length> ring-size: 12px;
+    in property <bool> active: true;
+    property <float> angle: 0;
+    width: root.ring-size;
+    height: root.ring-size;
+    Timer {
+        interval: 50ms;
+        running: root.active;
+        triggered => { root.angle = Math.mod(root.angle + 18.0, 360.0); }
+    }
+    Image {
+        source: Icons.spinner-ring;
+        width: root.ring-size;
+        height: root.ring-size;
+        x: 0px;
+        y: 0px;
+        transform-rotation: root.angle * 1deg;
+    }
+}
+
+// Three alternately bouncing accent dots — the prototype's `animate-bounce`
+// typing bubble shown while the reply has not started streaming yet.
+export component TypingWave inherits Rectangle {
+    in property <bool> active: true;
+    in property <color> dot-color: Palette.accent;
+    property <int> phase: 0;
+    height: 10px;
+    Timer {
+        interval: 160ms;
+        running: root.active;
+        triggered => { root.phase = Math.mod(root.phase + 1, 4); }
+    }
+    pure function offset(step: int) -> length {
+        Math.mod(step, 4) == 1 ? -4px : 0px
+    }
+    for dot[index] in [0, 1, 2] : Rectangle {
+        property <int> step: root.phase + index;
+        x: index * 12px;
+        y: (parent.height - 6px) / 2 + root.offset(self.step);
+        width: 6px;
+        height: 6px;
+        border-radius: 999px;
+        background: root.dot-color;
+        animate y { duration: 150ms; easing: ease-out; }
+    }
+}
+
+// Breathing block cursor appended to streaming text (`animate-pulse` ▌).
+export component PulseCursor inherits Rectangle {
+    in property <bool> active: true;
+    in property <length> cursor-height: 14px;
+    property <bool> lit: true;
+    width: 6px;
+    height: root.cursor-height;
+    border-radius: 1.5px;
+    background: Palette.accent;
+    opacity: root.lit ? 1.0 : 0.15;
+    animate opacity { duration: 320ms; }
+    Timer {
+        interval: 550ms;
+        running: root.active;
+        triggered => { root.lit = !root.lit; }
+    }
+}
+
 export component StatusDot inherits Rectangle {
     in property <string> tone: "neutral";
     width: 7px;
@@ -685,9 +753,14 @@ export component ChatBlockRow inherits VerticalLayout {
 
 // Collapsible chain-of-thought card shown above an assistant reply. Expanded
 // it presents the full reasoning text; collapsed it becomes a slim bar with a
-// one-line preview, mirroring the UI prototype's ThoughtProcessCard.
+// one-line preview, mirroring the UI prototype's ThoughtProcessCard. While the
+// turn is still running the card shows the terracotta spinner ring, the
+// "正在思考..." label with a live seconds counter, and trailing pulsing marks;
+// completion smoothly settles into the static "思考过程" state.
 export component ThoughtProcessCard inherits Rectangle {
     in property <string> content;
+    in property <bool> thinking: false;
+    in property <int> thinking-seconds: 0;
     in-out property <bool> expanded: true;
     border-radius: 12px;
     background: #F4F4F4;
@@ -695,6 +768,24 @@ export component ThoughtProcessCard inherits Rectangle {
     border-color: #E5E5E5;
     clip: true;
     vertical-stretch: 0;
+    // A plain Rectangle does not derive its preferred height from children in
+    // this Slint build (see LineSpacedText), so the height is computed from a
+    // hidden measurement of the reasoning text plus the fixed rows around it.
+    property <length> body-height: Math.max(19px, content-measure.preferred-height);
+    height: !root.expanded ? 27px
+        : 15px + 22px + 13px + root.body-height
+          + (root.thinking ? 13px + 14px : 0px) + 18px;
+
+    content-measure := Text {
+        x: 0px;
+        y: 0px;
+        width: Math.max(1px, root.width - 36px);
+        text: root.content;
+        font-size: 13px;
+        wrap: word-wrap;
+        opacity: 0;
+        accessible-role: none;
+    }
 
     if !root.expanded : Rectangle {
         height: 27px;
@@ -703,7 +794,11 @@ export component ThoughtProcessCard inherits Rectangle {
             padding-right: 10px;
             spacing: 8px;
             alignment: start;
-            Rectangle {
+            if root.thinking : SpinnerRing {
+                ring-size: 11px;
+                y: (parent.height - 11px) / 2;
+            }
+            if !root.thinking : Rectangle {
                 width: 6px;
                 height: 6px;
                 border-radius: 999px;
@@ -711,13 +806,33 @@ export component ThoughtProcessCard inherits Rectangle {
                 y: (parent.height - 6px) / 2;
             }
             Text {
-                horizontal-stretch: 1;
-                text: root.content == "" ? "思考过程" : root.content;
+                horizontal-stretch: 0;
+                text: root.thinking ? "正在思考..." : (root.content == "" ? "思考过程" : root.content);
                 font-size: 12px;
-                color: #8E8E93;
+                color: root.thinking ? Palette.accent : #8E8E93;
                 wrap: no-wrap;
                 overflow: elide;
                 vertical-alignment: center;
+            }
+            if root.thinking : Text {
+                text: root.thinking-seconds + "s";
+                font-family: "MiSans VF";
+                font-size: 11px;
+                color: Palette.accent;
+                vertical-alignment: center;
+            }
+            Rectangle {
+                horizontal-stretch: 1;
+                min-width: 0px;
+                Text {
+                    width: parent.width;
+                    text: root.thinking ? root.content : "";
+                    font-size: 12px;
+                    color: #8E8E93;
+                    wrap: no-wrap;
+                    overflow: elide;
+                    vertical-alignment: center;
+                }
             }
             Image {
                 source: Icons.chev-down;
@@ -743,7 +858,11 @@ export component ThoughtProcessCard inherits Rectangle {
             HorizontalLayout {
                 alignment: start;
                 spacing: 8px;
-                Rectangle {
+                if root.thinking : SpinnerRing {
+                    ring-size: 13px;
+                    y: (parent.height - 13px) / 2;
+                }
+                if !root.thinking : Rectangle {
                     width: 6px;
                     height: 6px;
                     border-radius: 999px;
@@ -751,11 +870,27 @@ export component ThoughtProcessCard inherits Rectangle {
                     y: (parent.height - 6px) / 2;
                 }
                 Text {
-                    text: "思考过程";
+                    text: root.thinking ? "正在思考..." : "思考过程";
                     font-size: 13.5px;
                     font-weight: 500;
-                    color: #262626;
+                    color: root.thinking ? Palette.accent : #262626;
                     vertical-alignment: center;
+                }
+                if root.thinking && root.thinking-seconds > 0 : Rectangle {
+                    border-radius: 4px;
+                    background: rgba(200, 106, 40, 0.1);
+                    HorizontalLayout {
+                        padding-left: 6px;
+                        padding-right: 6px;
+                        Text {
+                            text: root.thinking-seconds + "s";
+                            font-family: "MiSans VF";
+                            font-size: 11px;
+                            font-weight: 500;
+                            color: Palette.accent;
+                            vertical-alignment: center;
+                        }
+                    }
                 }
                 Rectangle { min-width: 0px; horizontal-stretch: 1; }
                 Image {
@@ -771,12 +906,42 @@ export component ThoughtProcessCard inherits Rectangle {
                 mouse-cursor: pointer;
             }
         }
-        Text {
+        if root.thinking && root.content == "" : HorizontalLayout {
+            height: 19px;
+            spacing: 8px;
+            alignment: start;
+            Rectangle {
+                width: 6px;
+                height: 6px;
+                border-radius: 999px;
+                background: Palette.accent;
+                opacity: pulse ? 1.0 : 0.25;
+                animate opacity { duration: 400ms; }
+                property <bool> pulse: true;
+                Timer {
+                    interval: 550ms;
+                    running: true;
+                    triggered => { parent.pulse = !parent.pulse; }
+                }
+                y: (parent.height - 6px) / 2;
+            }
+            Text {
+                text: "分析任务意图与工作空间上下文...";
+                font-size: 12.5px;
+                color: #A8A29E;
+                vertical-alignment: center;
+            }
+        }
+        if root.content != "" : Text {
             text: root.content;
             font-size: 13px;
             color: #4B5563;
             wrap: word-wrap;
             overflow: elide;
+        }
+        if root.thinking : PulseCursor {
+            active: true;
+            cursor-height: 14px;
         }
     }
 }

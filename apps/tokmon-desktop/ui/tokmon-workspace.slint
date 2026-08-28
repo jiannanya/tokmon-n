@@ -1,7 +1,7 @@
 import { LineEdit, ScrollView } from "std-widgets.slint";
 import { ModelChoice, TimelineItem, SlashCommandItem, ProjectFile, GanttSegment, TraceEvent, ChatBlock } from "tokmon-models.slint";
 import { Palette, Icons } from "tokmon-theme.slint";
-import { ToolIcon, MenuOption, WorkflowStepRow, ThoughtProcessCard, ChatBlockRow, LineSpacedText } from "tokmon-components.slint";
+import { ToolIcon, MenuOption, WorkflowStepRow, ThoughtProcessCard, ChatBlockRow, LineSpacedText, TypingWave, PulseCursor } from "tokmon-components.slint";
 import { TrajectoryPanel } from "tokmon-trajectory.slint";
 import { EnvironmentPanel } from "tokmon-environment-panel.slint";
 import { SessionEmptyState, ComposerContextTab } from "tokmon-session-initial.slint";
@@ -86,10 +86,27 @@ export component WorkspacePanel inherits Rectangle {
     in-out property <bool> context-card-hover;
     in-out property <bool> context-close-pending;
     in-out property <bool> trace-filter-open;
+    // Live turn state driven by the controller: true from message submit until
+    // the response photons land (or the user presses stop). While active the
+    // composer shows the stop button and the chat shows the thinking visuals.
+    in property <bool> generation-active;
+    in-out property <int> thinking-seconds;
     property <length> environment-button-x: -1px;
     property <length> environment-button-y: 48px;
 
+    // Prototype phases: "thinking" until assistant content exists, then the
+    // reply is streaming in. The seconds counter runs only while thinking.
+    property <bool> thinking: root.generation-active
+        && root.assistant-text == "" && root.assistant-blocks.length == 0;
+
+    Timer {
+        interval: 1s;
+        running: root.thinking;
+        triggered => { root.thinking-seconds += 1; }
+    }
+
     callback send-message(string);
+    callback stop-generation();
     callback slash-query-changed(string);
     callback rename-session(string);
     callback choose-attachment(bool) -> string;
@@ -354,6 +371,69 @@ export component WorkspacePanel inherits Rectangle {
                                 clicked => { root.begin-title-edit(); }
                             }
                         }
+                        // Integrated capsule switcher: the former full-width
+                        // 对话/轨迹 tab row merged into the header as a compact
+                        // segmented control (prototype redesign).
+                        Rectangle {
+                            width: 12px;
+                            horizontal-stretch: 0;
+                        }
+                        mode-switch := Rectangle {
+                            height: 24px;
+                            border-radius: 8px;
+                            background: Palette.pill;
+                            horizontal-stretch: 0;
+                            animate background { duration: 120ms; }
+                            HorizontalLayout {
+                                padding-left: 2px;
+                                padding-right: 2px;
+                                padding-top: 2px;
+                                padding-bottom: 2px;
+                                spacing: 0px;
+                                Rectangle {
+                                    width: chat-mode-label.preferred-width + 20px;
+                                    border-radius: 6px;
+                                    background: !root.trajectory-selected ? Palette.white : transparent;
+                                    drop-shadow-color: !root.trajectory-selected ? rgba(0, 0, 0, 0.08) : transparent;
+                                    drop-shadow-offset-y: 1px;
+                                    drop-shadow-blur: 0px;
+                                    animate background { duration: 120ms; }
+                                    chat-mode-label := Text {
+                                        text: "对话";
+                                        font-size: 12px;
+                                        font-weight: !root.trajectory-selected ? 600 : 500;
+                                        color: !root.trajectory-selected ? Palette.ink : Palette.dim;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                    TouchArea {
+                                        clicked => { root.trajectory-selected = false; root.return-focus(); }
+                                        mouse-cursor: pointer;
+                                    }
+                                }
+                                Rectangle {
+                                    width: trace-mode-label.preferred-width + 20px;
+                                    border-radius: 6px;
+                                    background: root.trajectory-selected ? Palette.white : transparent;
+                                    drop-shadow-color: root.trajectory-selected ? rgba(0, 0, 0, 0.08) : transparent;
+                                    drop-shadow-offset-y: 1px;
+                                    drop-shadow-blur: 0px;
+                                    animate background { duration: 120ms; }
+                                    trace-mode-label := Text {
+                                        text: "轨迹";
+                                        font-size: 12px;
+                                        font-weight: root.trajectory-selected ? 600 : 500;
+                                        color: root.trajectory-selected ? Palette.ink : Palette.dim;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                    TouchArea {
+                                        clicked => { root.trajectory-selected = true; root.return-focus(); }
+                                        mouse-cursor: pointer;
+                                    }
+                                }
+                            }
+                        }
                         // This is a real layout spacer, not an overlay. Therefore
                         // its TouchArea can only receive events from the visible
                         // blank space between the title controls and window buttons.
@@ -428,68 +508,20 @@ export component WorkspacePanel inherits Rectangle {
                                 mouse-cursor: pointer;
                             }
                         }
-                    }
-                    Rectangle {
-                        height: 38px;
-                        background: Palette.tabbar;
-                        HorizontalLayout {
-                            padding-left: 24px;
-                            spacing: 24px;
-                            alignment: start;
-                            Rectangle {
-                                width: t1.width + 2px;
-                                horizontal-stretch: 0;
-                                t1 := Text {
-                                    y: (parent.height - self.preferred-height) / 2;
-                                    text: "对话";
-                                    font-size: 13.5px;
-                                    font-weight: root.trajectory-selected ? 500 : 700;
-                                    color: root.trajectory-selected ? Palette.dim : Palette.accent-text;
-                                }
-                                Rectangle {
-                                    y: parent.height - 2px;
-                                    height: 2px;
-                                    width: parent.width;
-                                    background: root.trajectory-selected ? transparent : Palette.accent;
-                                }
-                                TouchArea {
-                                    clicked => { root.trajectory-selected = false; root.return-focus(); }
-                                    mouse-cursor: pointer;
-                                }
-                            }
-                            Rectangle {
-                                width: t2.width + 2px;
-                                horizontal-stretch: 0;
-                                t2 := Text {
-                                    y: (parent.height - self.preferred-height) / 2;
-                                    text: "轨迹";
-                                    font-size: 13.5px;
-                                    font-weight: root.trajectory-selected ? 700 : 500;
-                                    color: root.trajectory-selected ? Palette.accent-text : Palette.dim;
-                                }
-                                Rectangle {
-                                    y: parent.height - 2px;
-                                    height: 2px;
-                                    width: parent.width;
-                                    background: root.trajectory-selected ? Palette.accent : transparent;
-                                }
-                                TouchArea {
-                                    clicked => { root.trajectory-selected = true; root.return-focus(); }
-                                    mouse-cursor: pointer;
-                                }
-                            }
-                        }
+                        // Soft header hairline (border-[#e7e5e4]/60) — the only
+                        // horizontal divider left in the middle column after the
+                        // tab row merged into the header.
                         Rectangle {
                             y: parent.height - 0.67px;
                             height: 0.67px;
                             width: parent.width;
-                            background: Palette.tab-line;
+                            background: Palette.line-soft;
                         }
                     }
-                    Rectangle {
-                        vertical-stretch: 1;
-                        clip: true;
-                        if !root.trajectory-selected : Rectangle {
+                Rectangle {
+                    vertical-stretch: 1;
+                    clip: true;
+                    if !root.trajectory-selected : Rectangle {
                             width: parent.width;
                             height: parent.height;
                             if root.chat-empty : SessionEmptyState {
@@ -553,8 +585,10 @@ export component WorkspacePanel inherits Rectangle {
                                             }
                                         }
                                     }
-                                    if root.thought-text != "" : ThoughtProcessCard {
+                                    if root.thought-text != "" || root.thinking : ThoughtProcessCard {
                                         content: root.thought-text;
+                                        thinking: root.thinking;
+                                        thinking-seconds: root.thinking-seconds;
                                     }
                                     if root.assistant-blocks.length > 0 : VerticalLayout {
                                         spacing: 6px;
@@ -569,6 +603,38 @@ export component WorkspacePanel inherits Rectangle {
                                         text-weight: 400;
                                         text-color: Palette.body;
                                         line-gap: 4px;
+                                    }
+                                    // Waiting bubble while the turn is running but
+                                    // no reply text has streamed in yet (prototype
+                                    // red box 2): three bouncing accent dots.
+                                    if root.thinking : HorizontalLayout {
+                                        alignment: start;
+                                        vertical-stretch: 0;
+                                        Rectangle {
+                                            border-radius: 12px;
+                                            background: #F4F4F4;
+                                            border-width: 0.67px;
+                                            border-color: Palette.line-faint;
+                                            HorizontalLayout {
+                                                padding-left: 14px;
+                                                padding-right: 14px;
+                                                padding-top: 9px;
+                                                padding-bottom: 9px;
+                                                TypingWave {
+                                                    active: true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    // Breathing typewriter cursor while reply
+                                    // content streams in.
+                                    if root.generation-active && !root.thinking : HorizontalLayout {
+                                        alignment: start;
+                                        vertical-stretch: 0;
+                                        PulseCursor {
+                                            active: true;
+                                            cursor-height: 16px;
+                                        }
                                     }
                                     if root.conversation-workflow.length > 0 : Rectangle {
                                         border-radius: 12px;
@@ -749,12 +815,15 @@ export component WorkspacePanel inherits Rectangle {
                                                 z: 3;
                                                 border-radius: 16px;
                                                 background: Palette.white;
+                                                // Floating card: faint micro border plus a
+                                                // diffuse ambient shadow instead of the hard
+                                                // full-width top edge (prototype redesign).
                                                 border-width: 0.67px;
-                                                border-color: Palette.border;
-                                                drop-shadow-color: rgba(0, 0, 0, 0.1);
-                                                drop-shadow-offset-y: 8px;
+                                                border-color: Palette.card-line;
+                                                drop-shadow-color: rgba(0, 0, 0, 0.05);
+                                                drop-shadow-offset-y: 4px;
                                                 drop-shadow-offset-x: 0px;
-                                                drop-shadow-blur: 14px;
+                                                drop-shadow-blur: 20px;
                                                 VerticalLayout {
                                                     padding: 12px;
                                                     Rectangle {
@@ -767,7 +836,7 @@ export component WorkspacePanel inherits Rectangle {
                                                             font-size: 13.5px;
                                                             color: Palette.body;
                                                             accepted => {
-                                                                if root.composer-text != "" {
+                                                                if root.composer-text != "" && !root.generation-active {
                                                                     root.send-message(root.composer-text);
                                                                     root.composer-text = "";
                                                                     root.return-focus();
@@ -917,11 +986,52 @@ export component WorkspacePanel inherits Rectangle {
                                                             mouse-cursor: pointer;
                                                         }
                                                     }
-                                                    Rectangle {
+                                                    // Send / Stop toggle: while the turn
+                                                    // runs the button becomes a breathing
+                                                    // black square that interrupts the
+                                                    // request; afterwards it reverts to
+                                                    // the send arrow.
+                                                    if root.generation-active : Rectangle {
                                                         width: 28px;
                                                         height: 28px;
                                                         border-radius: 12px;
-                                                        background: root.composer-text == "" ? Palette.bar-gray : Palette.accent;
+                                                        background: stop-touch.has-hover ? #B91C1C : Palette.ink;
+                                                        drop-shadow-color: Palette.shadow;
+                                                        drop-shadow-offset-y: 1px;
+                                                        drop-shadow-blur: 2px;
+                                                        Rectangle {
+                                                            property <bool> glow-lit: true;
+                                                            width: parent.width;
+                                                            height: parent.height;
+                                                            border-radius: 12px;
+                                                            border-width: 1px;
+                                                            border-color: glow-lit ? rgba(255, 255, 255, 0.45) : rgba(255, 255, 255, 0.12);
+                                                            animate border-color { duration: 700ms; }
+                                                            Timer {
+                                                                interval: 900ms;
+                                                                running: true;
+                                                                triggered => { parent.glow-lit = !parent.glow-lit; }
+                                                            }
+                                                        }
+                                                        Rectangle {
+                                                            width: 9px;
+                                                            height: 9px;
+                                                            border-radius: 2px;
+                                                            background: Palette.white;
+                                                            x: (parent.width - 9px) / 2;
+                                                            y: (parent.height - 9px) / 2;
+                                                        }
+                                                        stop-touch := TouchArea {
+                                                            clicked => { root.stop-generation(); }
+                                                            mouse-cursor: pointer;
+                                                        }
+                                                    }
+                                                    if !root.generation-active : Rectangle {
+                                                        width: 28px;
+                                                        height: 28px;
+                                                        border-radius: 12px;
+                                                        background: root.composer-text == "" ? #E5E5E5
+                                                            : (send-touch.has-hover ? #2C2724 : Palette.ink);
                                                         drop-shadow-color: Palette.shadow;
                                                         drop-shadow-offset-y: 1px;
                                                         drop-shadow-blur: 2px;
@@ -931,8 +1041,9 @@ export component WorkspacePanel inherits Rectangle {
                                                             height: 16px;
                                                             x: (parent.width - 16px) / 2;
                                                             y: (parent.height - 16px) / 2;
+                                                            opacity: root.composer-text == "" ? 0.35 : 1.0;
                                                         }
-                                                        TouchArea {
+                                                        send-touch := TouchArea {
                                                             clicked => {
                                                                 root.close-composer-popups();
                                                                 if root.composer-text != "" {

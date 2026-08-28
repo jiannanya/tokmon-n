@@ -364,6 +364,8 @@ int run_application(int argc, char **argv) {
     window->set_last_message(text);
     window->set_assistant_text("");
     window->set_thought_text("");
+    window->set_thinking_seconds(0);
+    window->set_generation_active(true);
     window->set_status_text("正在提交请求");
     window->set_chat_empty(false);
     window->set_workspace_locked(true);
@@ -384,6 +386,9 @@ int run_application(int argc, char **argv) {
       // chat response, then the silent rename can persist either its automatic
       // or already-manual title there.
       controller->rename_session(std::move(*first_message_title));
+  });
+  window->on_stop_generation([&controller] {
+    controller->interrupt_generation();
   });
   window->on_new_session([navigation_state, window, navigation_workspace] {
     std::size_t project = navigation_state->size();

@@ -46,7 +46,7 @@ export component CodePanelSlot inherits Rectangle {
                     x: 0px;
                     width: 1px;
                     height: parent.height;
-                    background: cpt.has-hover || cpt.pressed ? Palette.accent : Palette.border;
+                    background: cpt.has-hover || cpt.pressed ? Palette.accent : Palette.line-soft;
                     cpt := TouchArea {
                         x: -3px;
                         width: 7px;
@@ -66,7 +66,9 @@ export component CodePanelSlot inherits Rectangle {
                     width: root.code-panel-width;
                     height: parent.height;
                     clip: true;
-                    background: Palette.white;
+                    // Same surface tone as the middle column so the rail does
+                    // not read as a different-colored panel.
+                    background: Palette.surface;
                 VerticalLayout {
                     Rectangle {
                         height: 46px;
@@ -165,7 +167,7 @@ export component CodePanelSlot inherits Rectangle {
                             y: parent.height - 0.67px;
                             width: parent.width;
                             height: 0.67px;
-                            background: Palette.hairline;
+                            background: Palette.line-soft;
                         }
                     }
                     if !root.file-preview-selected : Rectangle {
@@ -183,7 +185,7 @@ export component CodePanelSlot inherits Rectangle {
                                     border-radius: 6px;
                                     background: Palette.white;
                                     border-width: 0.67px;
-                                    border-color: Palette.border;
+                                    border-color: Palette.line-faint;
                                     HorizontalLayout {
                                         padding-left: 8px;
                                         padding-right: 8px;
@@ -261,12 +263,6 @@ export component CodePanelSlot inherits Rectangle {
                                 alignment: end;
                                 ToolIcon { source: Icons.download; icon-size: 13px; clicked => { root.reconcile() } }
                             }
-                        }
-                        Rectangle {
-                            y: parent.height - 0.67px;
-                            height: 0.67px;
-                            width: parent.width;
-                            background: Palette.sep;
                         }
                     }
                     if !root.file-preview-selected : ListView {
@@ -355,12 +351,16 @@ export component CodePanelSlot inherits Rectangle {
                                     }
                                 }
                             }
+                            // Frameless filter field matching the sidebar search:
+                            // warm fill, no border, soft focus glow.
                             Rectangle {
                                 height: 28px;
                                 border-radius: 8px;
-                                background: Palette.input;
-                                border-width: 0.67px;
-                                border-color: Palette.border;
+                                background: preview-q.has-focus ? Palette.white : Palette.pill;
+                                border-width: 1px;
+                                border-color: preview-q.has-focus ? rgba(200, 106, 40, 0.4) : transparent;
+                                animate background { duration: 150ms; }
+                                animate border-color { duration: 150ms; }
                                 Image {
                                     source: Icons.search;
                                     x: 9px;
@@ -395,9 +395,9 @@ export component CodePanelSlot inherits Rectangle {
                                     for line in root.preview-lines : Rectangle {
                                         height: text-item.preferred-height + 16px;
                                         border-radius: 10px;
-                                        background: Palette.surface;
+                                        background: Palette.white;
                                         border-width: 0.67px;
-                                        border-color: Palette.border;
+                                        border-color: Palette.line-faint;
                                         VerticalLayout {
                                             padding-left: 10px;
                                             padding-right: 10px;
@@ -440,7 +440,7 @@ export component CodePanelSlot inherits Rectangle {
                             y: 0px;
                             height: 0.67px;
                             width: parent.width;
-                            background: Palette.border;
+                            background: Palette.line-faint;
                         }
                         HorizontalLayout {
                             padding-left: 12px;

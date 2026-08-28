@@ -1,6 +1,7 @@
 #include "ui_controller.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <condition_variable>
@@ -74,6 +75,7 @@ public:
 
   void chat(std::string text, std::string provider, std::string model,
             std::string access_mode, std::string effort) {
+    generation_interrupted_ = false;
     Command command{"chat", std::move(text)};
     command.payload =
         tokmon::cbor::object({{"provider", std::move(provider)},
@@ -84,6 +86,7 @@ public:
   }
   void slash_command(std::string text, std::string provider, std::string model,
                      std::string access_mode, std::string effort) {
+    generation_interrupted_ = false;
     Command command{"slash-command", std::move(text)};
     command.payload =
         tokmon::cbor::object({{"provider", std::move(provider)},
@@ -700,8 +703,43 @@ private:
             handle->set_status_text("正在提交请求");
             handle->set_chat_empty(false);
             handle->set_workspace_locked(true);
+            handle->set_generation_active(true);
           }
         });
+  }
+
+  // Marks the running turn as interrupted by the user: the UI leaves the
+  // generating presentation immediately while already-generated content is
+  // kept, mirroring the prototype's stop button.
+  void interrupt_generation() {
+    generation_interrupted_ = true;
+    auto window = window_;
+    (void)slint::invoke_from_event_loop([window] {
+      if (auto locked = window.lock()) {
+        auto handle = *locked;
+        handle->set_generation_active(false);
+        handle->set_workspace_locked(false);
+        handle->set_status_text("已停止生成");
+      }
+    });
+  }
+
+  // Ends the generating presentation once a turn's request round-trip is over
+  // (completed, failed, or interrupted). Runs even when no photon publish
+  // happened so the composer always reverts to the send button.
+  void finish_generation_ui() {
+    const bool interrupted = generation_interrupted_.exchange(false);
+    auto window = window_;
+    (void)slint::invoke_from_event_loop([window, interrupted] {
+      if (auto locked = window.lock()) {
+        auto handle = *locked;
+        handle->set_generation_active(false);
+        if (interrupted) {
+          handle->set_workspace_locked(false);
+          handle->set_status_text("已停止生成");
+        }
+      }
+    });
   }
 
   void bind_active_ray_to_selected_session() {
@@ -978,8 +1016,10 @@ private:
         }
     auto chat_block_items =
         chat_blocks_from(assistant.empty() ? std::string{} : assistant);
+    const bool interrupted = generation_interrupted_.load(
+        std::memory_order_relaxed);
     (void)slint::invoke_from_event_loop(
-        [timeline, workflow, blocks = assistant_blocks_, code, window,
+        [timeline, workflow, blocks = assistant_blocks_, code, window, interrupted,
          items = std::move(items),
          workflow_items = std::move(workflow_items), lines = std::move(lines),
          trace, assistant = std::move(assistant),
@@ -1008,7 +1048,15 @@ private:
             handle->set_status_text(display_string(state));
             handle->set_chat_empty(items.empty() && workflow_items.empty() &&
                                    assistant.empty());
-            if (!user_message.empty())
+            // A turn is over once the workflow card completes, the assistant
+            // answered or the failure surfaced; a user stop pins the idle
+            // presentation even while late photons for the turn still arrive.
+            const bool turn_done =
+                workflow_complete || state == "审阅完成" || state == "执行失败";
+            handle->set_generation_active(!turn_done && !interrupted);
+            if (interrupted)
+              handle->set_workspace_locked(false);
+            else if (!user_message.empty())
               handle->set_workspace_locked(true);
             handle->set_chat_time(display_string(current_turn_time));
             handle->set_trace_duration(display_string(trace.duration));
@@ -1678,6 +1726,8 @@ private:
           last_error_ = message;
           show_error(message);
         }
+        if (command.kind == "chat" || command.kind == "slash-command")
+          finish_generation_ui();
         if (command.kind == "settings-load") {
           const auto *include =
               tokmon::cbor::find(command.payload, "include_navigation");
@@ -1709,6 +1759,8 @@ private:
           last_error_ = error_message;
           show_error(error_message);
         }
+        if (command.kind == "chat" || command.kind == "slash-command")
+          finish_generation_ui();
         if (command.kind == "settings-load") {
           const auto *include =
               tokmon::cbor::find(command.payload, "include_navigation");
@@ -1855,6 +1907,8 @@ private:
             apply_photons(std::move(active), true);
         }
       }
+      if (command.kind == "chat" || command.kind == "slash-command")
+        finish_generation_ui();
     }
   }
 
@@ -1890,6 +1944,9 @@ private:
   tokmon::RayId active_ray_;
   std::vector<tokmon::Photon> photons_;
   std::string last_error_;
+  // Set by the composer stop button; observed by photon publishes and cleared
+  // when the turn's request round-trip ends or a new turn is submitted.
+  std::atomic<bool> generation_interrupted_{false};
   std::chrono::steady_clock::time_point last_config_validation_{};
   std::jthread worker_;
 };
