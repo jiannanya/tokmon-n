@@ -80,11 +80,13 @@ void RightPanelController::refresh() {
       std::scoped_lock lock(mutex_);
       panel_.set_workspace(workspace_);
       panel_.refresh();
-      if (selected_file_.empty()) {
-        const auto files = panel_.review_files();
-        if (!files.empty())
-          selected_file_ = std::string(files.front().id);
-      }
+      const auto files = panel_.review_files();
+      const auto selected = std::ranges::find(
+          files, selected_file_,
+          [](const ReviewFile &file) { return std::string(file.id); });
+      if (selected == files.end())
+        selected_file_ = files.empty() ? std::string{}
+                                       : std::string(files.front().id);
     }
     // Every publish re-applies the active filters, so no separate model
     // assembly is needed here.
@@ -143,9 +145,9 @@ void RightPanelController::publish_review() {
   }
   const auto summary =
       files.empty() ? std::string("工作区没有待提交的更改")
-                    : "工作区共 " + std::to_string(files.size()) +
-                          " 个文件发生变更 (+" + std::to_string(total_added) +
-                          " -" + std::to_string(total_removed) + ")";
+                    : "已暂存 " + std::to_string(files.size()) + " 个文件 (+" +
+                          std::to_string(total_added) + " -" +
+                          std::to_string(total_removed) + ")";
   auto window = window_;
   auto branches_model = make_string_model(branches);
   auto files_model = std::make_shared<slint::VectorModel<ReviewFile>>();
@@ -160,20 +162,15 @@ void RightPanelController::publish_review() {
     return std::string(file.path);
   });
   std::string previous_folder;
-  int review_list_height = 0;
   for (auto &file : visible_files) {
     const auto folder = std::string(file.display_folder);
     file.show_folder = folder != previous_folder;
     previous_folder = folder;
-    if (review_list_height > 0)
-      review_list_height += 4;
-    review_list_height += file.show_folder ? 42 : 26;
     files_model->push_back(std::move(file));
   }
   (void)slint::invoke_from_event_loop(
       [window, branches_model, files_model, branch, selected, selected_path,
-       file_added, file_removed, total_added, total_removed,
-       review_list_height, summary] {
+       file_added, file_removed, total_added, total_removed, summary] {
         if (auto locked = window.lock()) {
           auto handle = *locked;
           handle->set_branch_options(branches_model);
@@ -181,7 +178,6 @@ void RightPanelController::publish_review() {
           handle->set_review_files(files_model);
           handle->set_review_added(total_added);
           handle->set_review_removed(total_removed);
-          handle->set_review_list_height(review_list_height);
           handle->set_selected_review_file_id(slint::SharedString(selected));
           handle->set_selected_review_path(slint::SharedString(selected_path));
           handle->set_selected_review_added(file_added);
@@ -206,16 +202,31 @@ void RightPanelController::publish_diff() {
       lines = panel_.diff_lines(selected);
     }
     const auto width = estimate_width(lines);
+    // Unified-mode scroll height: regular rows are 20px, hunk banner rows
+    // 40px (`td py-1` + `py-1 my-0.5` pill), plus the 8px padding above and
+    // below. Split-mode cells breathe with `py-0.5`, adding 4px per
+    // non-banner row on top of the unified height.
+    float height = 16.0f;
+    float split_extra = 0.0f;
+    for (const auto &line : lines) {
+      const bool banner = std::string(line.kind) == "banner";
+      height += banner ? 40.0f : 20.0f;
+      if (!banner)
+        split_extra += 4.0f;
+    }
     auto window = window_;
     auto model = std::make_shared<slint::VectorModel<DiffLine>>();
     for (auto &line : lines)
       model->push_back(std::move(line));
-    (void)slint::invoke_from_event_loop([window, model, width] {
-      if (auto locked = window.lock()) {
-        (*locked)->set_diff_lines(model);
-        (*locked)->set_diff_content_width(width);
-      }
-    });
+    (void)slint::invoke_from_event_loop(
+        [window, model, width, height, split_extra] {
+          if (auto locked = window.lock()) {
+            (*locked)->set_diff_lines(model);
+            (*locked)->set_diff_content_width(width);
+            (*locked)->set_diff_content_height(height);
+            (*locked)->set_diff_split_extra(split_extra);
+          }
+        });
   });
 }
 
@@ -227,7 +238,7 @@ void RightPanelController::publish_tree() {
     std::scoped_lock lock(mutex_);
     items = panel_.tree_items();
     filter = tree_filter_;
-    workspace = workspace_;
+    workspace = panel_.workspace().empty() ? workspace_ : panel_.workspace();
   }
   // `tree_view_paths_` mirrors the filtered model so a later click resolves to
   // the entry the user actually saw.
@@ -432,8 +443,10 @@ void RightPanelController::commit_and_push(std::string message, bool push) {
   run_async([this, message, push] {
     bool ok = false;
     std::string error;
+    std::string branch;
     {
       std::scoped_lock lock(mutex_);
+      branch = panel_.branch();
       ok = panel_.stage_all() && panel_.commit(message);
       if (!ok)
         error = panel_.last_error();
@@ -445,7 +458,7 @@ void RightPanelController::commit_and_push(std::string message, bool push) {
     }
     if (ok) {
       refresh();
-      toast(push ? "✓ 已成功提交并推送到远程仓库！"
+      toast(push ? "✓ 已成功提交并推送到远程 origin/" + branch + "!"
                  : "✓ 已成功提交到本地仓库！");
     } else {
       toast("提交失败：" + (error.empty() ? "git commit 返回非零状态" : error));
@@ -464,9 +477,18 @@ void RightPanelController::reveal_in_explorer() {
       selected_path = std::string(file.path);
       break;
     }
-    target = selected_path.empty() ? workspace_ : workspace_ / selected_path;
+    const auto root = panel_.workspace().empty() ? workspace_ : panel_.workspace();
+    target = selected_path.empty() ? root : root / selected_path;
   }
-  const auto ok = reveal_path_in_file_manager(target);
+  // explorer /select, only accepts native backslash paths; git status paths
+  // use forward slashes.
+  std::error_code error;
+  auto native = std::filesystem::absolute(target, error);
+  if (!error)
+    native = native.make_preferred();
+  else
+    native = target.make_preferred();
+  const auto ok = reveal_path_in_file_manager(native);
   toast(ok ? "已在文件管理器中定位" : "无法在文件管理器中定位该文件");
 }
 

@@ -227,7 +227,30 @@ std::string name_of(const std::string &path) {
 } // namespace
 
 void ReviewPanel::set_workspace(std::filesystem::path workspace) {
-  workspace_ = std::move(workspace);
+  // Git's porcelain output is rooted at the repository, even when the process
+  // starts in a nested build/output directory. Pathspecs, on the other hand,
+  // are interpreted relative to the process working directory. Keeping the
+  // nested directory here therefore produces a valid changed-file list whose
+  // subsequent `git diff -- <repo-relative path>` is always empty. Resolve the
+  // repository root once and use it consistently for status, diffs, the tree,
+  // and Explorer reveal operations.
+  std::error_code error;
+  auto normalized = std::filesystem::absolute(workspace, error);
+  if (error)
+    normalized = std::move(workspace);
+  else
+    normalized = normalized.lexically_normal();
+
+  const auto root = run_process(normalized, "git rev-parse --show-toplevel");
+  if (root.launched && root.exit_code == 0) {
+    const auto root_text = trim(root.text);
+    if (!root_text.empty()) {
+      const auto candidate = path_from_utf8(root_text);
+      if (std::filesystem::is_directory(candidate, error) && !error)
+        normalized = candidate.lexically_normal();
+    }
+  }
+  workspace_ = std::move(normalized);
   diffs_.clear();
   files_.clear();
   branches_.clear();
@@ -399,7 +422,8 @@ void ReviewPanel::parse_file_diff(const std::string &file_id) {
       diff.hunks.push_back(std::move(hunk));
   };
 
-  const auto command = "git diff HEAD -- " + quote_argument(file_id);
+  const auto command =
+      "git diff --no-color --no-ext-diff HEAD -- " + quote_argument(file_id);
   const auto output = run_process(workspace_, command);
   if (!output.launched || output.exit_code != 0 || output.text.empty()) {
     // Untracked files have no diff against HEAD; show their content as adds.
@@ -785,18 +809,43 @@ bool reveal_path_in_file_manager(const std::filesystem::path &path) {
   if (path.empty())
     return false;
   std::error_code error;
-  if (!std::filesystem::exists(path, error))
-    return false;
 #ifdef _WIN32
-  // `explorer /select,<file>` opens the containing folder with the entry
-  // highlighted, which is exactly the prototype's "locate in Explorer".
-  const auto argument = "/select," + path_to_utf8(path);
-  const auto wide_argument = to_wide(argument);
+  auto target = std::filesystem::absolute(path, error);
+  if (error)
+    target = path;
+  target = target.lexically_normal().make_preferred();
+
+  // Deleted review entries no longer exist. In that case open their nearest
+  // existing parent instead of reporting a misleading locate failure.
+  const bool exists = std::filesystem::exists(target, error) && !error;
+  if (!exists) {
+    auto parent = target.parent_path();
+    while (!parent.empty() &&
+           !std::filesystem::exists(parent, error))
+      parent = parent.parent_path();
+    if (parent.empty())
+      return false;
+    const auto result = reinterpret_cast<INT_PTR>(ShellExecuteW(
+        nullptr, L"open", parent.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
+    return result > 32;
+  }
+
+  if (std::filesystem::is_directory(target, error) && !error) {
+    const auto result = reinterpret_cast<INT_PTR>(ShellExecuteW(
+        nullptr, L"open", target.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
+    return result > 32;
+  }
+
+  // Quote the native path: explorer otherwise splits paths containing spaces
+  // and silently selects an unrelated location.
+  const auto wide_argument = L"/select,\"" + target.native() + L"\"";
   const auto result = reinterpret_cast<INT_PTR>(ShellExecuteW(
       nullptr, L"open", L"explorer.exe", wide_argument.c_str(), nullptr,
       SW_SHOWNORMAL));
   return result > 32;
 #else
+  if (!std::filesystem::exists(path, error))
+    return false;
   return false;
 #endif
 }

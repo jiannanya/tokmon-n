@@ -3,38 +3,41 @@ import { Palette, Icons } from "tokmon-theme.slint";
 import { ReviewFile, DiffLine, TreeItem, RightTab } from "tokmon-models.slint";
 import { ToolIcon, MenuOption } from "tokmon-components.slint";
 
-// A single row of the unified (inline) diff. Every row keeps one fixed height
-// so the scroll viewport can measure long files cheaply.
+// A single row of the unified (inline) diff. Regular rows keep one fixed
+// height; banner rows reproduce the prototype's `td py-1` + `py-1 my-0.5`
+// pill: 4px gap, 28px pill, 4px gap.
 component UnifiedDiffRow inherits Rectangle {
     in property <DiffLine> line;
     callback toggle-hunk(string);
 
-    height: 20px;
+    height: root.line.kind == "banner" ? 40px : 20px;
     background: root.line.kind == "delete" ? Palette.diff-del-bg
         : root.line.kind == "add" ? Palette.diff-add-bg : transparent;
 
     if root.line.kind == "banner" : Rectangle {
-        x: 8px;
-        y: 2px;
-        width: parent.width - 16px;
-        height: 16px;
-        border-radius: 6px;
+        y: 6px;
+        width: parent.width;
+        height: 28px;
+        border-radius: 8px;
         background: banner-touch.has-hover ? #EAEAEA : Palette.diff-banner-bg;
         border-width: 1px;
         border-color: Palette.diff-banner-line;
         HorizontalLayout {
             padding-left: 16px;
-            padding-right: 12px;
+            padding-right: 16px;
             alignment: space-between;
             Text {
                 text: root.line.banner;
                 font-family: "MiSans VF";
-                font-size: 11px;
+                font-size: 11.5px;
                 color: Palette.dim;
+                overflow: elide;
                 vertical-alignment: center;
             }
             Text {
-                text: root.line.hunk == "expanded" ? "点击折叠" : "点击展开上下文";
+                // The C++ projection stores the action hint ("点击折叠" /
+                // "点击展开上下文") in `text`; fall back for safety.
+                text: root.line.text == "" ? "点击展开上下文" : root.line.text;
                 font-size: 10px;
                 color: Palette.faint;
                 vertical-alignment: center;
@@ -55,7 +58,7 @@ component UnifiedDiffRow inherits Rectangle {
                 : root.line.kind == "add" ? Palette.diff-add-num-bg : transparent;
             Text {
                 x: 0px;
-                width: 40px;
+                width: 36px;
                 height: parent.height;
                 text: root.line.kind == "add" ? root.line.new-num : root.line.old-num;
                 font-family: "MiSans VF";
@@ -91,18 +94,20 @@ component UnifiedDiffRow inherits Rectangle {
 }
 
 // A single row of the side-by-side diff. Both columns are always present so
-// the two versions stay vertically aligned across the whole file.
+// the two versions stay vertically aligned across the whole file. Line
+// numbers carry their own tint (red/green/faint) distinct from the code ink,
+// matching the prototype's spans. Cells breathe with `py-0.5`, so regular
+// rows are 24px tall versus 20px in the unified view.
 component SplitDiffRow inherits Rectangle {
     in property <DiffLine> line;
 
-    height: 20px;
+    height: root.line.kind == "banner" ? 40px : 24px;
 
     if root.line.kind == "banner" : Rectangle {
-        x: 8px;
-        y: 2px;
-        width: parent.width - 16px;
-        height: 16px;
-        border-radius: 6px;
+        y: 6px;
+        width: parent.width;
+        height: 28px;
+        border-radius: 8px;
         background: Palette.diff-banner-bg;
         border-width: 1px;
         border-color: Palette.diff-banner-line;
@@ -112,8 +117,9 @@ component SplitDiffRow inherits Rectangle {
             height: parent.height;
             text: root.line.banner;
             font-family: "MiSans VF";
-            font-size: 11px;
+            font-size: 11.5px;
             color: Palette.dim;
+            overflow: elide;
             horizontal-alignment: center;
             vertical-alignment: center;
         }
@@ -124,11 +130,22 @@ component SplitDiffRow inherits Rectangle {
         Rectangle {
             horizontal-stretch: 1;
             background: root.line.kind == "delete" ? Palette.diff-del-bg : transparent;
-            Text {
+            split-old-num := Text {
                 x: 8px;
                 height: parent.height;
                 text: (root.line.kind == "add" || root.line.old-num == "")
-                    ? "" : (root.line.old-num + "  " + root.line.text);
+                    ? "" : root.line.old-num;
+                font-family: "MiSans VF";
+                font-size: 11px;
+                color: root.line.kind == "delete" ? #DC2626 : Palette.faint;
+                vertical-alignment: center;
+            }
+            Text {
+                x: split-old-num.x + split-old-num.preferred-width + 8px;
+                width: parent.width - self.x - 8px;
+                height: parent.height;
+                text: (root.line.kind == "add" || root.line.old-num == "")
+                    ? "" : root.line.text;
                 font-family: "MiSans VF";
                 font-size: 12px;
                 color: root.line.kind == "delete" ? Palette.diff-del-ink : Palette.ink;
@@ -145,11 +162,22 @@ component SplitDiffRow inherits Rectangle {
             horizontal-stretch: 1;
             background: root.line.kind == "add" ? Palette.diff-add-bg
                 : root.line.kind == "delete" ? Palette.diff-del-empty : transparent;
-            Text {
+            split-new-num := Text {
                 x: 8px;
                 height: parent.height;
                 text: (root.line.kind == "delete" || root.line.new-num == "")
-                    ? "" : (root.line.new-num + "  " + root.line.text);
+                    ? "" : root.line.new-num;
+                font-family: "MiSans VF";
+                font-size: 11px;
+                color: root.line.kind == "add" ? #16A34A : Palette.faint;
+                vertical-alignment: center;
+            }
+            Text {
+                x: split-new-num.x + split-new-num.preferred-width + 8px;
+                width: parent.width - self.x - 8px;
+                height: parent.height;
+                text: (root.line.kind == "delete" || root.line.new-num == "")
+                    ? "" : root.line.text;
                 font-family: "MiSans VF";
                 font-size: 12px;
                 color: root.line.kind == "add" ? Palette.diff-add-ink : Palette.ink;
@@ -159,7 +187,10 @@ component SplitDiffRow inherits Rectangle {
     }
 }
 
-// Pill-shaped closable tab in the right panel header.
+// Pill-shaped closable tab in the right panel header. Every pill — active or
+// not — carries its own close button, like the prototype. Children are
+// absolutely positioned so the 14px icon, the text and the 16px close hit box
+// stay exactly centered inside the fixed 28px pill.
 component RightTabPill inherits Rectangle {
     in property <string> title;
     in property <bool> active;
@@ -168,6 +199,8 @@ component RightTabPill inherits Rectangle {
     callback closed();
 
     height: 28px;
+    // 12px left pad + 14px icon + 6px + text + 6px + 16px close + 12px pad.
+    preferred-width: title-text.preferred-width + 66px;
     border-radius: 999px;
     background: root.active ? Palette.white
         : (pill-touch.has-hover ? Palette.hover-soft : transparent);
@@ -177,77 +210,78 @@ component RightTabPill inherits Rectangle {
     drop-shadow-offset-y: root.active ? 1px : 0px;
     drop-shadow-blur: root.active ? 1px : 0px;
 
-    HorizontalLayout {
-        padding-left: 12px;
-        padding-right: root.active ? 8px : 12px;
-        spacing: 6px;
-        alignment: start;
+    Image {
+        x: 12px;
+        y: (parent.height - 14px) / 2;
+        width: 14px;
+        height: 14px;
+        source: root.icon;
+        colorize: Palette.dim;
+    }
+    title-text := Text {
+        x: 32px;
+        width: self.preferred-width;
+        height: parent.height;
+        text: root.title;
+        font-size: 12.5px;
+        font-weight: root.active ? 500 : 400;
+        color: root.active || pill-touch.has-hover ? Palette.ink : Palette.dim;
+        vertical-alignment: center;
+    }
+    Rectangle {
+        x: parent.width - 28px;
+        y: (parent.height - 16px) / 2;
+        width: 16px;
+        height: 16px;
+        border-radius: 999px;
+        background: close-touch.has-hover ? Palette.hover-soft : transparent;
         Image {
-            source: root.icon;
-            width: 14px;
-            height: 14px;
+            source: Icons.close;
+            width: 12px;
+            height: 12px;
+            x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-        }
-        Text {
-            text: root.title;
-            font-size: 12.5px;
-            font-weight: root.active ? 500 : 400;
-            color: root.active ? Palette.ink : Palette.dim;
-            vertical-alignment: center;
-        }
-        if root.active : Rectangle {
-            width: 16px;
-            height: 16px;
-            y: (parent.height - self.height) / 2;
-            border-radius: 999px;
-            background: close-touch.has-hover ? Palette.hover-soft : transparent;
-            Image {
-                source: Icons.close;
-                width: 9px;
-                height: 9px;
-                x: (parent.width - self.width) / 2;
-                y: (parent.height - self.height) / 2;
-                colorize: close-touch.has-hover ? Palette.ink : Palette.faint;
-            }
+            colorize: close-touch.has-hover ? Palette.ink : Palette.faint;
         }
     }
     close-touch := TouchArea {
         // Overlay only the trailing close hit box; the pill itself picks the tab.
-        x: parent.width - 26px;
-        width: 26px;
-        height: 28px;
-        visible: root.active;
+        x: parent.width - 24px;
+        width: 24px;
+        height: parent.height;
         mouse-cursor: pointer;
         clicked => { root.closed(); }
     }
     pill-touch := TouchArea {
-        width: parent.width - (root.active ? 26px : 0px);
+        width: parent.width - 24px;
         height: parent.height;
         mouse-cursor: pointer;
         clicked => { root.picked(); }
     }
 }
 
-// One row of the changed-files list in the review sidebar.
+// One row of the changed-files list in the review sidebar. A folder heading
+// (20px) sits 2px above its file row (26px), matching the prototype group.
 component ReviewFileRow inherits Rectangle {
     in property <ReviewFile> file;
     in property <bool> active;
     callback picked();
 
-    height: root.file.show-folder ? 42px : 26px;
+    height: root.file.show-folder ? 48px : 26px;
     clip: true;
 
     if root.file.show-folder : Rectangle {
-        height: 16px;
+        height: 20px;
         Image {
-            source: Icons.chev-down-faint;
-            x: 6px;
-            y: (parent.height - 5px) / 2;
-            width: 9px;
-            height: 5px;
+            source: Icons.chev-down;
+            x: 8px;
+            y: (parent.height - 12px) / 2;
+            width: 12px;
+            height: 12px;
+            colorize: Palette.dim;
         }
         Text {
-            x: 20px;
+            x: 24px;
             width: parent.width - 40px;
             height: parent.height;
             text: root.file.display-folder;
@@ -268,8 +302,8 @@ component ReviewFileRow inherits Rectangle {
         }
     }
     file-row := Rectangle {
-        y: root.file.show-folder ? 18px : 0px;
-        height: 24px;
+        y: root.file.show-folder ? 22px : 0px;
+        height: 26px;
         border-radius: 8px;
         background: root.active ? Palette.white
             : (row-touch.has-hover ? Palette.hover-soft : transparent);
@@ -280,13 +314,14 @@ component ReviewFileRow inherits Rectangle {
         drop-shadow-blur: root.active ? 1px : 0px;
         Image {
             source: Icons.doc;
-            x: 8px;
-            y: (parent.height - 13px) / 2;
-            width: 13px;
-            height: 13px;
+            x: 10px;
+            y: (parent.height - 14px) / 2;
+            width: 14px;
+            height: 14px;
+            colorize: Palette.dim;
         }
         Text {
-            x: 27px;
+            x: 30px;
             width: parent.width - 58px;
             height: parent.height;
             text: root.file.display-name;
@@ -298,14 +333,14 @@ component ReviewFileRow inherits Rectangle {
             vertical-alignment: center;
         }
         Rectangle {
-            x: parent.width - 26px;
+            x: parent.width - 28px;
             y: (parent.height - 16px) / 2;
             width: 18px;
             height: 16px;
             border-radius: 4px;
             background: root.file.status == "added" ? #DCFCE7
                 : root.file.status == "deleted" ? #FEE2E2
-                : root.file.status == "renamed" ? #DBEAFE : Palette.chip;
+                : root.file.status == "renamed" ? #DBEAFE : #FEF3D6;
             Text {
                 width: parent.width;
                 height: parent.height;
@@ -317,7 +352,7 @@ component ReviewFileRow inherits Rectangle {
                 font-weight: 700;
                 color: root.file.status == "added" ? Palette.green-ink
                     : root.file.status == "deleted" ? #B91C1C
-                    : root.file.status == "renamed" ? #1D4ED8 : Palette.chip-ink;
+                    : root.file.status == "renamed" ? #1D4ED8 : #B45309;
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }
@@ -329,41 +364,50 @@ component ReviewFileRow inherits Rectangle {
     }
 }
 
-// Directory tree row for the workspace "open file" sidebar.
+// Directory tree row for the workspace "open file" sidebar. Indentation
+// follows the prototype: 8px base + 20px per nesting level (`px-2` row plus
+// the `pl-5` folder child container). Nested file rows are tighter (22px,
+// 12px icon) than folder and root-level rows (26px, 14px icon).
 component TreeRow inherits Rectangle {
     in property <TreeItem> item;
     in property <bool> active;
     callback picked();
 
-    height: 26px;
-    property <length> content-x: 6px + root.item.depth * 14px;
+    height: root.item.depth == 0 || root.item.kind == "folder" ? 26px : 22px;
+    property <length> content-x: 8px + root.item.depth * 20px;
     border-radius: 6px;
-    background: root.active ? Palette.accent-bg
+    background: root.active ? #FAF5EF
         : (row-touch.has-hover ? Palette.sep : transparent);
     clip: true;
     if root.item.kind == "folder" : Image {
-        source: root.item.expanded ? Icons.chev-down-faint : Icons.chev-right-faint;
+        source: root.item.expanded ? Icons.chev-down : Icons.chev-right;
         x: root.content-x;
-        y: (parent.height - 6px) / 2;
-        width: 9px;
-        height: 6px;
+        y: (parent.height - 14px) / 2;
+        width: 14px;
+        height: 14px;
+        colorize: Palette.dim;
     }
     if root.item.kind == "file" : Image {
         source: Icons.doc;
         x: root.content-x;
-        y: (parent.height - 12px) / 2;
-        width: 12px;
-        height: 12px;
+        y: (parent.height - self.height) / 2;
+        width: root.item.depth == 0 ? 14px : 12px;
+        height: self.width;
+        colorize: root.item.depth == 0 ? Palette.dim : Palette.faint;
     }
     Text {
-        x: root.content-x + (root.item.kind == "folder" ? 15px : 18px);
+        x: root.content-x + (root.item.kind == "file" && root.item.depth > 0
+            ? 18px : 20px);
         width: parent.width - self.x - 8px;
         height: parent.height;
         text: root.item.name;
         font-family: "MiSans VF";
-        font-size: root.item.kind == "folder" ? 12px : 11.5px;
-        font-weight: root.active ? 600 : 400;
-        color: root.active ? Palette.accent-text : (root.item.kind == "folder" ? Palette.strong : Palette.dim);
+        font-size: root.item.kind == "folder" || root.item.depth == 0
+            ? 12.5px : 11.5px;
+        font-weight: root.active ? 500 : 400;
+        color: root.active ? Palette.accent
+            : (root.item.kind == "folder" || root.item.depth == 0
+                ? Palette.strong : Palette.dim);
         overflow: elide;
         vertical-alignment: center;
     }
@@ -373,14 +417,19 @@ component TreeRow inherits Rectangle {
     }
 }
 
-// Frameless filter field reused by both right-panel sidebars.
+// Frameless filter field reused by both right-panel sidebars. The review
+// list uses the prototype's `rounded-lg` pill while the workspace tree uses
+// the roomier `rounded-xl` variant, hence the configurable radius/indent.
 component PanelFilter inherits Rectangle {
     in-out property <string> text;
     in property <string> placeholder;
+    in property <length> field-radius: 8px;
+    in property <length> text-indent: 28px;
+    in property <length> field-font-size: 11.5px;
     callback edited(string);
 
     height: 26px;
-    border-radius: 8px;
+    border-radius: root.field-radius;
     background: field.has-focus ? Palette.white : Palette.pill;
     border-width: 1px;
     border-color: field.has-focus ? rgba(200, 106, 40, 0.4) : transparent;
@@ -388,43 +437,48 @@ component PanelFilter inherits Rectangle {
     animate border-color { duration: 150ms; }
     Image {
         source: Icons.search;
-        x: 8px;
-        y: (parent.height - 12px) / 2;
-        width: 12px;
-        height: 12px;
+        x: 10px;
+        y: (parent.height - 14px) / 2;
+        width: 14px;
+        height: 14px;
+        colorize: Palette.faint;
     }
     field := TextInput {
-        x: 26px;
-        width: parent.width - 34px;
+        x: root.text-indent;
+        width: parent.width - self.x - 8px;
         height: parent.height;
         vertical-alignment: center;
-        font-size: 11.5px;
+        font-size: root.field-font-size;
         color: Palette.body;
         text <=> root.text;
         edited => { root.edited(self.text); }
     }
     if root.text == "" : Text {
-        x: 26px;
+        x: root.text-indent;
         height: parent.height;
         text: root.placeholder;
-        font-size: 11.5px;
+        font-size: root.field-font-size;
         color: Palette.faint;
         vertical-alignment: center;
     }
 }
 
-// Launcher entry: icon + label + keyboard hint, matching the prototype card.
+// Launcher entry: icon + label + keyboard hint, matching the prototype card
+// (`px-4 py-3 rounded-2xl` → 44px row).
 component LauncherEntry inherits Rectangle {
     in property <image> icon;
     in property <string> label;
     in property <string> shortcut;
     callback chosen();
 
-    height: 56px;
+    height: 44px;
     border-radius: 16px;
     background: entry-touch.has-hover ? Palette.hover-soft : transparent;
     border-width: 1px;
     border-color: entry-touch.has-hover ? Palette.card-line : transparent;
+    drop-shadow-color: Palette.shadow;
+    drop-shadow-offset-y: 1px;
+    drop-shadow-blur: 1px;
     HorizontalLayout {
         padding-left: 16px;
         padding-right: 14px;
@@ -443,7 +497,7 @@ component LauncherEntry inherits Rectangle {
                 text: root.label;
                 font-size: 13.5px;
                 font-weight: 500;
-                color: Palette.ink;
+                color: Palette.body;
                 vertical-alignment: center;
             }
         }
@@ -478,7 +532,7 @@ export component CodePanelSlot inherits Rectangle {
     in property <length> host-width;
     in property <bool> sidebar-visible;
     in property <length> sidebar-width;
-    in property <string> status-text;
+    in property <length> minimum-workspace-width: 300px;
 
     // Tabs: an empty list means the launcher screen is showing.
     in-out property <[RightTab]> right-tabs;
@@ -491,7 +545,6 @@ export component CodePanelSlot inherits Rectangle {
     in-out property <[string]> branch-options;
     in-out property <int> review-added: 0;
     in-out property <int> review-removed: 0;
-    in-out property <int> review-list-height: 0;
     in-out property <string> selected-review-file-id;
     in-out property <string> selected-review-path;
     in-out property <int> selected-review-added: 0;
@@ -502,6 +555,14 @@ export component CodePanelSlot inherits Rectangle {
     // Widest diff row in device pixels, so long lines scroll horizontally
     // instead of being clipped.
     in-out property <length> diff-content-width: 0px;
+    // Unified-mode scroll content height: regular rows are 20px, hunk banner
+    // rows 40px, plus 8px padding on top and bottom. Computed by the C++
+    // projection; the split view adds `diff-split-extra` on top (its cells
+    // breathe with `py-0.5`, so every non-banner row is 4px taller).
+    in-out property <length> diff-content-height: 0px;
+    in-out property <length> diff-split-extra: 0px;
+    property <length> diff-rows-extra: root.diff-view-mode == "split"
+        ? root.diff-split-extra : 0px;
 
     // Workspace tree state
     in-out property <[TreeItem]> tree-items;
@@ -559,7 +620,9 @@ export component CodePanelSlot inherits Rectangle {
     }
     toggle-file-list => { root.file-list-visible = !root.file-list-visible; }
 
-    width: root.code-visible ? root.code-panel-width + 1px : 0px;
+    min-width: root.code-visible ? root.code-panel-width + 1px : 0px;
+    preferred-width: root.code-visible ? root.code-panel-width + 1px : 0px;
+    max-width: root.code-visible ? root.code-panel-width + 1px : 0px;
     horizontal-stretch: 0;
     vertical-stretch: 1;
     background: transparent;
@@ -578,15 +641,16 @@ export component CodePanelSlot inherits Rectangle {
         x: 0px;
         width: 1px;
         height: parent.height;
+        z: 100;
         background: cpt.has-hover || cpt.pressed ? Palette.accent : Palette.line-soft;
         cpt := TouchArea {
-            x: -3px;
-            width: 7px;
+            x: -4px;
+            width: 9px;
             moved => {
                 root.code-panel-width = Math.max(320px,
                     Math.min(Math.min(720px, root.host-width
                         - (root.sidebar-visible ? root.sidebar-width + 1px : 0px)
-                        - 481px),
+                        - root.minimum-workspace-width - 1px),
                     root.code-panel-width - (self.mouse-x - self.pressed-x)));
             }
             mouse-cursor: ew-resize;
@@ -605,7 +669,7 @@ export component CodePanelSlot inherits Rectangle {
             x: 0px;
             y: 0px;
             width: parent.width;
-            height: 46px;
+            height: 40px;
             HorizontalLayout {
                 x: 0px;
                 y: 0px;
@@ -613,6 +677,8 @@ export component CodePanelSlot inherits Rectangle {
                 height: parent.height;
                 padding-left: 10px;
                 padding-right: 4px;
+                padding-top: 6px;
+                padding-bottom: 6px;
                 spacing: 0px;
                 alignment: start;
                 HorizontalLayout {
@@ -621,15 +687,16 @@ export component CodePanelSlot inherits Rectangle {
                     horizontal-stretch: 0;
                     for tab in root.right-tabs : RightTabPill {
                         title: tab.title;
-                        icon: tab.id == "review" ? Icons.review : Icons.folder-dim;
+                        icon: tab.id == "review" ? Icons.review : Icons.doc;
                         active: root.right-tab == tab.id;
                         picked => { root.right-tab = tab.id; root.return-focus(); }
                         closed => { root.close-right-tab(tab.id); }
                     }
+                    // 28px like the pills, so the header row aligns every
+                    // control on the same center line.
                     Rectangle {
-                        width: 24px;
-                        height: 24px;
-                        y: (parent.height - self.height) / 2;
+                        width: 28px;
+                        height: 28px;
                         border-radius: 999px;
                         horizontal-stretch: 0;
                         background: add-touch.has-hover ? Palette.hover-soft : transparent;
@@ -696,11 +763,11 @@ export component CodePanelSlot inherits Rectangle {
         // ================= VIEW 1: LAUNCHER (no tabs open) =================
         if root.right-tab == "launcher" : Rectangle {
             width: parent.width;
-            y: 46px;
+            y: 40px;
             height: parent.height - self.y;
             Rectangle {
                 width: Math.min(260px, parent.width - 40px);
-                height: 122px;
+                height: 98px;
                 x: (parent.width - self.width) / 2;
                 y: Math.max(16px, (parent.height - self.height) / 2);
                 VerticalLayout {
@@ -724,99 +791,112 @@ export component CodePanelSlot inherits Rectangle {
         // ================= VIEW 2: CODE REVIEW (GIT DIFF) =================
         if root.right-tab == "review" : Rectangle {
             width: parent.width;
-            y: 46px;
+            y: 40px;
             height: parent.height - self.y;
             VerticalLayout {
                 spacing: 0px;
-                // Git toolbar
+                // Git toolbar. A single space-between row like the prototype:
+                // branch selector + stats + tracking on the left, the action
+                // buttons on the right, tracking absorbing the leftover space.
                 Rectangle {
                     height: 42px;
-                    branch-control := Rectangle {
-                        x: 12px;
-                        y: 8px;
-                        width: 54px;
-                        height: 26px;
-                        border-radius: 8px;
-                        background: branch-touch.has-hover ? Palette.sep : transparent;
-                        Text {
-                            x: 8px;
-                            width: 28px;
-                            height: parent.height;
-                            text: "分支";
-                            font-size: 12.5px;
-                            font-weight: 500;
-                            color: Palette.ink;
-                            vertical-alignment: center;
-                        }
-                        Image {
-                            source: Icons.chev-down-faint;
-                            x: 39px;
-                            y: (parent.height - 5px) / 2;
-                            width: 9px;
-                            height: 5px;
-                        }
-                        branch-touch := TouchArea {
-                            mouse-cursor: pointer;
-                            clicked => { root.branch-menu-open = !root.branch-menu-open; }
-                        }
-                    }
                     HorizontalLayout {
-                        x: 76px;
-                        y: 8px;
-                        width: 68px;
-                        height: 26px;
-                        spacing: 4px;
-                        alignment: start;
-                        Text {
-                            text: "+" + root.review-added;
-                            font-family: "MiSans VF";
-                            font-size: 12px;
-                            font-weight: 700;
-                            color: #16A34A;
-                            vertical-alignment: center;
-                        }
-                        Text {
-                            text: "-" + root.review-removed;
-                            font-family: "MiSans VF";
-                            font-size: 12px;
-                            font-weight: 700;
-                            color: #DC2626;
-                            vertical-alignment: center;
-                        }
-                    }
-                    if root.code-panel-width >= 560px : Text {
-                        x: 154px;
-                        y: 8px;
-                        width: parent.width - self.x - 256px;
-                        height: 26px;
-                        text: root.current-branch + " → origin/" + root.current-branch;
-                        font-family: "MiSans VF";
-                        font-size: 11px;
-                        color: Palette.dim;
-                        overflow: elide;
-                        vertical-alignment: center;
-                    }
-                    Rectangle {
-                        x: parent.width - self.width - 10px;
-                        y: 7px;
-                        width: root.code-panel-width >= 560px ? 236px : 124px;
-                        height: 28px;
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        alignment: space-between;
                         HorizontalLayout {
-                            width: parent.width;
-                            height: parent.height;
-                            spacing: 4px;
+                            spacing: 10px;
+                            alignment: start;
+                            // Branch selector: naturally sized pill button.
+                            Rectangle {
+                                height: 28px;
+                                border-radius: 6px;
+                                background: branch-touch.has-hover ? Palette.sep : transparent;
+                                HorizontalLayout {
+                                    padding-left: 8px;
+                                    padding-right: 8px;
+                                    spacing: 4px;
+                                    Text {
+                                        text: "分支";
+                                        font-size: 12.5px;
+                                        font-weight: 500;
+                                        color: Palette.ink;
+                                        vertical-alignment: center;
+                                    }
+                                    Image {
+                                        source: Icons.chev-down;
+                                        width: 14px;
+                                        height: 14px;
+                                        y: (parent.height - 14px) / 2;
+                                        colorize: Palette.dim;
+                                    }
+                                }
+                                branch-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.branch-menu-open = !root.branch-menu-open; }
+                                }
+                            }
+                            // Total additions / deletions badge.
+                            HorizontalLayout {
+                                spacing: 4px;
+                                alignment: start;
+                                Text {
+                                    text: "+" + root.review-added;
+                                    font-family: "MiSans VF";
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    color: #16A34A;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    text: "-" + root.review-removed;
+                                    font-family: "MiSans VF";
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    color: #DC2626;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            // Remote tracking hint; only when the panel has
+                            // room for it (the prototype hides it on `sm`).
+                            if root.code-panel-width >= 500px : HorizontalLayout {
+                                spacing: 4px;
+                                alignment: start;
+                                Text {
+                                    horizontal-stretch: 1;
+                                    text: root.current-branch + " → origin/" + root.current-branch;
+                                    font-family: "MiSans VF";
+                                    font-size: 11.5px;
+                                    color: Palette.dim;
+                                    overflow: elide;
+                                    vertical-alignment: center;
+                                }
+                                Image {
+                                    source: Icons.chev-down;
+                                    width: 12px;
+                                    height: 12px;
+                                    y: (parent.height - 12px) / 2;
+                                    colorize: Palette.faint;
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: 6px;
                             alignment: end;
                             ToolIcon {
                                 source: Icons.dots;
                                 icon-size: 14px;
+                                width: 28px;
+                                height: 28px;
+                                radius: 6px;
                                 clicked => { root.git-menu-open = !root.git-menu-open; }
                             }
                             Rectangle {
                                 width: 28px;
                                 height: 28px;
-                                border-radius: 8px;
+                                border-radius: 6px;
                                 horizontal-stretch: 0;
-                                background: root.diff-view-mode == "split" ? Palette.accent-bg
+                                background: root.diff-view-mode == "split" ? #FAF5EF
                                     : (diff-touch.has-hover ? Palette.sep : transparent);
                                 Image {
                                     source: Icons.diff-split;
@@ -834,9 +914,9 @@ export component CodePanelSlot inherits Rectangle {
                             Rectangle {
                                 width: 28px;
                                 height: 28px;
-                                border-radius: 8px;
+                                border-radius: 6px;
                                 horizontal-stretch: 0;
-                                background: root.file-list-visible ? Palette.accent-bg
+                                background: root.file-list-visible ? #FAF5EF
                                     : (panes-touch.has-hover ? Palette.sep : transparent);
                                 Image {
                                     source: Icons.panes;
@@ -851,41 +931,44 @@ export component CodePanelSlot inherits Rectangle {
                                     clicked => { root.toggle-file-list(); }
                                 }
                             }
-                            if root.code-panel-width >= 560px : ToolIcon {
+                            if root.code-panel-width >= 408px : ToolIcon {
                                 source: Icons.folder-open;
                                 icon-size: 14px;
+                                width: 28px;
+                                height: 28px;
+                                radius: 6px;
                                 clicked => { root.reveal-in-explorer(); }
                             }
                             Rectangle {
-                                width: root.code-panel-width >= 560px ? 108px : 28px;
                                 height: 28px;
                                 border-radius: 8px;
                                 horizontal-stretch: 0;
-                                background: Palette.white;
+                                background: commit-touch.has-hover ? #FAF5EF : Palette.white;
                                 border-width: 1px;
                                 border-color: commit-touch.has-hover ? Palette.accent : Palette.border;
                                 HorizontalLayout {
-                                    padding-left: root.code-panel-width >= 560px ? 8px : 7px;
-                                    padding-right: root.code-panel-width >= 560px ? 6px : 7px;
-                                    spacing: 4px;
+                                    padding-left: root.code-panel-width >= 408px ? 10px : 7px;
+                                    padding-right: root.code-panel-width >= 408px ? 8px : 7px;
+                                    spacing: 6px;
                                     Image {
                                         source: Icons.commit;
                                         width: 14px;
                                         height: 14px;
                                         y: (parent.height - 14px) / 2;
                                     }
-                                    if root.code-panel-width >= 560px : Text {
+                                    if root.code-panel-width >= 408px : Text {
                                         text: "提交或推送";
                                         font-size: 12px;
                                         font-weight: 500;
-                                        color: Palette.ink;
+                                        color: Palette.body;
                                         vertical-alignment: center;
                                     }
-                                    if root.code-panel-width >= 560px : Image {
-                                        source: Icons.chev-down-faint;
-                                        width: 9px;
-                                        height: 5px;
-                                        y: (parent.height - 5px) / 2;
+                                    if root.code-panel-width >= 408px : Image {
+                                        source: Icons.chev-down;
+                                        width: 12px;
+                                        height: 12px;
+                                        y: (parent.height - 12px) / 2;
+                                        colorize: Palette.dim;
                                     }
                                 }
                                 commit-touch := TouchArea {
@@ -922,9 +1005,10 @@ export component CodePanelSlot inherits Rectangle {
                                         alignment: start;
                                         Image {
                                             source: Icons.doc;
-                                            width: 13px;
-                                            height: 13px;
-                                            y: (parent.height - 13px) / 2;
+                                            width: 14px;
+                                            height: 14px;
+                                            y: (parent.height - 14px) / 2;
+                                            colorize: Palette.dim;
                                         }
                                         Text {
                                             horizontal-stretch: 1;
@@ -962,7 +1046,7 @@ export component CodePanelSlot inherits Rectangle {
                                     y: parent.height - 0.67px;
                                     height: 0.67px;
                                     width: parent.width;
-                                    background: Palette.line-soft;
+                                    background: Palette.border;
                                 }
                             }
                             if root.diff-view-mode == "split" : Rectangle {
@@ -1009,18 +1093,32 @@ export component CodePanelSlot inherits Rectangle {
                             }
                             if root.diff-lines.length > 0 : ScrollView {
                                 vertical-stretch: 1;
-                                viewport-width: root.diff-content-width;
-                                viewport-height: root.diff-lines.length * 20px + 8px;
+                                viewport-width: root.diff-content-width + 16px;
+                                viewport-height: (root.diff-content-height > 0px
+                                    ? root.diff-content-height
+                                    : root.diff-lines.length * 20px + 16px)
+                                    + root.diff-rows-extra;
+                                // The prototype scrolls a `p-2` table, so the
+                                // whole diff body is inset 8px on every side.
                                 VerticalLayout {
-                                    if root.diff-view-mode == "unified" : Rectangle {
-                                        height: root.diff-lines.length * 20px;
+                                    padding: 8px;
+                                    spacing: 0px;
+                                    if root.diff-view-mode == "unified" : VerticalLayout {
+                                        height: (root.diff-content-height > 0px
+                                            ? root.diff-content-height - 16px
+                                            : root.diff-lines.length * 20px);
+                                        spacing: 0px;
                                         for line in root.diff-lines : UnifiedDiffRow {
                                             line: line;
                                             toggle-hunk(hunk) => { root.toggle-hunk(hunk); }
                                         }
                                     }
-                                    if root.diff-view-mode == "split" : Rectangle {
-                                        height: root.diff-lines.length * 20px;
+                                    if root.diff-view-mode == "split" : VerticalLayout {
+                                        height: (root.diff-content-height > 0px
+                                            ? root.diff-content-height - 16px
+                                            : root.diff-lines.length * 20px)
+                                            + root.diff-rows-extra;
+                                        spacing: 0px;
                                         for line in root.diff-lines : SplitDiffRow {
                                             line: line;
                                         }
@@ -1044,7 +1142,7 @@ export component CodePanelSlot inherits Rectangle {
                         }
                     }
                     if root.file-list-visible : Rectangle {
-                        width: Math.max(160px, Math.min(224px, parent.width - 200px));
+                        width: Math.max(192px, Math.min(224px, parent.width - 200px));
                         horizontal-stretch: 0;
                         Rectangle {
                             x: 0px;
@@ -1053,17 +1151,22 @@ export component CodePanelSlot inherits Rectangle {
                             background: Palette.line-soft;
                         }
                         VerticalLayout {
-                            padding: 8px;
-                            spacing: 6px;
-                            PanelFilter {
-                                text <=> root.review-file-search;
-                                placeholder: "筛选文件...";
-                                edited(value) => { root.filter-review-files(value); }
+                            spacing: 0px;
+                            // Search zone (`p-2` in the prototype).
+                            VerticalLayout {
+                                padding: 8px;
+                                PanelFilter {
+                                    text <=> root.review-file-search;
+                                    placeholder: "筛选文件...";
+                                    edited(value) => { root.filter-review-files(value); }
+                                }
                             }
+                            // Files list (`p-1.5` with 4px row gaps); the
+                            // ScrollView sizes its viewport to the rows.
                             ScrollView {
                                 vertical-stretch: 1;
-                                viewport-height: root.review-list-height * 1px;
                                 VerticalLayout {
+                                    padding: 6px;
                                     spacing: 4px;
                                     for file in root.review-files : ReviewFileRow {
                                         file: file;
@@ -1075,44 +1178,13 @@ export component CodePanelSlot inherits Rectangle {
                         }
                     }
                 }
-                // Thin status strip: keeps the daemon/backend state visible
-                // now that the review view replaced the old code footer.
-                Rectangle {
-                    height: 28px;
-                    background: Palette.surface;
-                    Rectangle {
-                        y: 0px;
-                        height: 0.67px;
-                        width: parent.width;
-                        background: Palette.line-faint;
-                    }
-                    HorizontalLayout {
-                        padding-left: 12px;
-                        padding-right: 10px;
-                        spacing: 6px;
-                        alignment: start;
-                        Image {
-                            source: Icons.check-circle-green;
-                            width: 13px;
-                            height: 13px;
-                            y: (parent.height - 13px) / 2;
-                        }
-                        Text {
-                            text: root.status-text;
-                            font-size: 11.5px;
-                            font-weight: 500;
-                            color: Palette.green;
-                            vertical-alignment: center;
-                        }
-                    }
-                }
             }
         }
 
         // ================= VIEW 3: WORKSPACE FILE TREE =================
         if root.right-tab == "openFile" : Rectangle {
             width: parent.width;
-            y: 46px;
+            y: 40px;
             height: parent.height - self.y;
             HorizontalLayout {
                 spacing: 0px;
@@ -1125,29 +1197,41 @@ export component CodePanelSlot inherits Rectangle {
                             height: 34px;
                             HorizontalLayout {
                                 padding-left: 12px;
-                                padding-right: 12px;
+                                padding-right: 8px;
                                 alignment: space-between;
-                                Text {
-                                    horizontal-stretch: 1;
-                                    text: root.workspace-tree-label
-                                        + (root.tree-selected-path == "" ? "" : " / " + root.tree-selected-path);
-                                    font-family: "MiSans VF";
-                                    font-size: 12px;
-                                    font-weight: 600;
-                                    color: Palette.ink;
-                                    overflow: elide;
-                                    vertical-alignment: center;
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    alignment: start;
+                                    Text {
+                                        text: root.workspace-tree-label;
+                                        font-family: "MiSans VF";
+                                        font-size: 12px;
+                                        font-weight: 600;
+                                        color: Palette.ink;
+                                        vertical-alignment: center;
+                                    }
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: root.tree-selected-path == ""
+                                            ? "" : "/ " + root.tree-selected-path;
+                                        font-family: "MiSans VF";
+                                        font-size: 12px;
+                                        font-weight: 500;
+                                        color: Palette.ink;
+                                        overflow: elide;
+                                        vertical-alignment: center;
+                                    }
                                 }
                                 Rectangle {
-                                    width: 26px;
-                                    height: 26px;
+                                    width: 24px;
+                                    height: 24px;
                                     border-radius: 6px;
                                     horizontal-stretch: 0;
-                                    background: tree-toggle.has-hover ? Palette.sep : transparent;
+                                    background: tree-toggle.has-hover ? Palette.hover-soft : transparent;
                                     Image {
                                         source: Icons.folder-dim;
-                                        width: 14px;
-                                        height: 14px;
+                                        width: 16px;
+                                        height: 16px;
                                         x: (parent.width - self.width) / 2;
                                         y: (parent.height - self.height) / 2;
                                         colorize: root.workspace-tree-visible ? Palette.accent : Palette.dim;
@@ -1167,16 +1251,42 @@ export component CodePanelSlot inherits Rectangle {
                         }
                         if root.tree-file-name != "" : ScrollView {
                             vertical-stretch: 1;
-                            Text {
-                                x: 14px;
-                                y: 12px;
-                                width: Math.max(200px, parent.width - 28px);
-                                font-family: "MiSans VF";
-                                font-size: 12px;
-                                color: Palette.body;
-                                text: root.tree-file-content;
-                                wrap: word-wrap;
-                                vertical-alignment: top;
+                            // Wrap at the visible width; only vertical scrolling.
+                            viewport-width: self.width;
+                            VerticalLayout {
+                                padding: 16px;
+                                spacing: 10px;
+                                HorizontalLayout {
+                                    alignment: space-between;
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: root.tree-file-name;
+                                        font-family: "MiSans VF";
+                                        font-size: 12px;
+                                        font-weight: 600;
+                                        color: Palette.ink;
+                                        overflow: elide;
+                                        vertical-alignment: center;
+                                    }
+                                    Text {
+                                        text: "只读模式";
+                                        font-size: 11px;
+                                        color: Palette.dim;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                Rectangle {
+                                    height: 1px;
+                                    background: Palette.line-soft;
+                                }
+                                Text {
+                                    font-family: "MiSans VF";
+                                    font-size: 12px;
+                                    color: Palette.body;
+                                    text: root.tree-file-content;
+                                    wrap: word-wrap;
+                                    vertical-alignment: top;
+                                }
                             }
                         }
                         if root.tree-file-name == "" : Rectangle {
@@ -1196,10 +1306,11 @@ export component CodePanelSlot inherits Rectangle {
                                     drop-shadow-offset-y: 1px;
                                     Image {
                                         source: Icons.folder-open;
-                                        width: 28px;
-                                        height: 28px;
+                                        width: 32px;
+                                        height: 32px;
                                         x: (parent.width - self.width) / 2;
                                         y: (parent.height - self.height) / 2;
+                                        colorize: Palette.dim;
                                     }
                                 }
                                 Text {
@@ -1220,7 +1331,7 @@ export component CodePanelSlot inherits Rectangle {
                     }
                 }
                 if root.workspace-tree-visible : Rectangle {
-                    width: Math.max(192px, Math.min(256px, parent.width - 220px));
+                    width: Math.max(224px, Math.min(256px, parent.width - 220px));
                     horizontal-stretch: 0;
                     Rectangle {
                         x: 0px;
@@ -1229,17 +1340,25 @@ export component CodePanelSlot inherits Rectangle {
                         background: Palette.line-soft;
                     }
                     VerticalLayout {
-                        padding: 10px;
-                        spacing: 6px;
-                        PanelFilter {
-                            text <=> root.tree-search;
-                            placeholder: "筛选文件...";
-                            edited(value) => { root.filter-tree(value); }
+                        spacing: 0px;
+                        // Search zone (`p-2.5` in the prototype).
+                        VerticalLayout {
+                            padding: 10px;
+                            PanelFilter {
+                                field-radius: 12px;
+                                text-indent: 32px;
+                                field-font-size: 12px;
+                                text <=> root.tree-search;
+                                placeholder: "筛选文件...";
+                                edited(value) => { root.filter-tree(value); }
+                            }
                         }
+                        // Tree list (`p-2` with 2px row gaps); the ScrollView
+                        // sizes its viewport to the rows.
                         ScrollView {
                             vertical-stretch: 1;
-                            viewport-height: root.tree-items.length * 28px;
                             VerticalLayout {
+                                padding: 8px;
                                 spacing: 2px;
                                 for item[index] in root.tree-items : TreeRow {
                                     item: item;
@@ -1253,11 +1372,26 @@ export component CodePanelSlot inherits Rectangle {
             }
         }
 
+        // The dismissal surface must be behind the popovers. When it was
+        // declared after them it intercepted every click, which made branch
+        // selection and commit inputs appear broken.
+        if root.branch-menu-open || root.git-menu-open || root.commit-modal-open : TouchArea {
+            y: 40px;
+            height: parent.height - self.y;
+            clicked => {
+                root.branch-menu-open = false;
+                root.git-menu-open = false;
+                root.commit-modal-open = false;
+            }
+        }
+
         // ---- Branch dropdown ----
         if root.branch-menu-open : Rectangle {
             x: 12px;
-            y: 80px;
-            width: 200px;
+            y: 79px;
+            width: 192px;
+            // Absolute children would fill the panel; hug the content instead.
+            height: branch-col.preferred-height;
             background: Palette.white;
             border-radius: 12px;
             border-width: 0.67px;
@@ -1266,7 +1400,7 @@ export component CodePanelSlot inherits Rectangle {
             drop-shadow-offset-y: 5px;
             drop-shadow-blur: 14px;
             TouchArea { clicked => { root.branch-menu-open = false; } }
-            VerticalLayout {
+            branch-col := VerticalLayout {
                 padding: 4px;
                 Text {
                     x: 8px;
@@ -1284,6 +1418,9 @@ export component CodePanelSlot inherits Rectangle {
                 for branch in root.branch-options : MenuOption {
                     label: branch;
                     active: branch == root.current-branch;
+                    show-check: true;
+                    hover-tint: #FEF3D6;
+                    active-tint: #FAF5EF;
                     chosen => {
                         root.switch-branch(branch);
                         root.branch-menu-open = false;
@@ -1295,8 +1432,9 @@ export component CodePanelSlot inherits Rectangle {
         // ---- Git "more" menu ----
         if root.git-menu-open : Rectangle {
             x: parent.width - 190px;
-            y: 80px;
+            y: 79px;
             width: 176px;
+            height: git-menu-col.preferred-height;
             background: Palette.white;
             border-radius: 12px;
             border-width: 0.67px;
@@ -1305,7 +1443,7 @@ export component CodePanelSlot inherits Rectangle {
             drop-shadow-offset-y: 5px;
             drop-shadow-blur: 14px;
             TouchArea { clicked => { root.git-menu-open = false; } }
-            VerticalLayout {
+            git-menu-col := VerticalLayout {
                 padding: 4px;
                 MenuOption {
                     label: "暂存全部更改";
@@ -1320,6 +1458,7 @@ export component CodePanelSlot inherits Rectangle {
                 MenuOption {
                     label: "放弃未暂存更改";
                     active: false;
+                    danger: true;
                     chosen => { root.git-menu-open = false; root.discard-unstaged(); }
                 }
             }
@@ -1328,8 +1467,9 @@ export component CodePanelSlot inherits Rectangle {
         // ---- Commit & push popover ----
         if root.commit-modal-open : Rectangle {
             x: Math.max(8px, parent.width - 300px);
-            y: 78px;
+            y: 83px;
             width: 288px;
+            height: commit-col.preferred-height;
             background: Palette.white;
             border-radius: 16px;
             border-width: 0.67px;
@@ -1337,7 +1477,7 @@ export component CodePanelSlot inherits Rectangle {
             drop-shadow-color: rgba(0, 0, 0, 0.18);
             drop-shadow-offset-y: 8px;
             drop-shadow-blur: 20px;
-            VerticalLayout {
+            commit-col := VerticalLayout {
                 padding: 14px;
                 spacing: 10px;
                 HorizontalLayout {
@@ -1491,8 +1631,8 @@ export component CodePanelSlot inherits Rectangle {
         // ---- Toast ----
         if root.toast-visible : Rectangle {
             x: (parent.width - self.width) / 2;
-            y: 54px;
-            width: Math.min(parent.width - 24px, toast-label.preferred-width + 46px);
+            y: 48px;
+            width: Math.min(parent.width - 24px, toast-label.preferred-width + 50px);
             height: 30px;
             border-radius: 8px;
             background: #1C1917;
@@ -1500,8 +1640,8 @@ export component CodePanelSlot inherits Rectangle {
             drop-shadow-offset-y: 4px;
             drop-shadow-blur: 12px;
             HorizontalLayout {
-                padding-left: 12px;
-                padding-right: 10px;
+                padding-left: 14px;
+                padding-right: 12px;
                 spacing: 8px;
                 alignment: start;
                 Image {
@@ -1520,14 +1660,4 @@ export component CodePanelSlot inherits Rectangle {
         }
     }
 
-    // A click on empty panel space closes any open popover.
-    if root.branch-menu-open || root.git-menu-open || root.commit-modal-open : TouchArea {
-        y: 46px;
-        height: parent.height - self.y;
-        clicked => {
-            root.branch-menu-open = false;
-            root.git-menu-open = false;
-            root.commit-modal-open = false;
-        }
-    }
 }

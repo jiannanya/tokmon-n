@@ -171,9 +171,11 @@ export component ComposerContextTab inherits Rectangle {
     in property <string> workspace-branch;
     in property <bool> has-git;
     in property <bool> can-change-workspace;
+    in property <length> available-width: 430px;
     callback change-workspace();
 
-    width: Math.min(430px, Math.max(238px, project-label.preferred-width + branch-label.preferred-width + 116px));
+    width: Math.min(root.available-width,
+        Math.min(430px, Math.max(180px, project-label.preferred-width + branch-label.preferred-width + 116px)));
     height: 28px;
     horizontal-stretch: 0;
     // Backing tab: only the top corners are rounded, frameless, flat light-gray
@@ -203,10 +205,10 @@ export component ComposerContextTab inherits Rectangle {
             vertical-alignment: center;
             overflow: elide;
         }
-        Text { text: "·"; font-size: 11.5px; color: Palette.faint; vertical-alignment: center; }
-        Image { source: Icons.terminal; width: 14px; height: 14px; y: 8px; }
-        Text { text: "本地"; font-size: 11.5px; color: Palette.mid; vertical-alignment: center; }
-        Text { text: "·"; font-size: 11.5px; color: Palette.faint; vertical-alignment: center; }
+        if root.width >= 280px : Text { text: "·"; font-size: 11.5px; color: Palette.faint; vertical-alignment: center; }
+        if root.width >= 280px : Image { source: Icons.terminal; width: 14px; height: 14px; y: 8px; }
+        if root.width >= 280px : Text { text: "本地"; font-size: 11.5px; color: Palette.mid; vertical-alignment: center; }
+        if root.width >= 280px : Text { text: "·"; font-size: 11.5px; color: Palette.faint; vertical-alignment: center; }
         Image { source: Icons.git-branch; width: 14px; height: 14px; y: 8px; }
         branch-label := Text {
             text: root.has-git ? root.workspace-branch : "无 Git";

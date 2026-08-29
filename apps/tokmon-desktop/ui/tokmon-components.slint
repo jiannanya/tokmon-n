@@ -6,10 +6,13 @@ export component ToolIcon inherits Rectangle {
     in property <image> source;
     in property <length> icon-size: 16px;
     in property <bool> enabled: true;
+    // The prototype's compact toolbar buttons use `rounded-md`; callers may
+    // override without touching the window controls' softer default.
+    in property <length> radius: 8px;
     out property <bool> hovered: ta.has-hover;
     callback clicked;
     background: ta.has-hover ? Palette.sep : transparent;
-    border-radius: 8px;
+    border-radius: root.radius;
     min-width: self.icon-size + 12px;
     min-height: self.icon-size + 12px;
     ta := TouchArea {
@@ -107,19 +110,39 @@ export component StatusDot inherits Rectangle {
 export component MenuOption inherits Rectangle {
     in property <string> label;
     in property <bool> active;
+    // Destructive entry: red ink with the prototype's red hover wash.
+    in property <bool> danger: false;
+    // Per-menu hover tint (the branch dropdown uses the warm #FEF3D6).
+    in property <color> hover-tint: Palette.sep;
+    // Selected-entry wash; the right-panel menus use the warmer #FAF5EF.
+    in property <color> active-tint: Palette.accent-bg;
+    // Shows the accent check mark next to the active entry.
+    in property <bool> show-check: false;
     callback chosen;
     height: 30px;
     border-radius: 8px;
-    background: ta.has-hover ? Palette.sep : (active ? Palette.accent-bg : transparent);
+    background: ta.has-hover ? (root.danger ? #FEE2E2 : root.hover-tint)
+        : (active ? root.active-tint : transparent);
     HorizontalLayout {
         padding-left: 10px;
         padding-right: 10px;
+        spacing: 6px;
         Text {
+            horizontal-stretch: 1;
             text: root.label;
-            font-size: 12.5px;
-            color: root.active ? Palette.accent-text : Palette.body;
+            font-size: 12px;
+            font-weight: root.active && root.show-check ? 600 : 400;
+            color: root.danger ? #DC2626
+                : root.active ? Palette.accent : Palette.strong;
             overflow: elide;
             vertical-alignment: center;
+        }
+        if root.active && root.show-check : Image {
+            source: Icons.check-green;
+            width: 14px;
+            height: 14px;
+            y: (parent.height - 14px) / 2;
+            colorize: Palette.accent;
         }
     }
     ta := TouchArea {

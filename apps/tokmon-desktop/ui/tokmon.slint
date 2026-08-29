@@ -179,11 +179,17 @@ export component MainWindow inherits Window {
     resize-border-width: 7px;
     // Match the initial client area to the scale selected for the primary
     // display. These dimensions affect startup only; users can still resize.
-    preferred-width: (root.code-visible ? 1440px : 999px) * root.default-ui-scale-percent / 100;
+    preferred-width: 999px * root.default-ui-scale-percent / 100;
     preferred-height: 900px * root.default-ui-scale-percent / 100;
-    min-width: root.code-visible ? 1040px : 840px;
+    // Always leave enough physical room for the three responsive minima at
+    // the selected UI scale. This prevents a manual window resize from making
+    // the fixed side columns overlap the workspace.
+    min-width: 818px * root.default-ui-scale-percent / 100 + 16px;
     min-height: 680px;
-    background: Palette.app-bg;
+    // A transparent outer gutter lets the app surface cast a subtle shadow.
+    // Maximized windows remove the gutter so their client area still fills the
+    // monitor exactly.
+    background: transparent;
     // Slint currently resolves one family here without the browser's CSS
     // fallback chain. YaHei UI keeps Chinese glyph coverage while retaining
     // Windows-native UI metrics for mixed Chinese/Latin labels.
@@ -211,7 +217,6 @@ export component MainWindow inherits Window {
     in-out property <[string]> branch-options;
     in-out property <int> review-added: 0;
     in-out property <int> review-removed: 0;
-    in-out property <int> review-list-height: 0;
     in-out property <string> selected-review-file-id;
     in-out property <string> selected-review-path;
     in-out property <int> selected-review-added: 0;
@@ -221,6 +226,10 @@ export component MainWindow inherits Window {
     in-out property <bool> file-list-visible: true;
     // Widest diff row in device pixels so long lines scroll horizontally.
     in-out property <length> diff-content-width: 0px;
+    // Exact unified diff scroll height (20px rows, 40px banners, 8px padding)
+    // plus the split-mode extra (4px per non-banner row).
+    in-out property <length> diff-content-height: 0px;
+    in-out property <length> diff-split-extra: 0px;
     in-out property <[TreeItem]> tree-items;
     in-out property <string> tree-search;
     in-out property <string> tree-file-name;
@@ -361,6 +370,9 @@ export component MainWindow inherits Window {
     in-out property <bool> copy-notice-visible: false;
     in-out property <bool> change-workspace-open: false;
     in-out property <bool> window-maximized: false;
+    property <length> window-edge-inset: root.window-maximized ? 0px : 8px;
+    property <length> layout-content-width: (root.width - root.window-edge-inset * 2) / root.applied-ui-scale;
+    property <length> minimum-workspace-width: 300px;
     in-out property <bool> slash-menu-visible: false;
     in-out property <bool> create-navigation-open: false;
     in-out property <bool> error-dialog-open: false;
@@ -526,12 +538,53 @@ export component MainWindow inherits Window {
         }
     }
 
-    ui-scale-layer := Rectangle {
-        x: 0px;
-        y: 0px;
-        width: root.width / root.applied-ui-scale;
-        height: root.height / root.applied-ui-scale;
+    // Keep the shadow outside the clipped/scaled application surface. When the
+    // shadow lived on ui-scale-layer itself, its blur was clipped by that
+    // layer and by the frameless native window, leaving only part of the edge
+    // visible on some Windows compositors.
+    Rectangle {
+        x: root.window-edge-inset;
+        y: root.window-edge-inset;
+        width: root.width - root.window-edge-inset * 2;
+        height: root.height - root.window-edge-inset * 2;
         background: Palette.app-bg;
+        border-radius: root.window-maximized ? 0px : 4px;
+        drop-shadow-color: root.window-maximized ? transparent : rgba(28, 25, 23, 0.22);
+        drop-shadow-offset-x: 0px;
+        drop-shadow-offset-y: 0px;
+        drop-shadow-blur: root.window-maximized ? 0px : 9px;
+    }
+
+    function fit-three-columns() {
+        if !root.code-visible {
+            return;
+        }
+        // Preserve the right panel width first. If the window became narrower
+        // while the panel was closed, reclaim excess sidebar width before
+        // reducing the right panel. Both values remain independent thereafter.
+        if root.sidebar-visible {
+            root.sidebar-width = Math.max(196px,
+                Math.min(root.sidebar-width, root.layout-content-width
+                    - root.code-panel-width - root.minimum-workspace-width - 2px));
+        }
+        root.code-panel-width = Math.max(320px,
+            Math.min(root.code-panel-width, root.layout-content-width
+                - (root.sidebar-visible ? root.sidebar-width + 1px : 0px)
+                - root.minimum-workspace-width - 1px));
+    }
+
+    changed width => { root.fit-three-columns(); }
+    changed code-visible => { root.fit-three-columns(); }
+
+    ui-scale-layer := Rectangle {
+        x: root.window-edge-inset;
+        y: root.window-edge-inset;
+        width: (root.width - root.window-edge-inset * 2) / root.applied-ui-scale;
+        height: (root.height - root.window-edge-inset * 2) / root.applied-ui-scale;
+        background: Palette.app-bg;
+        border-radius: root.window-maximized ? 0px : 4px;
+        border-width: root.window-maximized ? 0px : 0.67px;
+        border-color: root.window-maximized ? transparent : rgba(28, 25, 23, 0.12);
         clip: true;
         transform-origin: { x: 0px, y: 0px };
         transform-scale: root.applied-ui-scale;
@@ -554,6 +607,10 @@ export component MainWindow inherits Window {
                 settings-open <=> root.settings-open;
                 sidebar-visible <=> root.sidebar-visible;
                 sidebar-width <=> root.sidebar-width;
+                host-width: root.layout-content-width;
+                code-visible: root.code-visible;
+                code-panel-width: root.code-panel-width;
+                minimum-workspace-width: root.minimum-workspace-width;
                 new-session => { root.new-session(); }
                 select-navigation(index) => { root.select-navigation(index); }
                 search-changed(text) => { root.search-changed(text); }
@@ -565,6 +622,11 @@ export component MainWindow inherits Window {
                 end-window-drag => { root.end-window-drag(); }
             }
             workspace-panel := WorkspacePanel {
+                // The middle column is the only flexible column. It contracts
+                // when the fixed-width review panel opens and immediately
+                // reclaims that space when the panel closes.
+                min-width: root.minimum-workspace-width;
+                horizontal-stretch: 1;
                 conversation-workflow: root.conversation-workflow;
                 slash-commands: root.slash-commands;
                 model-choices: root.model-choices;
@@ -667,7 +729,7 @@ export component MainWindow inherits Window {
                 host-width: ui-scale-layer.width;
                 sidebar-visible: root.sidebar-visible;
                 sidebar-width: root.sidebar-width;
-                status-text: root.status-text;
+                minimum-workspace-width: root.minimum-workspace-width;
                 right-tabs <=> root.right-tabs;
                 right-tab <=> root.right-tab;
                 review-files <=> root.review-files;
@@ -676,7 +738,6 @@ export component MainWindow inherits Window {
                 branch-options: root.branch-options;
                 review-added: root.review-added;
                 review-removed: root.review-removed;
-                review-list-height: root.review-list-height;
                 selected-review-file-id <=> root.selected-review-file-id;
                 selected-review-path: root.selected-review-path;
                 selected-review-added: root.selected-review-added;
@@ -685,6 +746,8 @@ export component MainWindow inherits Window {
                 diff-view-mode <=> root.diff-view-mode;
                 file-list-visible <=> root.file-list-visible;
                 diff-content-width <=> root.diff-content-width;
+                diff-content-height <=> root.diff-content-height;
+                diff-split-extra: root.diff-split-extra;
                 tree-items <=> root.tree-items;
                 tree-search <=> root.tree-search;
                 tree-file-name: root.tree-file-name;

@@ -1,8 +1,8 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
-#include <thread>
 #include <cmath>
+#include <thread>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -904,24 +904,11 @@ int run_application(int argc, char **argv) {
   window->on_set_code_panel_visible([window](bool visible) {
     if (visible == window->get_code_visible())
       return;
-
-    const auto maximized = window->window().is_maximized();
-    auto physical_size = window->window().size();
-    const auto scale = window->window().scale_factor();
-    const auto panel_delta = static_cast<std::uint32_t>(
-        std::lround((window->get_code_panel_width() + 1.0f) * scale));
-
+    // Keep the native window bounds stable. The main Slint HorizontalLayout
+    // owns all three columns, so changing this property makes the flexible
+    // workspace column yield/reclaim the right-panel width automatically.
+    // Resizing the HWND here used to push the window beyond the monitor edge.
     window->set_code_visible(visible);
-    if (!maximized) {
-      if (visible) {
-        physical_size.width += panel_delta;
-      } else {
-        physical_size.width = physical_size.width > panel_delta
-                                  ? physical_size.width - panel_delta
-                                  : physical_size.width;
-      }
-      window->window().set_size(physical_size);
-    }
   });
   window->on_refresh_trace([&controller] { controller->publish_trace_view(); });
   window->on_export_trace([&controller] { controller->export_trace(); });

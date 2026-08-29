@@ -10,6 +10,10 @@ export component SidebarPanel inherits HorizontalLayout {
     in-out property <bool> settings-open;
     in-out property <bool> sidebar-visible;
     in-out property <length> sidebar-width;
+    in property <length> host-width;
+    in property <bool> code-visible;
+    in property <length> code-panel-width;
+    in property <length> minimum-workspace-width: 300px;
 
     callback new-session();
     callback select-navigation(int);
@@ -21,7 +25,9 @@ export component SidebarPanel inherits HorizontalLayout {
     callback update-window-drag();
     callback end-window-drag();
 
-    width: root.sidebar-visible ? root.sidebar-width + 1px : 0px;
+    min-width: root.sidebar-visible ? root.sidebar-width + 1px : 0px;
+    preferred-width: root.sidebar-visible ? root.sidebar-width + 1px : 0px;
+    max-width: root.sidebar-visible ? root.sidebar-width + 1px : 0px;
     horizontal-stretch: 0;
     spacing: 0px;
             Rectangle {
@@ -339,7 +345,14 @@ export component SidebarPanel inherits HorizontalLayout {
                     x: -3px;
                     width: 7px;
                     moved => {
-                        root.sidebar-width = Math.max(196px, Math.min(420px,
+                        // The left divider owns only the sidebar/workspace
+                        // boundary. Keep the independently sized right panel
+                        // untouched and stop when the workspace reaches its
+                        // responsive minimum.
+                        root.sidebar-width = Math.max(196px,
+                            Math.min(Math.min(420px, root.host-width
+                                - (root.code-visible ? root.code-panel-width + 1px : 0px)
+                                - root.minimum-workspace-width - 1px),
                             root.sidebar-width + (self.mouse-x - self.pressed-x)));
                     }
                     mouse-cursor: ew-resize;

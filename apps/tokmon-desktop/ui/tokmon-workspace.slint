@@ -242,7 +242,10 @@ export component WorkspacePanel inherits Rectangle {
         root.environment-last-width = root.width;
     }
 
-                min-width: 480px;
+                // Compact mode keeps the conversation usable beside an open
+                // right panel. Fixed toolbar labels collapse to icons below
+                // this width instead of overflowing into the adjacent panel.
+                min-width: 300px;
                 horizontal-stretch: 1;
                 background: Palette.surface;
                 VerticalLayout {
@@ -792,6 +795,7 @@ export component WorkspacePanel inherits Rectangle {
                                 }
                             }
                             composer := Rectangle {
+                                property <bool> compact-toolbar: self.width < 560px;
                                 // Keep a real 16px bottom breathing space without
                                 // changing the 100px composer-card thickness.
                                 y: parent.height - 164px;
@@ -812,6 +816,7 @@ export component WorkspacePanel inherits Rectangle {
                                                 x: 20px;
                                                 y: 6px;
                                                 z: 2;
+                                                available-width: parent.width - 40px;
                                                 workspace-project: root.workspace-project;
                                                 workspace-path: root.workspace-short-path == "" ? root.setting-workspace : root.workspace-short-path;
                                                 workspace-branch: root.workspace-branch;
@@ -891,17 +896,17 @@ export component WorkspacePanel inherits Rectangle {
                                                         }
                                                     }
                                                     access-button := Rectangle {
-                                                        width: 104px;
+                                                        width: composer.compact-toolbar ? 28px : 104px;
                                                         height: 28px;
                                                         border-radius: 8px;
                                                         horizontal-stretch: 0;
                                                         HorizontalLayout {
-                                                            padding-left: 8px;
-                                                            padding-right: 8px;
+                                                            padding-left: composer.compact-toolbar ? 7px : 8px;
+                                                            padding-right: composer.compact-toolbar ? 7px : 8px;
                                                             spacing: 6px;
                                                             Image { source: Icons.shield; width: 14px; height: 14px; y: (parent.height - 14px) / 2; }
-                                                            Text { text: root.access-mode; font-size: 12.5px; font-weight: 500; color: Palette.amber; vertical-alignment: center; }
-                                                            Image { source: Icons.chev-down-faint; width: 10px; height: 6px; y: (parent.height - 6px) / 2; }
+                                                            if !composer.compact-toolbar : Text { text: root.access-mode; font-size: 12.5px; font-weight: 500; color: Palette.amber; vertical-alignment: center; }
+                                                            if !composer.compact-toolbar : Image { source: Icons.chev-down-faint; width: 10px; height: 6px; y: (parent.height - 6px) / 2; }
                                                         }
                                                         TouchArea {
                                                             clicked => {
@@ -951,14 +956,21 @@ export component WorkspacePanel inherits Rectangle {
                                                         }
                                                     }
                                                     model-button := Rectangle {
+                                                        width: composer.compact-toolbar ? 28px : self.preferred-width;
                                                         height: 28px;
                                                         border-radius: 8px;
                                                         horizontal-stretch: 0;
                                                         HorizontalLayout {
-                                                            padding-left: 8px;
-                                                            padding-right: 8px;
+                                                            padding-left: composer.compact-toolbar ? 7px : 8px;
+                                                            padding-right: composer.compact-toolbar ? 7px : 8px;
                                                             spacing: 6px;
-                                                            Text {
+                                                            if composer.compact-toolbar : Image {
+                                                                source: Icons.sparkles;
+                                                                width: 14px;
+                                                                height: 14px;
+                                                                y: (parent.height - 14px) / 2;
+                                                            }
+                                                            if !composer.compact-toolbar : Text {
                                                                 text: root.setting-name + " · " + root.model-name;
                                                                 font-family: "MiSans VF";
                                                                 font-size: 12px;
@@ -966,7 +978,7 @@ export component WorkspacePanel inherits Rectangle {
                                                                 color: Palette.strong;
                                                                 vertical-alignment: center;
                                                             }
-                                                            Image { source: Icons.chev-down-faint; width: 10px; height: 6px; y: (parent.height - 6px) / 2; }
+                                                            if !composer.compact-toolbar : Image { source: Icons.chev-down-faint; width: 10px; height: 6px; y: (parent.height - 6px) / 2; }
                                                         }
                                                         TouchArea {
                                                             clicked => {
@@ -981,16 +993,17 @@ export component WorkspacePanel inherits Rectangle {
                                                         }
                                                     }
                                                     effort-button := Rectangle {
+                                                        width: composer.compact-toolbar ? 28px : self.preferred-width;
                                                         height: 28px;
                                                         border-radius: 8px;
                                                         horizontal-stretch: 0;
                                                         HorizontalLayout {
-                                                            padding-left: 8px;
-                                                            padding-right: 8px;
+                                                            padding-left: composer.compact-toolbar ? 7px : 8px;
+                                                            padding-right: composer.compact-toolbar ? 7px : 8px;
                                                             spacing: 6px;
                                                             Image { source: Icons.rocket; width: 14px; height: 14px; y: (parent.height - 14px) / 2; }
-                                                            Text { text: root.effort; font-size: 12.5px; font-weight: 500; color: Palette.strong; vertical-alignment: center; }
-                                                            Image { source: Icons.chev-down-faint; width: 10px; height: 6px; y: (parent.height - 6px) / 2; }
+                                                            if !composer.compact-toolbar : Text { text: root.effort; font-size: 12.5px; font-weight: 500; color: Palette.strong; vertical-alignment: center; }
+                                                            if !composer.compact-toolbar : Image { source: Icons.chev-down-faint; width: 10px; height: 6px; y: (parent.height - 6px) / 2; }
                                                         }
                                                         TouchArea {
                                                             clicked => {
