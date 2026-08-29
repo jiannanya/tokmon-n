@@ -13,5 +13,64 @@
     "openssl",
     "zlib",
     "zstd"
-  ]
+  ],
+  "features": {
+    "desk": {
+      "description": "Native tokmon-desk UI stack",
+      "dependencies": [
+        "freetype",
+        "harfbuzz",
+        {
+          "name": "libgit2",
+          "default-features": false,
+          "features": [
+            "pcre2",
+            "ssl"
+          ]
+        },
+        {
+          "name": "rmlui",
+          "features": [
+            "svg"
+          ]
+        },
+        "sdl3",
+        {
+          "name": "skia",
+          "default-features": false,
+          "features": [
+            "direct3d",
+            "freetype",
+            "harfbuzz",
+            "png"
+          ],
+          "platform": "windows"
+        },
+        {
+          "name": "skia",
+          "default-features": false,
+          "features": [
+            "freetype",
+            "harfbuzz",
+            "metal",
+            "png"
+          ],
+          "platform": "osx"
+        },
+        {
+          "name": "skia",
+          "default-features": false,
+          "features": [
+            "fontconfig",
+            "freetype",
+            "harfbuzz",
+            "png",
+            "vulkan"
+          ],
+          "platform": "linux"
+        },
+        "tree-sitter"
+      ]
+    }
+  }
 }

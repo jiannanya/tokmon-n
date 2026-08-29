@@ -18,6 +18,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(TOKMON_BUILD_DESKTOP "Build the optional Slint desktop application" OFF)
+option(TOKMON_BUILD_DESK "Build the native SDL3/RmlUi/Skia tokmon-desk application" OFF)
 option(TOKMON_BUILD_EXTERNAL_LENSES
   "Build and install standalone C-ABI Lens plugin modules" OFF)
 option(TOKMON_BUILD_TESTS "Build Tokmon tests" ON)
@@ -176,6 +177,11 @@ if(TOKMON_NEED_LENS_MODULES)
   endforeach()
 endif()
 
+if(TOKMON_BUILD_DESKTOP OR TOKMON_BUILD_DESK)
+  include(MiSans)
+  tokmon_prepare_misans_font(TOKMON_MISANS_FONT_FILE)
+endif()
+
 if(TOKMON_BUILD_DESKTOP)
   find_package(Slint 1.17.1 EXACT CONFIG QUIET)
   if(NOT Slint_FOUND)
@@ -183,9 +189,6 @@ if(TOKMON_BUILD_DESKTOP)
       "Slint 1.17.1 was not found. Set CMAKE_PREFIX_PATH to the project-local "
       "Slint C++ SDK. See scripts/bootstrap-slint.ps1.")
   endif()
-
-  include(MiSans)
-  tokmon_prepare_misans_font(TOKMON_MISANS_FONT_FILE)
 
   add_executable(tokmon-desktop WIN32
     apps/tokmon-desktop/main.cpp
@@ -273,10 +276,17 @@ if(TOKMON_BUILD_DESKTOP)
   endif()
 endif()
 
+if(TOKMON_BUILD_DESK)
+  add_subdirectory(apps/tokmon-desk)
+endif()
+
 set(TOKMON_RELEASE_TARGETS
   tokmon_sqlite3 tokmon_core ${TOKMON_RUNTIME_TARGETS} ${TOKMON_LENS_TARGETS})
 if(TARGET tokmon-desktop)
   list(APPEND TOKMON_RELEASE_TARGETS tokmon-desktop)
+endif()
+if(TARGET tokmon-desk)
+  list(APPEND TOKMON_RELEASE_TARGETS tokmon-desk)
 endif()
 foreach(target IN LISTS TOKMON_RELEASE_TARGETS)
   tokmon_optimize_release_target("${target}")
@@ -284,6 +294,7 @@ endforeach()
 
 message(STATUS "Tokmon unified runtime: tokmon")
 message(STATUS "Tokmon desktop: ${TOKMON_BUILD_DESKTOP}")
+message(STATUS "Tokmon desk: ${TOKMON_BUILD_DESK}")
 message(STATUS "Tokmon external Lenses: ${TOKMON_BUILD_EXTERNAL_LENSES}")
 
 if(BUILD_TESTING AND TOKMON_BUILD_TESTS)
@@ -312,6 +323,16 @@ if(TARGET tokmon-desktop)
   install(FILES "${TOKMON_MISANS_FONT_FILE}" DESTINATION bin/assets/fonts)
   if(WIN32)
     install(FILES $<TARGET_RUNTIME_DLLS:tokmon-desktop> DESTINATION bin)
+  endif()
+endif()
+if(TARGET tokmon-desk)
+  install(TARGETS tokmon-desk RUNTIME DESTINATION bin BUNDLE DESTINATION bin)
+  install(DIRECTORY apps/tokmon-desk/assets/ DESTINATION bin/assets)
+  install(DIRECTORY apps/tokmon-desk/rml/ DESTINATION bin/rml)
+  install(FILES apps/tokmon-desk/THIRD_PARTY_NOTICES.md DESTINATION bin)
+  install(FILES "${TOKMON_MISANS_FONT_FILE}" DESTINATION bin/assets/fonts)
+  if(WIN32)
+    install(FILES $<TARGET_RUNTIME_DLLS:tokmon-desk> DESTINATION bin)
   endif()
 endif()
 if(TOKMON_BUILD_EXTERNAL_LENSES AND TOKMON_LENS_TARGETS)

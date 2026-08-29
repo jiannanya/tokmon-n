@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "capturedAt": "2026-08-29",
+  "priority": [
+    "apps/tokmon-desktop runtime implementation",
+    "Tokmon UI prototype",
+    "DESKTOP-RMLUI-FINAL-ARCHITECTURE.md"
+  ],
+  "legacyDesktop": {
+    "repositoryCommit": "1c863c1e8f750da21749bcb18a10befa1aa47c88",
+    "themeFile": "apps/tokmon-desktop/ui/tokmon-theme.slint",
+    "themeSha256": "d0b2740eedc057a7ddd2dc359d09f95dc18d10784842098419b1c13d8a5c2d53",
+    "mainUiFile": "apps/tokmon-desktop/ui/tokmon.slint",
+    "mainUiSha256": "ef8c9829157726744d3c8105a4c793c31726ca90181f20cc16210cd78276388a",
+    "sampleIconSha256": "188a96c84a8de499996a26d5b18fee67aaf1c75eac6d61c22dded12668796ab9"
+  },
+  "prototype": {
+    "path": "E:/cc/AI/tokmon/Tokmon UI",
+    "repositoryCommit": "bb9f7fe80217d20f651e5df7baa15ade8345dea2",
+    "appTsxSha256": "f7a01982491c32bbb757e0a5bae75b4ea21e137bcea6d3304a410835e37b70ef",
+    "interactionUrl": "http://localhost:8443/",
+    "role": "secondary interaction reference only"
+  },
+  "policy": "This manifest freezes references; tokmon-desk never loads assets or code from apps/tokmon-desktop at runtime."
+}

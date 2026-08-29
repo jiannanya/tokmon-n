@@ -1,0 +1,7 @@
+button { cursor: pointer; }
+button:hover { filter: brightness(0.985); }
+button:active { transform: translate(0px, 1px); }
+input:focus, textarea:focus { outline-width: 0; }
+code { font-family: "MiSans VF"; }
+h1, h2, h3, p { color: inherit; }
+.drag-region { cursor: move; }

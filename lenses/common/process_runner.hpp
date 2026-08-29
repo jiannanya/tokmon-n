@@ -42,6 +42,11 @@ struct ProcessRequest {
   std::size_t max_memory_bytes{0};
   std::chrono::milliseconds max_cpu_time{0};
   std::size_t max_processes{0};
+  // Some CLIs intentionally launch a persistent helper (for example a local
+  // browser automation daemon). The default remains a kill-on-close process
+  // tree; callers must opt in explicitly when the helper is part of their
+  // lifecycle contract.
+  bool allow_background_children{false};
   std::function<void(std::string_view)> on_stdout;
   std::function<void(std::string_view)> on_stderr;
   std::stop_token stop;

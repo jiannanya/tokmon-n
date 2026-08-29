@@ -1,0 +1,121 @@
+<!DOCTYPE rml>
+<rml>
+<head>
+  <title>tokmon-desk</title>
+  <link type="text/rcss" href="../themes/legacy-palette.rcss"/>
+  <link type="text/rcss" href="../themes/legacy-metrics.rcss"/>
+  <link type="text/rcss" href="../themes/legacy-components.rcss"/>
+</head>
+<body id="app-shell">
+  <div id="sidebar" class="sidebar">
+    <div class="brand-row drag-region">
+      <svg class="brand-logo" src="../../assets/figma/icon-00.svg"></svg>
+      <span class="brand-name">Tokmon</span>
+    </div>
+    <button id="new-session-button" class="new-session-button"><span class="plus">＋</span> 新建会话</button>
+    <div class="search-box"><span class="search-icon">⌕</span><input id="navigation-search" type="text" placeholder="搜索会话、项目或分组..."/></div>
+    <div class="tree-caption">分组 / 项目 / 会话</div>
+    <div id="navigation-tree" class="navigation-tree"></div>
+    <button id="settings-button" class="settings-button"><svg src="../../assets/figma/icon-13.svg"></svg>设置</button>
+  </div>
+
+  <button id="sidebar-toggle" class="panel-toggle left-toggle">‹</button>
+
+  <div id="workspace" class="workspace">
+    <div class="workspace-titlebar drag-region">
+      <button class="title-icon">▣</button>
+      <span id="session-title" class="session-title">新会话</span>
+      <button id="title-edit" class="title-edit">⌕</button>
+      <div class="mode-pill"><button id="chat-mode" class="active">对话</button><button id="trajectory-mode">轨迹</button></div>
+      <button id="environment-toggle" class="environment-button">环境信息</button>
+    </div>
+    <div id="environment-panel" class="environment-panel hidden">
+      <div><strong>环境信息 · subtitle-agent</strong><span class="branch-chip">main</span></div>
+      <div class="environment-grid"><div class="environment-row"><span>工作空间</span><code id="workspace-path">E:\cc\AI\tokmon\tokmon-n</code></div><div class="environment-row"><span>Daemon</span><span id="daemon-status">正在连接后台服务</span></div></div>
+    </div>
+    <div id="initial-session" class="initial-session">
+      <div class="starter-block">
+        <h1>你想在 <strong id="starter-workspace-name">tokmon-desk-work-test</strong> 中创造什么？</h1>
+        <div class="starter-grid">
+          <button class="starter-card" data-starter="explore"><span class="starter-icon explore"><svg src="../../assets/figma/starter-explore.svg"></svg></span><strong>探索并理解代码</strong><small>梳理架构、依赖与核心逻辑</small></button>
+          <button class="starter-card" data-starter="build"><span class="starter-icon build"><svg src="../../assets/figma/starter-build.svg"></svg></span><strong>构建新功能、应用或工具</strong><small>设计方案并编写实现代码</small></button>
+          <button class="starter-card" data-starter="review"><span class="starter-icon review"><svg src="../../assets/figma/starter-review.svg"></svg></span><strong>审查代码并提出修改建议</strong><small>排查隐患与提升代码规范</small></button>
+          <button class="starter-card" data-starter="fix"><span class="starter-icon fix"><svg src="../../assets/figma/starter-fix.svg"></svg></span><strong>修复问题和失败</strong><small>诊断报错堆栈并修复异常</small></button>
+        </div>
+      </div>
+    </div>
+    <div id="conversation" class="conversation hidden"></div>
+    <div id="trajectory" class="trajectory hidden"><div class="trajectory-empty"><strong>尚无执行轨迹</strong><span>提交请求后，真实 Photon 事件会在这里按因果顺序显示</span></div></div>
+    <div class="composer-wrap">
+      <div class="workspace-context"><svg src="../../assets/figma/icon-18.svg"></svg><strong id="composer-workspace-name">tokmon-desk-work-test</strong><span>·</span><svg src="../../assets/figma/icon-19.svg"></svg><span>本地</span><span>·</span><svg src="../../assets/figma/icon-50.svg"></svg><span class="branch">无 Git</span></div>
+      <div class="composer-card">
+        <input id="composer" type="text" placeholder="随心输入需求，或点击上方卡片快速开始..."/>
+        <div class="composer-toolbar">
+          <div class="composer-tools"><button id="attach-button" class="round-button">＋</button><span id="attachment-pill" class="attachment-pill hidden"></span><button id="network-toggle" class="tool-pill active">◎ 联网</button><button id="access-button" class="tool-pill access">♢ 完全访问⌄</button></div>
+          <div class="composer-options"><button class="context-ring">◌</button><button id="active-model" class="select-pill">选择模型⌄</button><button id="effort-button" class="select-pill">♙ 高⌄</button><button id="send-button" class="send-button">↑</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <button id="right-toggle" class="panel-toggle right-toggle">›</button>
+
+  <div id="right-panel" class="right-panel">
+    <div class="window-controls drag-region"><button id="add-tab-button">＋</button><div class="active-right-title"><svg src="../../assets/figma/icon-51.svg"></svg><strong id="active-right-label">审查</strong><span id="active-right-shortcut">Ctrl+Shift+G</span></div><span class="window-spacer"></span><button id="right-fullscreen">⌗</button><button id="right-collapse">◁</button><button id="minimize-button">─</button><button id="maximize-button">□</button><button id="close-button" class="close-window">×</button></div>
+    <div class="right-tabs">
+      <button id="review-tab" class="right-tab active"><svg src="../../assets/figma/icon-51.svg"></svg><strong>审查</strong><span>Ctrl+Shift+G</span></button>
+      <button id="files-tab" class="right-tab"><svg src="../../assets/figma/icon-18.svg"></svg><strong>文件</strong><span>Ctrl+P</span></button>
+      <button id="terminal-tab" class="right-tab"><svg src="../../assets/figma/icon-19.svg"></svg><strong>终端</strong></button>
+      <button id="browser-tab" class="right-tab"><strong>◎ 浏览器</strong></button>
+    </div>
+    <section id="review-view" class="right-view">
+      <div class="review-toolbar"><button id="branch-button">⑂ main⌄</button><button id="commit-button"><svg src="../../assets/figma/icon-52.svg"></svg>提交或推送</button><button id="refresh-review">↻</button></div>
+      <div class="review-summary"><strong>更改</strong><span class="count-pill">0</span><button id="diff-view-toggle">并排</button></div>
+      <div id="review-empty" class="empty-panel"><svg src="../../assets/figma/icon-51.svg"></svg><strong>没有待审查的更改</strong><span>工作区修改会在这里显示</span></div>
+      <div id="review-diff" class="review-diff hidden"></div>
+      <div id="branch-menu" class="branch-menu hidden"></div>
+    </section>
+    <section id="files-view" class="right-view hidden">
+      <div class="panel-search"><input id="file-search" type="text" placeholder="搜索工作区文件..."/></div>
+      <tokmon-file-tree id="file-tree" class="file-tree" tab-index="0"></tokmon-file-tree>
+      <div class="editor-toolbar"><span id="file-path">选择文件以预览或编辑</span><span id="syntax-status"></span><button id="undo-file" disabled="">撤销</button><button id="redo-file" disabled="">重做</button><button id="reload-file">重新载入</button><button id="save-file">保存</button></div>
+      <tokmon-code-surface id="file-preview" class="file-preview" tab-index="0"></tokmon-code-surface>
+    </section>
+    <section id="terminal-view" class="right-view terminal-view hidden"><div class="terminal-toolbar"><div id="terminal-tabs" class="terminal-tabs"></div><button id="terminal-new-tab" title="新建终端">＋</button><button id="terminal-close-tab" title="关闭终端">×</button><span id="terminal-status">未启动</span><input id="terminal-search" type="text" placeholder="搜索当前终端"/><span id="terminal-search-count"></span><button id="terminal-clear-search">×</button></div><tokmon-terminal id="terminal-surface" tab-index="0"></tokmon-terminal><div id="terminal-hint" class="terminal-hint">点击终端后直接输入 · Ctrl+Shift+C/V 复制/粘贴 · Ctrl+单击打开 OSC 8 链接 · Esc 释放焦点</div></section>
+    <section id="browser-view" class="right-view hidden"><div class="browser-toolbar"><button id="browser-back" title="后退">‹</button><button id="browser-forward" title="前进">›</button><input id="browser-url" type="text" value="https://example.com"/><button id="browser-go">打开</button><button id="browser-reload">↻</button><button id="browser-stop">停止</button></div><div id="browser-permission" class="browser-permission"><span>独立 Tokmon Profile · 仅显式操作网页</span><button id="browser-takeover">用户接管</button></div><div class="browser-actionbar"><input id="browser-selector" type="text" placeholder="@e1 或 CSS 选择器"/><input id="browser-value" type="text" placeholder="填充值"/><button id="browser-click">点击</button><button id="browser-fill">填写</button></div><div id="browser-status" class="browser-placeholder">◎<strong>Agent Browser</strong><span>优先使用系统 Chrome/Chromium 与独立 Tokmon Profile</span><button id="browser-launch">启动 Agent Browser</button></div><img id="browser-preview" class="browser-preview hidden"/><pre id="browser-snapshot" class="browser-snapshot"></pre></section>
+    <div id="right-toast" class="right-toast hidden"></div>
+  </div>
+
+  <div id="settings-overlay" class="overlay hidden">
+    <div class="settings-dialog">
+      <div class="settings-sidebar"><h2>设置</h2><input id="settings-search" class="settings-search" type="text" placeholder="搜索设置..."/><button class="settings-nav active" data-page="general">通用</button><button class="settings-nav" data-page="model">智能体与模型</button><button class="settings-nav" data-page="access">权限与安全</button><button class="settings-nav" data-page="workspace">工作区</button><button class="settings-nav" data-page="notifications">通知</button><button class="settings-nav" data-page="appearance">外观</button><button class="settings-nav" data-page="shortcuts">快捷键</button><button class="settings-nav" data-page="account">账户</button><button class="settings-nav" data-page="terminal">终端</button><button class="settings-nav" data-page="browser">浏览器</button><button class="settings-nav" data-page="about">关于</button></div>
+      <div class="settings-content"><div class="settings-header"><div><h2 id="settings-title">通用</h2><p id="settings-description">管理 tokmon-desk 的本机工作台偏好</p></div><button id="close-settings">×</button></div>
+        <div id="settings-body">
+        <div class="setting-card"><div><strong>启动时恢复上次工作区</strong><p>恢复窗口布局、打开标签和本地状态</p></div><button class="toggle on"><span></span></button></div>
+        <div class="setting-card"><div><strong>界面缩放</strong><p>保持旧版默认缩放与 DPI 行为</p></div><button class="select-pill">自动（跟随系统）⌄</button></div>
+        <div class="setting-card"><div><strong>主题与颜色</strong><p>技术重写期间固定使用旧版 Tokmon Palette</p></div><span class="locked-value">旧版主题 · 已锁定</span></div>
+        </div>
+        <div class="settings-footer"><span id="settings-status">已从当前工作区配置载入</span><button id="reset-settings" class="secondary-button">恢复默认</button><button id="save-settings" class="primary-button">保存更改</button></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="new-session-overlay" class="overlay hidden">
+    <div class="modal"><div class="modal-header"><h2>新建会话</h2><button id="close-new-session">×</button></div><label>会话名称</label><input id="new-session-title" type="text" value="新会话"/><label>所属项目</label><select id="new-session-project" class="select-box"></select><span id="new-session-error" class="form-error"></span><div class="modal-footer"><button id="cancel-new-session" class="secondary-button">取消</button><button id="confirm-new-session" class="primary-button">创建并进入会话</button></div></div>
+  </div>
+
+  <div id="composer-popover" class="composer-popover hidden"></div>
+
+  <div id="commit-overlay" class="overlay hidden">
+    <div class="modal"><div class="modal-header"><h2>提交更改</h2><button id="close-commit">×</button></div><label>提交信息</label><input id="commit-message" type="text" value="Update from tokmon-desk"/><div class="modal-footer"><button id="cancel-commit" class="secondary-button">取消</button><button id="confirm-commit" class="primary-button">提交</button><button id="confirm-push" class="primary-button">提交并推送</button></div></div>
+  </div>
+
+  <div id="discard-overlay" class="overlay hidden">
+    <div class="modal danger-modal"><div class="modal-header"><h2>确认放弃修改</h2><button id="close-discard">×</button></div><p id="discard-description">此操作会修改工作区文件，且无法从 tokmon-desk 撤销。</p><div class="modal-footer"><button id="cancel-discard" class="secondary-button">取消</button><button id="confirm-discard" class="danger-button">确认放弃</button></div></div>
+  </div>
+
+  <div id="terminal-paste-overlay" class="overlay hidden">
+    <div class="modal danger-modal"><div class="modal-header"><h2>确认粘贴多行命令</h2></div><p>剪贴板包含换行或终端控制序列，粘贴后可能立即执行命令。仅在确认内容可信时继续。</p><div class="modal-footer"><button id="cancel-terminal-paste" class="secondary-button">取消</button><button id="confirm-terminal-paste" class="danger-button">仍然粘贴</button></div></div>
+  </div>
+</body>
+</rml>

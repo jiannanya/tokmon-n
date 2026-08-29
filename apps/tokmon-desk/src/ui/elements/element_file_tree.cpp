@@ -1,0 +1,109 @@
+#include "ui/elements/element_file_tree.hpp"
+
+#include <RmlUi/Core/Core.h>
+#include <RmlUi/Core/ElementInstancer.h>
+#include <RmlUi/Core/Factory.h>
+#include <RmlUi/Core/FontEngineInterface.h>
+#include <RmlUi/Core/MeshUtilities.h>
+#include <RmlUi/Core/RenderManager.h>
+#include <RmlUi/Core/TextShapingContext.h>
+
+#include <algorithm>
+#include <cmath>
+
+namespace tokmon::desk {
+
+ElementFileTree::ElementFileTree(const Rml::String& tag) : Rml::Element(tag) {}
+
+void ElementFileTree::set_rows(std::vector<WorkspaceEntry> rows) {
+  rows_ = std::move(rows);
+  first_row_ = std::min(first_row_, rows_.empty() ? 0u : rows_.size() - 1u);
+  ++revision_;
+}
+
+void ElementFileTree::set_selected(std::string relative_path) {
+  selected_ = std::move(relative_path);
+  ++revision_;
+}
+
+std::optional<WorkspaceEntry> ElementFileTree::row_at(const float local_y) const {
+  constexpr float row_height = 27.f;
+  const auto index = first_row_ + static_cast<std::size_t>(
+      std::max(0.f, local_y) / row_height);
+  return index < rows_.size() ? std::optional(rows_[index]) : std::nullopt;
+}
+
+void ElementFileTree::scroll_lines(const int lines) {
+  if (lines < 0)
+    first_row_ -= std::min(first_row_, static_cast<std::size_t>(-lines));
+  else
+    first_row_ = std::min(first_row_ + static_cast<std::size_t>(lines),
+                          rows_.empty() ? 0u : rows_.size() - 1u);
+  ++revision_;
+}
+
+void ElementFileTree::rebuild_geometry(const Rml::Vector2f size) {
+  decoration_geometry_ = {};
+  text_geometry_.clear();
+  geometry_size_ = size;
+  geometry_revision_ = revision_;
+  rendered_rows_ = 0;
+  auto* render_manager = GetRenderManager();
+  auto* font_engine = Rml::GetFontEngineInterface();
+  const auto face = GetFontFaceHandle();
+  if (!render_manager || !font_engine || !face)
+    return;
+
+  constexpr float row_height = 27.f;
+  const auto visible = static_cast<std::size_t>(
+      std::ceil(std::max(size.y, row_height) / row_height)) + 1u;
+  Rml::Mesh decorations;
+  static const Rml::String language;
+  Rml::TextShapingContext shaping{language};
+  shaping.text_direction = Rml::Style::Direction::Ltr;
+  shaping.font_kerning = Rml::Style::FontKerning::Auto;
+
+  for (std::size_t offset = 0; offset < visible; ++offset) {
+    const auto index = first_row_ + offset;
+    if (index >= rows_.size())
+      break;
+    const auto& row = rows_[index];
+    const float y = static_cast<float>(offset) * row_height;
+    if (row.relative_path == selected_)
+      Rml::MeshUtilities::GenerateQuad(
+          decorations, {2.f, y + 1.f}, {std::max(0.f, size.x - 4.f), row_height - 2.f},
+          Rml::Colourb(247, 239, 229).ToPremultiplied());
+    const float x = 10.f + static_cast<float>(row.depth) * 14.f;
+    const std::string label = std::string(row.directory
+        ? (row.expanded ? "v  " : ">  ") : "   ") + row.name;
+    Rml::TexturedMeshList meshes;
+    (void)font_engine->GenerateString(
+        *render_manager, face, {}, label, {x, y + 18.f},
+        Rml::Colourb(row.directory ? 68 : 87, row.directory ? 64 : 83,
+                     row.directory ? 60 : 78).ToPremultiplied(),
+        1.f, shaping, meshes);
+    for (auto& mesh : meshes)
+      text_geometry_.push_back({render_manager->MakeGeometry(std::move(mesh.mesh)),
+                                std::move(mesh.texture)});
+    ++rendered_rows_;
+  }
+  decoration_geometry_ = render_manager->MakeGeometry(std::move(decorations));
+}
+
+void ElementFileTree::OnRender() {
+  const Rml::Vector2f size{GetClientWidth(), GetClientHeight()};
+  if (revision_ != geometry_revision_ || size != geometry_size_)
+    rebuild_geometry(size);
+  const auto translation = GetAbsoluteOffset(Rml::BoxArea::Content);
+  if (decoration_geometry_)
+    decoration_geometry_.Render(translation);
+  for (const auto& item : text_geometry_)
+    item.geometry.Render(translation, item.texture);
+}
+
+void register_file_tree_element() {
+  Rml::Factory::RegisterElementInstancer(
+      "tokmon-file-tree", new Rml::ElementInstancerGeneric<ElementFileTree>());
+}
+
+} // namespace tokmon::desk

@@ -201,40 +201,43 @@ Result<ProcessOutput> run_process(ProcessRequest request) {
                                      "CreateProcessW failed: " + std::to_string(GetLastError())));
   }
 
-  HANDLE job = CreateJobObjectW(nullptr, nullptr);
-  if (!job) {
-    TerminateProcess(process.hProcess, 1);
-    close_handle(process.hThread); close_handle(process.hProcess);
-    close_handle(stdout_read); close_handle(stderr_read);
-    close_handle(stdin_write);
-    return tl::unexpected(make_error(ErrorCode::sandbox_rejected,
-                                     "cannot create Windows Job Object"));
-  }
-  JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
-  limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-  if (request.max_memory_bytes != 0) {
-    limits.ProcessMemoryLimit = request.max_memory_bytes;
-    limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PROCESS_MEMORY;
-  }
-  if (request.max_cpu_time > std::chrono::milliseconds::zero()) {
-    limits.BasicLimitInformation.PerProcessUserTimeLimit.QuadPart =
-        request.max_cpu_time.count() * 10'000;
-    limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PROCESS_TIME;
-  }
-  if (request.max_processes != 0) {
-    limits.BasicLimitInformation.ActiveProcessLimit =
-        static_cast<DWORD>(std::min<std::size_t>(request.max_processes, MAXDWORD));
-    limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
-  }
-  if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation,
-                               &limits, sizeof(limits)) ||
-      !AssignProcessToJobObject(job, process.hProcess)) {
-    TerminateProcess(process.hProcess, 1);
-    close_handle(job); close_handle(process.hThread); close_handle(process.hProcess);
-    close_handle(stdout_read); close_handle(stderr_read);
-    close_handle(stdin_write);
-    return tl::unexpected(make_error(ErrorCode::sandbox_rejected,
-                                     "cannot contain process in Windows Job Object"));
+  HANDLE job = nullptr;
+  if (!request.allow_background_children) {
+    job = CreateJobObjectW(nullptr, nullptr);
+    if (!job) {
+      TerminateProcess(process.hProcess, 1);
+      close_handle(process.hThread); close_handle(process.hProcess);
+      close_handle(stdout_read); close_handle(stderr_read);
+      close_handle(stdin_write);
+      return tl::unexpected(make_error(ErrorCode::sandbox_rejected,
+                                       "cannot create Windows Job Object"));
+    }
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (request.max_memory_bytes != 0) {
+      limits.ProcessMemoryLimit = request.max_memory_bytes;
+      limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PROCESS_MEMORY;
+    }
+    if (request.max_cpu_time > std::chrono::milliseconds::zero()) {
+      limits.BasicLimitInformation.PerProcessUserTimeLimit.QuadPart =
+          request.max_cpu_time.count() * 10'000;
+      limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PROCESS_TIME;
+    }
+    if (request.max_processes != 0) {
+      limits.BasicLimitInformation.ActiveProcessLimit =
+          static_cast<DWORD>(std::min<std::size_t>(request.max_processes, MAXDWORD));
+      limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
+    }
+    if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation,
+                                 &limits, sizeof(limits)) ||
+        !AssignProcessToJobObject(job, process.hProcess)) {
+      TerminateProcess(process.hProcess, 1);
+      close_handle(job); close_handle(process.hThread); close_handle(process.hProcess);
+      close_handle(stdout_read); close_handle(stderr_read);
+      close_handle(stdin_write);
+      return tl::unexpected(make_error(ErrorCode::sandbox_rejected,
+                                       "cannot contain process in Windows Job Object"));
+    }
   }
   ResumeThread(process.hThread);
   close_handle(process.hThread);
@@ -257,7 +260,9 @@ Result<ProcessOutput> run_process(ProcessRequest request) {
     });
     stdin_write = nullptr;
   }
-  output.sandbox_strength = "windows-job-object/process-tree";
+  output.sandbox_strength = request.allow_background_children
+      ? "windows-process/background-children-allowed"
+      : "windows-job-object/process-tree";
   const auto started_at = std::chrono::steady_clock::now();
   auto last_output_at = started_at;
   auto previous_stdout_size = output.stdout_text.size();
@@ -288,7 +293,10 @@ Result<ProcessOutput> run_process(ProcessRequest request) {
       (void)GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, process.dwProcessId);
       if (WaitForSingleObject(process.hProcess, 250) == WAIT_TIMEOUT) {
         output.forced_tree_termination = true;
-        TerminateJobObject(job, output.timed_out ? 124u : 125u);
+        if (job)
+          TerminateJobObject(job, output.timed_out ? 124u : 125u);
+        else
+          TerminateProcess(process.hProcess, output.timed_out ? 124u : 125u);
         WaitForSingleObject(process.hProcess, 5'000);
       }
       break;
