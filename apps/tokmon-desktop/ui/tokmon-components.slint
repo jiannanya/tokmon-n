@@ -523,7 +523,13 @@ export component SidebarRow inherits Rectangle {
             width: 22px;
             horizontal-stretch: 0;
             border-radius: 6px;
-            visible: root.item.expandable && ta.has-hover && !qta.has-hover;
+            background: quick-create-touch.has-hover ? Palette.sep : transparent;
+            animate background { duration: 100ms; }
+            // Only projects can host sessions. Groups remain expandable but do
+            // not expose a misleading quick-create action.
+            visible: root.item.kind == "project"
+                && (ta.has-hover || quick-create-touch.has-hover);
+            z: 2;
             Image {
                 source: Icons.plus-dim;
                 width: 14px;
@@ -531,15 +537,25 @@ export component SidebarRow inherits Rectangle {
                 x: (parent.width - 14px) / 2;
                 y: (parent.height - 14px) / 2;
             }
-            qta := TouchArea {
-                clicked => { root.quick-create() }
-                mouse-cursor: pointer;
-            }
         }
     }
     ta := TouchArea {
+        // Keep row selection/expansion out of the project's quick-create hit
+        // target. Overlapping TouchAreas made the later full-row handler win.
+        width: root.item.kind == "project" ? parent.width - 30px : parent.width;
         clicked => { parent.selected() }
         mouse-cursor: pointer;
+        z: 1;
+    }
+    quick-create-touch := TouchArea {
+        visible: root.item.kind == "project";
+        x: parent.width - 30px;
+        y: 0px;
+        width: 30px;
+        height: parent.height;
+        clicked => { root.quick-create() }
+        mouse-cursor: pointer;
+        z: 3;
     }
 }
 

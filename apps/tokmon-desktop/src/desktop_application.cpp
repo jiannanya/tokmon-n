@@ -425,11 +425,13 @@ int run_application(int argc, char **argv) {
     window->set_create_navigation_error("");
     window->set_create_navigation_open(true);
   });
-  window->on_quick_create([nav_model, navigation_state, window,
-                           navigation_workspace](int index) {
+  window->on_quick_create([nav_model, navigation_state, assets, window,
+                           &controller, navigation_workspace](int index) {
     if (index < 0 || index >= static_cast<int>(nav_model->row_count()))
       return;
     const auto clicked = *nav_model->row_data(index);
+    if (std::string(clicked.kind) != "project")
+      return;
     const auto found =
         std::ranges::find(*navigation_state, clicked.id, &NavigationItem::id);
     if (found == navigation_state->end())
@@ -438,24 +440,36 @@ int run_application(int argc, char **argv) {
         std::distance(navigation_state->begin(), found));
     const auto workspace = navigation_workspace_at(
         *navigation_state, state_index, navigation_workspace);
-    slint::SharedString group;
-    for (auto previous = state_index; previous > 0;) {
-      --previous;
-      if ((*navigation_state)[previous].indent >= found->indent)
-        continue;
-      if (std::string((*navigation_state)[previous].kind) == "group") {
-        group = (*navigation_state)[previous].title;
-        break;
-      }
-    }
     const auto title = default_new_session_title(*navigation_state);
-    window->set_create_navigation_kind("会话");
-    window->set_create_navigation_name(display_string(title));
-    window->set_create_navigation_workspace(
-        display_string(path_to_utf8(workspace)));
-    window->set_create_navigation_group(group);
-    window->set_create_navigation_error("");
-    window->set_create_navigation_open(true);
+    for (auto &item : *navigation_state)
+      item.selected = false;
+    found->expanded = true;
+
+    auto created = make_navigation_item(
+        assets, tokmon::make_id("session"), "session", title,
+        found->indent + 1, true, true, {}, std::string(found->workspace));
+    created.title_manual = false;
+
+    // Append after every existing descendant, keeping the new conversation in
+    // the clicked project even when that project already contains sessions.
+    auto insertion = state_index + 1;
+    while (insertion < navigation_state->size() &&
+           (*navigation_state)[insertion].indent > found->indent)
+      ++insertion;
+    navigation_state->insert(
+        navigation_state->begin() + static_cast<std::ptrdiff_t>(insertion),
+        std::move(created));
+
+    // A filtered tree could otherwise hide the newly inserted default title.
+    // Clear it so the immediate-create action is visibly immediate as well.
+    window->set_search_text(slint::SharedString{});
+    refresh_navigation(nav_model, navigation_state, {},
+                       slint::ComponentWeakHandle<MainWindow>(window));
+    window->set_session_title(display_string(title));
+    controller->save_navigation();
+    const auto target = path_to_utf8(workspace);
+    controller->switch_workspace(target);
+    controller->new_session(target);
   });
   window->on_clear_search([nav_model, navigation_state, window] {
     window->set_search_text(slint::SharedString{});
