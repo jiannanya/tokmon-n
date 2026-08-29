@@ -840,10 +840,19 @@ export component MainWindow inherits Window {
                         - (root.code-visible ? root.code-panel-width + 1px : 0px)
                         - root.minimum-workspace-width - 1px);
                     if next-width <= root.minimum-sidebar-width {
-                        root.sidebar-visible = false;
+                        // Pointer move events continue while the reveal animation
+                        // is running. Reassigning the same visibility value on
+                        // every event restarts Slint's transition and makes the
+                        // auto-collapse look low-frame-rate. Match the guarded
+                        // right-panel callback and toggle only on a real edge.
+                        if root.sidebar-visible {
+                            root.sidebar-visible = false;
+                        }
                     } else if width-limit >= root.minimum-sidebar-width {
                         root.sidebar-width = Math.min(width-limit, next-width);
-                        root.sidebar-visible = true;
+                        if !root.sidebar-visible {
+                            root.sidebar-visible = true;
+                        }
                     }
                 }
             }
