@@ -26,7 +26,7 @@ export component SidebarPanel inherits Rectangle {
     callback clear-search();
     callback settings-searched(string);
     callback drag-window();
-    callback update-window-drag();
+    callback update-window-drag(length, length);
     callback end-window-drag();
 
     min-width: root.layout-width;
@@ -105,7 +105,9 @@ export component SidebarPanel inherits Rectangle {
                                         }
                                         moved => {
                                             if self.pressed {
-                                                root.update-window-drag();
+                                                root.update-window-drag(
+                                                    self.mouse-x - self.pressed-x,
+                                                    self.mouse-y - self.pressed-y);
                                             }
                                         }
                                     }

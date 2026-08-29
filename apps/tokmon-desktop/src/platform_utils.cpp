@@ -1,6 +1,8 @@
 #include "platform_utils.hpp"
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cwchar>
 #include <cwctype>
@@ -357,12 +359,14 @@ void set_current_process_window_topmost(const bool enabled) {
 void set_current_process_window_topmost(const bool) {}
 #endif
 
-#if defined(_WIN32)
 namespace {
+using WindowDragClock = std::chrono::steady_clock;
+
 struct ProcessWindowDragState {
-  HWND window = nullptr;
-  POINT cursor_origin{};
-  POINT window_origin{};
+  slint::Window *window = nullptr;
+  float pending_delta_x = 0.0f;
+  float pending_delta_y = 0.0f;
+  WindowDragClock::time_point last_update{};
   bool active = false;
 };
 
@@ -370,50 +374,69 @@ ProcessWindowDragState &process_window_drag_state() {
   static ProcessWindowDragState state;
   return state;
 }
-} // namespace
-#endif
 
-void drag_current_process_window() {
-#if defined(_WIN32)
-  auto &state = process_window_drag_state();
-  state.active = false;
-  const auto hwnd = current_process_window();
-  RECT bounds{};
-  POINT cursor{};
-  if (!hwnd || !GetWindowRect(hwnd, &bounds) || !GetCursorPos(&cursor))
+void apply_pending_window_drag(ProcessWindowDragState &state) {
+  if (!state.active || state.window == nullptr)
     return;
-  state.window = hwnd;
-  state.cursor_origin = cursor;
-  state.window_origin = POINT{bounds.left, bounds.top};
+
+  const auto scale = std::max(0.01f, state.window->scale_factor());
+  const auto delta_x =
+      static_cast<std::int32_t>(std::lround(state.pending_delta_x * scale));
+  const auto delta_y =
+      static_cast<std::int32_t>(std::lround(state.pending_delta_y * scale));
+  state.pending_delta_x = 0.0f;
+  state.pending_delta_y = 0.0f;
+  if (delta_x == 0 && delta_y == 0)
+    return;
+
+  const auto position = state.window->position();
+  slint::PhysicalPosition next_position{};
+  next_position.x = position.x + delta_x;
+  next_position.y = position.y + delta_y;
+  state.window->set_position(next_position);
+}
+} // namespace
+
+void drag_current_process_window(slint::Window &window) {
+  auto &state = process_window_drag_state();
+  state.window = &window;
+  state.pending_delta_x = 0.0f;
+  state.pending_delta_y = 0.0f;
+  // Make the first movement eligible immediately. Later pointer events are
+  // coalesced to one window update per display frame instead of synchronously
+  // moving the window for every raw input event.
+  state.last_update = WindowDragClock::now() - std::chrono::milliseconds(16);
   state.active = true;
-#endif
 }
 
-void update_current_process_window_drag() {
-#if defined(_WIN32)
+void update_current_process_window_drag(const float delta_x,
+                                        const float delta_y) {
   auto &state = process_window_drag_state();
-  if (!state.active || !IsWindow(state.window))
+  if (!state.active || state.window == nullptr)
     return;
-  if ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) == 0) {
-    state.active = false;
+
+  // The TouchArea delta is relative to the original press point in the current
+  // window. Keep only the newest residual while the frame limiter is active;
+  // accumulating the samples would over-shoot after the window moves.
+  state.pending_delta_x = delta_x;
+  state.pending_delta_y = delta_y;
+  const auto now = WindowDragClock::now();
+  if (now - state.last_update < std::chrono::milliseconds(16))
     return;
-  }
-  POINT cursor{};
-  if (!GetCursorPos(&cursor))
-    return;
-  // Screen-coordinate deltas stay correct across DPI/UI-scale changes. This
-  // deliberately changes position only; Slint's 7px border owns resizing.
-  SetWindowPos(state.window, nullptr,
-               state.window_origin.x + cursor.x - state.cursor_origin.x,
-               state.window_origin.y + cursor.y - state.cursor_origin.y, 0, 0,
-               SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-#endif
+  apply_pending_window_drag(state);
+  state.last_update = now;
 }
 
 void end_current_process_window_drag() {
-#if defined(_WIN32)
-  process_window_drag_state().active = false;
-#endif
+  auto &state = process_window_drag_state();
+  // A move event may already have applied this residual before its matching
+  // pointer-up is delivered. Re-applying it here causes an end-of-gesture jump.
+  // Dropping at most one sub-frame residual keeps release stable and still
+  // bounds the visual lag to the 16 ms coalescing interval.
+  state.pending_delta_x = 0.0f;
+  state.pending_delta_y = 0.0f;
+  state.active = false;
+  state.window = nullptr;
 }
 
 } // namespace tokmon::desktop

@@ -113,7 +113,7 @@ export component WorkspacePanel inherits Rectangle {
     callback refresh-trace();
     callback export-trace();
     callback drag-window();
-    callback update-window-drag();
+    callback update-window-drag(length, length);
     callback end-window-drag();
     callback minimize-window();
     callback toggle-maximize-window();
@@ -467,7 +467,9 @@ export component WorkspacePanel inherits Rectangle {
                                 }
                                 moved => {
                                     if self.pressed {
-                                        root.update-window-drag();
+                                        root.update-window-drag(
+                                            self.mouse-x - self.pressed-x,
+                                            self.mouse-y - self.pressed-y);
                                     }
                                 }
                             }

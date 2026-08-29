@@ -596,7 +596,7 @@ export component CodePanelSlot inherits Rectangle {
 
     callback return-focus();
     callback drag-window();
-    callback update-window-drag();
+    callback update-window-drag(length, length);
     callback end-window-drag();
     callback minimize-window();
     callback toggle-maximize-window();
@@ -731,7 +731,9 @@ export component CodePanelSlot inherits Rectangle {
                         }
                         moved => {
                             if self.pressed {
-                                root.update-window-drag();
+                                root.update-window-drag(
+                                    self.mouse-x - self.pressed-x,
+                                    self.mouse-y - self.pressed-y);
                             }
                         }
                     }

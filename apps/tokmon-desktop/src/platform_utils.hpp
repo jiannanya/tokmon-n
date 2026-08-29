@@ -28,8 +28,8 @@ int default_ui_scale_percent_for_resolution(std::uint32_t width,
                                             std::uint32_t height);
 int default_ui_scale_percent_for_primary_display();
 
-void drag_current_process_window();
-void update_current_process_window_drag();
+void drag_current_process_window(slint::Window &window);
+void update_current_process_window_drag(float delta_x, float delta_y);
 void end_current_process_window_drag();
 void make_current_process_window_frameless();
 void activate_current_process_window();
