@@ -536,6 +536,9 @@ export component CodePanelSlot inherits Rectangle {
     in property <length> sidebar-width;
     in property <length> minimum-workspace-width: 300px;
     in property <length> minimum-code-panel-width: 214px;
+    property <float> reveal-progress: root.code-visible ? 1.0 : 0.0;
+    out property <length> layout-width: (root.code-panel-width + 1px) * root.reveal-progress;
+    animate reveal-progress { duration: 160ms; easing: ease-in-out; }
 
     // Tabs: an empty list means the launcher screen is showing.
     in-out property <[RightTab]> right-tabs;
@@ -623,9 +626,9 @@ export component CodePanelSlot inherits Rectangle {
     }
     toggle-file-list => { root.file-list-visible = !root.file-list-visible; }
 
-    min-width: root.code-visible ? root.code-panel-width + 1px : 0px;
-    preferred-width: root.code-visible ? root.code-panel-width + 1px : 0px;
-    max-width: root.code-visible ? root.code-panel-width + 1px : 0px;
+    min-width: root.layout-width;
+    preferred-width: root.layout-width;
+    max-width: root.layout-width;
     horizontal-stretch: 0;
     vertical-stretch: 1;
     background: transparent;
@@ -640,7 +643,7 @@ export component CodePanelSlot inherits Rectangle {
     }
 
     Rectangle {
-        visible: root.code-visible;
+        visible: root.layout-width > 0px;
         x: 0px;
         width: 1px;
         height: parent.height;
@@ -649,10 +652,11 @@ export component CodePanelSlot inherits Rectangle {
     }
 
     Rectangle {
-        visible: root.code-visible;
+        visible: root.layout-width > 1px;
         x: 1px;
-        width: root.code-panel-width;
+        width: Math.max(0px, root.layout-width - 1px);
         height: parent.height;
+        clip: true;
         background: Palette.surface;
 
         // ---- Header: closable tabs, new tab, panel and window actions ----

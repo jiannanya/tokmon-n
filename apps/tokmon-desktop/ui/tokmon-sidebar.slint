@@ -2,7 +2,7 @@ import { NavigationItem } from "tokmon-models.slint";
 import { Palette, Icons } from "tokmon-theme.slint";
 import { SidebarRow, StatusDot } from "tokmon-components.slint";
 
-export component SidebarPanel inherits HorizontalLayout {
+export component SidebarPanel inherits Rectangle {
     in property <[NavigationItem]> navigation;
     in property <string> daemon-state;
     in property <int> search-session-count;
@@ -15,6 +15,9 @@ export component SidebarPanel inherits HorizontalLayout {
     in property <length> code-panel-width;
     in property <length> minimum-workspace-width: 300px;
     in property <length> minimum-sidebar-width: 196px;
+    property <float> reveal-progress: root.sidebar-visible ? 1.0 : 0.0;
+    out property <length> layout-width: (root.sidebar-width + 1px) * root.reveal-progress;
+    animate reveal-progress { duration: 160ms; easing: ease-in-out; }
 
     callback new-session();
     callback select-navigation(int);
@@ -26,14 +29,19 @@ export component SidebarPanel inherits HorizontalLayout {
     callback update-window-drag();
     callback end-window-drag();
 
-    min-width: root.sidebar-visible ? root.sidebar-width + 1px : 0px;
-    preferred-width: root.sidebar-visible ? root.sidebar-width + 1px : 0px;
-    max-width: root.sidebar-visible ? root.sidebar-width + 1px : 0px;
+    min-width: root.layout-width;
+    preferred-width: root.layout-width;
+    max-width: root.layout-width;
     horizontal-stretch: 0;
-    spacing: 0px;
+    vertical-stretch: 1;
+    clip: true;
+    background: transparent;
             Rectangle {
-                visible: root.sidebar-visible;
-                width: root.sidebar-visible ? root.sidebar-width : 0px;
+                visible: root.layout-width > 0px;
+                x: 0px;
+                y: 0px;
+                width: root.sidebar-width;
+                height: parent.height;
                 clip: true;
                 background: #F9F9F8;
                 VerticalLayout {
@@ -338,8 +346,11 @@ export component SidebarPanel inherits HorizontalLayout {
                 }
             }
             Rectangle {
-                visible: root.sidebar-visible;
-                width: root.sidebar-visible ? 1px : 0px;
+                visible: root.layout-width > 0px;
+                x: Math.max(0px, root.layout-width - 1px);
+                y: 0px;
+                width: 1px;
+                height: parent.height;
                 background: Palette.line-soft;
                 z: 10;
                 Rectangle {

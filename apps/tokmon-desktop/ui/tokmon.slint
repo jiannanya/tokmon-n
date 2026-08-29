@@ -606,7 +606,7 @@ export component MainWindow inherits Window {
     VerticalLayout {
         HorizontalLayout {
             spacing: 0px;
-            SidebarPanel {
+            sidebar-panel := SidebarPanel {
                 navigation: root.navigation;
                 daemon-state: root.daemon-state;
                 search-session-count: root.search-session-count;
@@ -732,7 +732,7 @@ export component MainWindow inherits Window {
                 select-model(name, model) => { root.select-model(name, model); }
                 return-focus => { hs.focus(); }
             }
-            CodePanelSlot {
+            code-panel-slot := CodePanelSlot {
                 code-visible: root.code-visible;
                 host-width: ui-scale-layer.width;
                 sidebar-visible: root.sidebar-visible;
@@ -813,7 +813,7 @@ export component MainWindow inherits Window {
         // auto-collapse gesture, allowing that same gesture to reverse.
         visible: root.sidebar-visible || left-divider-touch.pressed;
         x: left-divider-touch.pressed ? root.left-divider-drag-anchor-x
-            : (root.sidebar-visible ? root.sidebar-width - 4px : 0px);
+            : Math.max(0px, sidebar-panel.layout-width - 5px);
         y: 46px;
         width: 9px;
         height: parent.height - self.y;
@@ -829,7 +829,7 @@ export component MainWindow inherits Window {
                     // already true when this callback runs, so that binding
                     // would resolve to the previous (usually zero) anchor.
                     root.left-divider-drag-anchor-x = root.sidebar-visible
-                        ? root.sidebar-width - 4px : 0px;
+                        ? Math.max(0px, sidebar-panel.layout-width - 5px) : 0px;
                 }
             }
             moved => {
@@ -854,7 +854,7 @@ export component MainWindow inherits Window {
     // drag coordinates remain stable. Render the feedback line separately at
     // the live layout boundary so it follows every width update in real time.
     Rectangle {
-        x: root.sidebar-visible ? root.sidebar-width : 0px;
+        x: Math.max(0px, sidebar-panel.layout-width - 1px);
         y: 0px;
         width: 1px;
         height: parent.height;
@@ -866,9 +866,7 @@ export component MainWindow inherits Window {
     right-divider-handle := Rectangle {
         visible: root.code-visible || right-divider-touch.pressed;
         x: right-divider-touch.pressed ? root.right-divider-drag-anchor-x
-            : (root.code-visible
-                ? ui-scale-layer.width - root.code-panel-width - 5px
-                : ui-scale-layer.width - 9px);
+            : ui-scale-layer.width - code-panel-slot.layout-width - 4px;
         y: 46px;
         width: 9px;
         height: parent.height - self.y;
@@ -883,7 +881,7 @@ export component MainWindow inherits Window {
                     // As above, derive the resting geometry directly instead
                     // of reading the pressed-state x binding.
                     root.right-divider-drag-anchor-x = root.code-visible
-                        ? ui-scale-layer.width - root.code-panel-width - 5px
+                        ? ui-scale-layer.width - code-panel-slot.layout-width - 4px
                         : ui-scale-layer.width - 9px;
                 }
             }
@@ -906,9 +904,7 @@ export component MainWindow inherits Window {
     }
 
     Rectangle {
-        x: root.code-visible
-            ? ui-scale-layer.width - root.code-panel-width - 1px
-            : ui-scale-layer.width - 1px;
+        x: ui-scale-layer.width - code-panel-slot.layout-width;
         y: 0px;
         width: 1px;
         height: parent.height;
