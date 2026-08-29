@@ -1254,8 +1254,9 @@ private:
         handle->set_setting_cloud_sync(*value);
       if (auto value = bool_value("sidebar_visible"))
         handle->set_sidebar_visible(*value);
-      if (auto value = bool_value("code_visible"))
-        handle->invoke_set_code_panel_visible(*value);
+      // The right panel is intentionally session-local. MainWindow starts it
+      // collapsed, so a panel opened in the previous run must not be restored
+      // from older settings snapshots.
       if (auto value = bool_value("task_expanded"))
         handle->set_task_expanded(*value);
       if (auto value = string_value("update_channel"))

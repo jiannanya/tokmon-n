@@ -872,7 +872,6 @@ int run_application(int argc, char **argv) {
          {"email", std::string(window->get_setting_email())},
          {"cloud_sync", window->get_setting_cloud_sync()},
          {"sidebar_visible", window->get_sidebar_visible()},
-         {"code_visible", window->get_code_visible()},
          {"task_expanded", window->get_task_expanded()},
          {"update_channel", std::string(window->get_setting_channel())},
          {"file_access", std::string(window->get_setting_file_access())}}));

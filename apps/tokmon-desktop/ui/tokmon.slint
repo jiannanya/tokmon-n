@@ -184,7 +184,7 @@ export component MainWindow inherits Window {
     // Always leave enough physical room for the three responsive minima at
     // the selected UI scale. This prevents a manual window resize from making
     // the fixed side columns overlap the workspace.
-    min-width: 818px * root.default-ui-scale-percent / 100 + 16px;
+    min-width: 712px * root.default-ui-scale-percent / 100 + 16px;
     min-height: 680px;
     // A transparent outer gutter lets the app surface cast a subtle shadow.
     // Maximized windows remove the gutter so their client area still fills the
@@ -373,6 +373,13 @@ export component MainWindow inherits Window {
     property <length> window-edge-inset: root.window-maximized ? 0px : 8px;
     property <length> layout-content-width: (root.width - root.window-edge-inset * 2) / root.applied-ui-scale;
     property <length> minimum-workspace-width: 300px;
+    property <length> minimum-sidebar-width: 196px;
+    // Two thirds of the previous 320px minimum.
+    property <length> minimum-code-panel-width: 214px;
+    property <length> left-divider-drag-start-width: 0px;
+    property <length> left-divider-drag-anchor-x: 0px;
+    property <length> right-divider-drag-start-width: 0px;
+    property <length> right-divider-drag-anchor-x: 0px;
     in-out property <bool> slash-menu-visible: false;
     in-out property <bool> create-navigation-open: false;
     in-out property <bool> error-dialog-open: false;
@@ -563,11 +570,11 @@ export component MainWindow inherits Window {
         // while the panel was closed, reclaim excess sidebar width before
         // reducing the right panel. Both values remain independent thereafter.
         if root.sidebar-visible {
-            root.sidebar-width = Math.max(196px,
+            root.sidebar-width = Math.max(root.minimum-sidebar-width,
                 Math.min(root.sidebar-width, root.layout-content-width
                     - root.code-panel-width - root.minimum-workspace-width - 2px));
         }
-        root.code-panel-width = Math.max(320px,
+        root.code-panel-width = Math.max(root.minimum-code-panel-width,
             Math.min(root.code-panel-width, root.layout-content-width
                 - (root.sidebar-visible ? root.sidebar-width + 1px : 0px)
                 - root.minimum-workspace-width - 1px));
@@ -611,6 +618,7 @@ export component MainWindow inherits Window {
                 code-visible: root.code-visible;
                 code-panel-width: root.code-panel-width;
                 minimum-workspace-width: root.minimum-workspace-width;
+                minimum-sidebar-width: root.minimum-sidebar-width;
                 new-session => { root.new-session(); }
                 select-navigation(index) => { root.select-navigation(index); }
                 search-changed(text) => { root.search-changed(text); }
@@ -730,6 +738,7 @@ export component MainWindow inherits Window {
                 sidebar-visible: root.sidebar-visible;
                 sidebar-width: root.sidebar-width;
                 minimum-workspace-width: root.minimum-workspace-width;
+                minimum-code-panel-width: root.minimum-code-panel-width;
                 right-tabs <=> root.right-tabs;
                 right-tab <=> root.right-tab;
                 review-files <=> root.review-files;
@@ -792,31 +801,120 @@ export component MainWindow inherits Window {
             }
         }
     }
-    // Floating rail button: reopens the collapsed right panel. It sits on the
-    // vertical center of the window's right edge so it never overlaps the
-    // header's window controls, which shift between columns as panels toggle.
-    if !root.code-visible : Rectangle {
-        x: ui-scale-layer.width - 30px;
-        y: (ui-scale-layer.height - 26px) / 2;
-        width: 26px;
-        height: 26px;
-        border-radius: 6px;
-        background: rail-touch.has-hover ? #FCF2EA : #FEF8F4;
-        border-width: 0.67px;
-        border-color: rail-touch.has-hover ? Palette.accent : Palette.accent-border;
-        drop-shadow-color: Palette.shadow;
-        drop-shadow-offset-y: 1px;
-        Image {
-            source: Icons.panel-right-open;
-            width: 14px;
-            height: 14px;
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
+
+    // Persistent divider handles stay alive while a side panel is collapsed.
+    // Their x-coordinate is frozen for the duration of a pointer grab, so the
+    // same gesture can cross the snap threshold, reverse direction and reopen
+    // the panel without releasing the mouse.
+    left-divider-handle := Rectangle {
+        // Once an ordinary collapsed state is reached and the pointer is
+        // released, remove this hit area completely so the native window edge
+        // remains available for resizing. Keep it alive only for the active
+        // auto-collapse gesture, allowing that same gesture to reverse.
+        visible: root.sidebar-visible || left-divider-touch.pressed;
+        x: left-divider-touch.pressed ? root.left-divider-drag-anchor-x
+            : (root.sidebar-visible ? root.sidebar-width - 4px : 0px);
+        y: 46px;
+        width: 9px;
+        height: parent.height - self.y;
+        z: 500;
+        background: transparent;
+        left-divider-touch := TouchArea {
+            mouse-cursor: ew-resize;
+            pointer-event(event) => {
+                if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                    root.left-divider-drag-start-width = root.sidebar-visible
+                        ? root.sidebar-width : root.minimum-sidebar-width;
+                    // Do not read left-divider-handle.x here: `pressed` is
+                    // already true when this callback runs, so that binding
+                    // would resolve to the previous (usually zero) anchor.
+                    root.left-divider-drag-anchor-x = root.sidebar-visible
+                        ? root.sidebar-width - 4px : 0px;
+                }
+            }
+            moved => {
+                if self.pressed {
+                    let next-width = root.left-divider-drag-start-width
+                        + (self.mouse-x - self.pressed-x);
+                    let width-limit = Math.min(420px, root.layout-content-width
+                        - (root.code-visible ? root.code-panel-width + 1px : 0px)
+                        - root.minimum-workspace-width - 1px);
+                    if next-width <= root.minimum-sidebar-width {
+                        root.sidebar-visible = false;
+                    } else if width-limit >= root.minimum-sidebar-width {
+                        root.sidebar-width = Math.min(width-limit, next-width);
+                        root.sidebar-visible = true;
+                    }
+                }
+            }
         }
-        rail-touch := TouchArea {
-            mouse-cursor: pointer;
-            clicked => { root.set-code-panel-visible(true); }
+    }
+
+    // The pointer-grab handle above must stay fixed while pressed so its local
+    // drag coordinates remain stable. Render the feedback line separately at
+    // the live layout boundary so it follows every width update in real time.
+    Rectangle {
+        x: root.sidebar-visible ? root.sidebar-width : 0px;
+        y: 0px;
+        width: 1px;
+        height: parent.height;
+        z: 501;
+        background: left-divider-touch.has-hover || left-divider-touch.pressed
+            ? Palette.accent : transparent;
+    }
+
+    right-divider-handle := Rectangle {
+        visible: root.code-visible || right-divider-touch.pressed;
+        x: right-divider-touch.pressed ? root.right-divider-drag-anchor-x
+            : (root.code-visible
+                ? ui-scale-layer.width - root.code-panel-width - 5px
+                : ui-scale-layer.width - 9px);
+        y: 46px;
+        width: 9px;
+        height: parent.height - self.y;
+        z: 500;
+        background: transparent;
+        right-divider-touch := TouchArea {
+            mouse-cursor: ew-resize;
+            pointer-event(event) => {
+                if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                    root.right-divider-drag-start-width = root.code-visible
+                        ? root.code-panel-width : root.minimum-code-panel-width;
+                    // As above, derive the resting geometry directly instead
+                    // of reading the pressed-state x binding.
+                    root.right-divider-drag-anchor-x = root.code-visible
+                        ? ui-scale-layer.width - root.code-panel-width - 5px
+                        : ui-scale-layer.width - 9px;
+                }
+            }
+            moved => {
+                if self.pressed {
+                    let next-width = root.right-divider-drag-start-width
+                        - (self.mouse-x - self.pressed-x);
+                    let width-limit = Math.min(720px, root.layout-content-width
+                        - (root.sidebar-visible ? root.sidebar-width + 1px : 0px)
+                        - root.minimum-workspace-width - 1px);
+                    if next-width <= root.minimum-code-panel-width {
+                        root.set-code-panel-visible(false);
+                    } else if width-limit >= root.minimum-code-panel-width {
+                        root.code-panel-width = Math.min(width-limit, next-width);
+                        root.set-code-panel-visible(true);
+                    }
+                }
+            }
         }
+    }
+
+    Rectangle {
+        x: root.code-visible
+            ? ui-scale-layer.width - root.code-panel-width - 1px
+            : ui-scale-layer.width - 1px;
+        y: 0px;
+        width: 1px;
+        height: parent.height;
+        z: 501;
+        background: right-divider-touch.has-hover || right-divider-touch.pressed
+            ? Palette.accent : transparent;
     }
     hs := FocusScope {
         // Without explicit geometry this shortcut scope spans the complete

@@ -14,6 +14,7 @@ export component SidebarPanel inherits HorizontalLayout {
     in property <bool> code-visible;
     in property <length> code-panel-width;
     in property <length> minimum-workspace-width: 300px;
+    in property <length> minimum-sidebar-width: 196px;
 
     callback new-session();
     callback select-navigation(int);
@@ -339,24 +340,8 @@ export component SidebarPanel inherits HorizontalLayout {
             Rectangle {
                 visible: root.sidebar-visible;
                 width: root.sidebar-visible ? 1px : 0px;
-                background: sbt.has-hover || sbt.pressed ? Palette.accent : Palette.line-soft;
+                background: Palette.line-soft;
                 z: 10;
-                sbt := TouchArea {
-                    x: -3px;
-                    width: 7px;
-                    moved => {
-                        // The left divider owns only the sidebar/workspace
-                        // boundary. Keep the independently sized right panel
-                        // untouched and stop when the workspace reaches its
-                        // responsive minimum.
-                        root.sidebar-width = Math.max(196px,
-                            Math.min(Math.min(420px, root.host-width
-                                - (root.code-visible ? root.code-panel-width + 1px : 0px)
-                                - root.minimum-workspace-width - 1px),
-                            root.sidebar-width + (self.mouse-x - self.pressed-x)));
-                    }
-                    mouse-cursor: ew-resize;
-                }
                 Rectangle {
                     // Keep the collapse control fully inside the expanded rail.
                     // Straddling the separator made it collide with the session

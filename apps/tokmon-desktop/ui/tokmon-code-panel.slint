@@ -195,12 +195,13 @@ component RightTabPill inherits Rectangle {
     in property <string> title;
     in property <bool> active;
     in property <image> icon;
+    in property <bool> compact;
     callback picked();
     callback closed();
 
     height: 28px;
     // 12px left pad + 14px icon + 6px + text + 6px + 16px close + 12px pad.
-    preferred-width: title-text.preferred-width + 66px;
+    preferred-width: root.compact ? 52px : title-text.preferred-width + 66px;
     border-radius: 999px;
     background: root.active ? Palette.white
         : (pill-touch.has-hover ? Palette.hover-soft : transparent);
@@ -211,7 +212,7 @@ component RightTabPill inherits Rectangle {
     drop-shadow-blur: root.active ? 1px : 0px;
 
     Image {
-        x: 12px;
+        x: root.compact ? 8px : 12px;
         y: (parent.height - 14px) / 2;
         width: 14px;
         height: 14px;
@@ -219,6 +220,7 @@ component RightTabPill inherits Rectangle {
         colorize: Palette.dim;
     }
     title-text := Text {
+        visible: !root.compact;
         x: 32px;
         width: self.preferred-width;
         height: parent.height;
@@ -533,6 +535,7 @@ export component CodePanelSlot inherits Rectangle {
     in property <bool> sidebar-visible;
     in property <length> sidebar-width;
     in property <length> minimum-workspace-width: 300px;
+    in property <length> minimum-code-panel-width: 214px;
 
     // Tabs: an empty list means the launcher screen is showing.
     in-out property <[RightTab]> right-tabs;
@@ -642,19 +645,7 @@ export component CodePanelSlot inherits Rectangle {
         width: 1px;
         height: parent.height;
         z: 100;
-        background: cpt.has-hover || cpt.pressed ? Palette.accent : Palette.line-soft;
-        cpt := TouchArea {
-            x: -4px;
-            width: 9px;
-            moved => {
-                root.code-panel-width = Math.max(320px,
-                    Math.min(Math.min(720px, root.host-width
-                        - (root.sidebar-visible ? root.sidebar-width + 1px : 0px)
-                        - root.minimum-workspace-width - 1px),
-                    root.code-panel-width - (self.mouse-x - self.pressed-x)));
-            }
-            mouse-cursor: ew-resize;
-        }
+        background: Palette.line-soft;
     }
 
     Rectangle {
@@ -669,7 +660,7 @@ export component CodePanelSlot inherits Rectangle {
             x: 0px;
             y: 0px;
             width: parent.width;
-            height: 40px;
+            height: 46px;
             HorizontalLayout {
                 x: 0px;
                 y: 0px;
@@ -677,8 +668,8 @@ export component CodePanelSlot inherits Rectangle {
                 height: parent.height;
                 padding-left: 10px;
                 padding-right: 4px;
-                padding-top: 6px;
-                padding-bottom: 6px;
+                padding-top: 9px;
+                padding-bottom: 9px;
                 spacing: 0px;
                 alignment: start;
                 HorizontalLayout {
@@ -688,6 +679,7 @@ export component CodePanelSlot inherits Rectangle {
                     for tab in root.right-tabs : RightTabPill {
                         title: tab.title;
                         icon: tab.id == "review" ? Icons.review : Icons.doc;
+                        compact: root.code-panel-width < 300px;
                         active: root.right-tab == tab.id;
                         picked => { root.right-tab = tab.id; root.return-focus(); }
                         closed => { root.close-right-tab(tab.id); }
@@ -763,7 +755,7 @@ export component CodePanelSlot inherits Rectangle {
         // ================= VIEW 1: LAUNCHER (no tabs open) =================
         if root.right-tab == "launcher" : Rectangle {
             width: parent.width;
-            y: 40px;
+            y: 46px;
             height: parent.height - self.y;
             Rectangle {
                 width: Math.min(260px, parent.width - 40px);
@@ -791,7 +783,7 @@ export component CodePanelSlot inherits Rectangle {
         // ================= VIEW 2: CODE REVIEW (GIT DIFF) =================
         if root.right-tab == "review" : Rectangle {
             width: parent.width;
-            y: 40px;
+            y: 46px;
             height: parent.height - self.y;
             VerticalLayout {
                 spacing: 0px;
@@ -1184,7 +1176,7 @@ export component CodePanelSlot inherits Rectangle {
         // ================= VIEW 3: WORKSPACE FILE TREE =================
         if root.right-tab == "openFile" : Rectangle {
             width: parent.width;
-            y: 40px;
+            y: 46px;
             height: parent.height - self.y;
             HorizontalLayout {
                 spacing: 0px;
@@ -1376,7 +1368,7 @@ export component CodePanelSlot inherits Rectangle {
         // declared after them it intercepted every click, which made branch
         // selection and commit inputs appear broken.
         if root.branch-menu-open || root.git-menu-open || root.commit-modal-open : TouchArea {
-            y: 40px;
+            y: 46px;
             height: parent.height - self.y;
             clicked => {
                 root.branch-menu-open = false;
@@ -1388,7 +1380,7 @@ export component CodePanelSlot inherits Rectangle {
         // ---- Branch dropdown ----
         if root.branch-menu-open : Rectangle {
             x: 12px;
-            y: 79px;
+            y: 85px;
             width: 192px;
             // Absolute children would fill the panel; hug the content instead.
             height: branch-col.preferred-height;
@@ -1432,7 +1424,7 @@ export component CodePanelSlot inherits Rectangle {
         // ---- Git "more" menu ----
         if root.git-menu-open : Rectangle {
             x: parent.width - 190px;
-            y: 79px;
+            y: 85px;
             width: 176px;
             height: git-menu-col.preferred-height;
             background: Palette.white;
@@ -1467,7 +1459,7 @@ export component CodePanelSlot inherits Rectangle {
         // ---- Commit & push popover ----
         if root.commit-modal-open : Rectangle {
             x: Math.max(8px, parent.width - 300px);
-            y: 83px;
+            y: 89px;
             width: 288px;
             height: commit-col.preferred-height;
             background: Palette.white;
