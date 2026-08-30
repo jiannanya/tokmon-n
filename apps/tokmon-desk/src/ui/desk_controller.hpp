@@ -50,7 +50,7 @@ public:
   [[nodiscard]] bool update();
   [[nodiscard]] int update_poll_interval_ms() const noexcept;
   void ProcessEvent(Rml::Event& event) override;
-  void prepare_legacy_three_pane_contract();
+  void prepare_legacy_three_pane_contract(bool expanded_feature_panel = false);
   [[nodiscard]] bool quit_requested() const noexcept { return quit_requested_; }
   void seed_acceptance_conversation(std::size_t turns);
   [[nodiscard]] std::size_t conversation_turn_count() const noexcept {
@@ -61,6 +61,7 @@ private:
   void listen(const char* id, const char* event = "click");
   void show_toast(std::string message);
   void toggle_hidden(const char* id);
+  void show_right_launcher();
   void show_right_view(const char* id);
   void apply_panel_layout();
   void set_sidebar_visible(bool visible);
@@ -335,9 +336,10 @@ private:
   float panel_resize_anchor_x_{0.f};
   int panel_resize_start_width_{0};
   int sidebar_width_{240};
-  int right_panel_width_{440};
+  int right_panel_width_{214};
   bool sidebar_visible_{true};
-  bool right_panel_visible_{false};
+  bool right_panel_visible_{true};
+  std::string active_right_view_{"launcher"};
   std::string pending_terminal_keydown_text_;
   std::string pending_terminal_paste_;
   struct AttachmentDialogState {

@@ -131,13 +131,50 @@ tokmon::cbor::Value default_desktop_settings(const int ui_scale = 100) {
       {"density", "舒适"}, {"font_scale", static_cast<std::int64_t>(100)},
       {"ui_scale", static_cast<std::int64_t>(ui_scale)}, {"nickname", ""},
       {"email", ""}, {"cloud_sync", false}, {"sidebar_visible", true},
-      {"right_panel_visible", false},
+      {"right_panel_visible", true},
       {"sidebar_width", static_cast<std::int64_t>(240)},
-      {"right_panel_width", static_cast<std::int64_t>(440)},
+      {"right_panel_width", static_cast<std::int64_t>(214)},
+      {"layout_revision", static_cast<std::int64_t>(2)},
+      {"navigation_revision", static_cast<std::int64_t>(2)},
+      {"last_workspace", ""},
       {"terminal_profile", "auto"},
       {"terminal_executable", ""}, {"terminal_arguments", ""},
       {"terminal_font_size", static_cast<std::int64_t>(13)},
       {"terminal_scrollback", static_cast<std::int64_t>(10000)}});
+}
+
+std::vector<DeskNavigationItem> legacy_navigation_seed(
+    const std::filesystem::path& workspace, const bool select_first_session) {
+  std::vector<DeskNavigationItem> items;
+  const auto add = [&items, &workspace](const char* title, const char* kind,
+                                        const int indent, const bool selected) {
+    items.push_back({
+        .id = tokmon::make_id("navigation"),
+        .workspace = std::string_view(kind) == "project" ? workspace
+                                                          : std::filesystem::path{},
+        .kind = kind,
+        .title = title,
+        .indent = indent,
+        .selected = selected,
+        .expanded = true,
+        .title_manual = std::string_view(kind) == "session",
+    });
+  };
+  // This is the exact bundled hierarchy from the old Slint desktop. It is
+  // presentation/sample state only; existing tokmon-desk projects and rays
+  // are retained after it during the one-time migration.
+  add("内容生产", "group", 0, false);
+  add("字幕制作空间", "project", 1, false);
+  add("生成音频时间轴字幕", "session", 2, select_first_session);
+  add("字幕校对优化", "session", 2, false);
+  add("批量字幕质检优化", "session", 2, false);
+  add("音频切片处理", "project", 1, false);
+  add("演示助手", "group", 0, false);
+  add("PPT 智绘项目", "project", 1, false);
+  add("PPT 大纲生成", "session", 2, false);
+  add("演讲稿润色", "session", 2, false);
+  add("旅行计划", "group", 0, false);
+  return items;
 }
 
 void normalize_legacy_settings(tokmon::cbor::Value& values) {
@@ -394,6 +431,7 @@ void DeskController::bind(const bool start_background_work) {
   for (const char* id : {"new-session-button", "settings-button", "close-settings",
                          "save-settings", "reset-settings", "new-session-overlay", "close-new-session",
                          "cancel-new-session", "confirm-new-session", "environment-toggle",
+                         "environment-close", "environment-refresh", "environment-settings",
                          "thought-toggle", "workflow-toggle", "sidebar-toggle", "right-toggle",
                          "review-tab", "files-tab", "terminal-tab", "browser-tab",
                          "refresh-review", "diff-view-toggle", "branch-button",
@@ -404,8 +442,9 @@ void DeskController::bind(const bool start_background_work) {
                          "browser-back", "browser-forward", "browser-reload",
                          "browser-takeover", "browser-click", "browser-fill",
                          "title-edit", "chat-mode", "trajectory-mode", "attach-button",
-                         "network-toggle", "access-button", "active-model", "effort-button",
+                         "access-button", "active-model", "effort-button",
                          "right-fullscreen", "right-collapse", "add-tab-button",
+                         "right-tab-close", "launcher-review", "launcher-files",
                          "save-file", "undo-file", "redo-file", "reload-file",
                          "editor-find-previous", "editor-find-next",
                          "editor-replace-one", "editor-go-line",
@@ -462,20 +501,42 @@ void DeskController::bind(const bool start_background_work) {
   std::string local_warning;
   settings_values_ = default_desktop_settings(
       platform_.default_content_scale_percent());
-  merge_cbor_map(settings_values_, state_store_.load_settings(local_warning));
+  const auto stored_settings = state_store_.load_settings(local_warning);
+  merge_cbor_map(settings_values_, stored_settings);
   normalize_legacy_settings(settings_values_);
+  const bool migrate_legacy_shell =
+      cbor_integer(stored_settings, "layout_revision", 0) < 2;
+  const bool migrate_legacy_navigation =
+      cbor_integer(stored_settings, "navigation_revision", 0) < 2;
+  const auto current_workspace = workspace_.root().generic_string();
+  const auto* stored_workspace =
+      tokmon::cbor::find(settings_values_, "last_workspace");
+  const bool remember_workspace =
+      !stored_workspace || stored_workspace->as_string() != current_workspace;
+  if (remember_workspace)
+    set_cbor(settings_values_, "last_workspace", current_workspace);
   sidebar_width_ = static_cast<int>(std::clamp<std::int64_t>(
       cbor_integer(settings_values_, "sidebar_width", 240), 196, 420));
   right_panel_width_ = static_cast<int>(std::clamp<std::int64_t>(
-      cbor_integer(settings_values_, "right_panel_width", 440), 214, 720));
+      migrate_legacy_shell
+          ? 214
+          : cbor_integer(settings_values_, "right_panel_width", 214),
+      214, 720));
+  if (migrate_legacy_shell || remember_workspace) {
+    set_cbor(settings_values_, "right_panel_width",
+             static_cast<std::int64_t>(right_panel_width_));
+    set_cbor(settings_values_, "layout_revision", static_cast<std::int64_t>(2));
+  }
+  if (migrate_legacy_navigation)
+    set_cbor(settings_values_, "navigation_revision", static_cast<std::int64_t>(2));
   sidebar_visible_ = cbor_bool(settings_values_, "sidebar_visible", true);
-  // Match the legacy desktop exactly: the right panel is session-local and
-  // starts collapsed even when an old settings snapshot says it was open.
-  right_panel_visible_ = false;
-  set_cbor(settings_values_, "right_panel_visible", false);
+  // The frozen legacy screenshot and the prototype both show the panel-open
+  // launcher state: no feature tab is selected until the user picks one.
+  right_panel_visible_ = true;
+  active_right_view_ = "launcher";
+  set_cbor(settings_values_, "right_panel_visible", true);
   apply_panel_layout();
-  if (!local_warning.empty())
-    text(document_, "settings-status", escape(local_warning));
+  show_right_launcher();
   std::string navigation_warning;
   const auto local_navigation = state_store_.load_navigation(navigation_warning);
   if (local_navigation.as_array() && !local_navigation.as_array()->empty()) {
@@ -483,6 +544,34 @@ void DeskController::bind(const bool start_background_work) {
     if (!navigation_.load(local_navigation, navigation_error))
       navigation_warning = "本地导航状态无效：" + navigation_error;
   }
+  bool seeded_legacy_navigation = false;
+  if (migrate_legacy_navigation) {
+    const bool has_group = std::ranges::any_of(
+        navigation_.items(), [](const DeskNavigationItem& item) {
+          return item.kind == "group";
+        });
+    if (!has_group && navigation_.items().size() <= 4) {
+      auto existing = std::move(navigation_.items());
+      auto seeded = legacy_navigation_seed(workspace_.root(), existing.empty());
+      if (!existing.empty()) {
+        for (auto& item : seeded)
+          item.selected = false;
+      }
+      seeded.insert(seeded.end(), std::make_move_iterator(existing.begin()),
+                    std::make_move_iterator(existing.end()));
+      navigation_.items() = std::move(seeded);
+      seeded_legacy_navigation = true;
+      if (!state_store_.save_navigation(navigation_.encode(), navigation_warning))
+        navigation_warning = "旧版导航示例迁移失败：" + navigation_warning;
+    }
+  }
+  if (migrate_legacy_shell || migrate_legacy_navigation || remember_workspace) {
+    std::string migration_error;
+    if (!save_local_settings(migration_error) && local_warning.empty())
+      local_warning = migration_error;
+  }
+  if (!local_warning.empty())
+    text(document_, "settings-status", escape(local_warning));
   navigation_loaded_ = true;
   if (!navigation_warning.empty())
     text(document_, "daemon-status", escape(navigation_warning));
@@ -492,6 +581,8 @@ void DeskController::bind(const bool start_background_work) {
   text(document_, "starter-workspace-name", escape(workspace_name));
   text(document_, "composer-workspace-name", escape(workspace_name));
   text(document_, "workspace-path", escape(workspace_.root().string()));
+  text(document_, "environment-index",
+       seeded_legacy_navigation ? "已恢复旧版导航" : "正在读取…");
   if (auto* branch = document_.QuerySelector(".workspace-context .branch"))
     branch->SetInnerRML("正在读取 Git…");
   auto* selected_navigation = navigation_.selected();
@@ -521,12 +612,15 @@ void DeskController::backend_connected() {
   backend_ready_.store(true, std::memory_order_release);
 }
 
-void DeskController::prepare_legacy_three_pane_contract() {
+void DeskController::prepare_legacy_three_pane_contract(
+    const bool expanded_feature_panel) {
   sidebar_width_ = 240;
-  right_panel_width_ = 440;
+  right_panel_width_ = expanded_feature_panel ? 440 : 214;
   sidebar_visible_ = true;
   right_panel_visible_ = true;
   apply_panel_layout();
+  if (!expanded_feature_panel)
+    show_right_launcher();
 }
 
 void DeskController::toggle_hidden(const char* id) {
@@ -546,6 +640,8 @@ void DeskController::apply_panel_layout() {
   }
   if (auto* panel = document_.GetElementById("right-panel")) {
     panel->SetClass("hidden", !right_panel_visible_);
+    panel->SetClass("compact", right_panel_width_ < 408);
+    panel->SetClass("narrow", right_panel_width_ < 300);
     panel->SetProperty("width", pixels(right_panel_width_));
   }
   if (auto* workspace = document_.GetElementById("workspace")) {
@@ -570,15 +666,13 @@ void DeskController::set_sidebar_visible(const bool visible) {
 
 void DeskController::set_right_panel_visible(const bool visible) {
   right_panel_visible_ = visible;
-  // This value is kept in-memory for settings rendering, but the persisted
-  // startup behavior remains collapsed for parity with tokmon-desktop.
   set_cbor(settings_values_, "right_panel_visible", visible);
   apply_panel_layout();
 }
 
 bool DeskController::save_local_settings(std::string& error) {
   set_cbor(settings_values_, "sidebar_visible", sidebar_visible_);
-  set_cbor(settings_values_, "right_panel_visible", false);
+  set_cbor(settings_values_, "right_panel_visible", right_panel_visible_);
   set_cbor(settings_values_, "sidebar_width",
            static_cast<std::int64_t>(sidebar_width_));
   set_cbor(settings_values_, "right_panel_width",
@@ -589,6 +683,7 @@ bool DeskController::save_local_settings(std::string& error) {
       "message_alerts", "quiet_hours", "density", "font_scale", "ui_scale",
       "nickname", "email", "cloud_sync", "sidebar_visible",
       "right_panel_visible", "sidebar_width", "right_panel_width",
+      "layout_revision", "navigation_revision", "last_workspace",
       "terminal_profile", "terminal_executable", "terminal_arguments",
       "terminal_font_size", "terminal_scrollback"}), error);
 }
@@ -602,6 +697,19 @@ void DeskController::show_toast(std::string message) {
   }
 }
 
+void DeskController::show_right_launcher() {
+  active_right_view_ = "launcher";
+  if (auto* launcher = document_.GetElementById("right-launcher"))
+    launcher->SetClass("hidden", false);
+  for (const char* view : {"review-view", "files-view", "terminal-view", "browser-view"})
+    if (auto* element = document_.GetElementById(view))
+      element->SetClass("hidden", true);
+  if (auto* tab = document_.GetElementById("right-active-tab"))
+    tab->SetClass("hidden", true);
+  if (auto* menu = document_.GetElementById("right-tab-menu"))
+    menu->SetClass("hidden", true);
+}
+
 void DeskController::show_right_view(const char* id) {
   if (std::string_view(id) != "terminal-view" &&
       heavy_focus_ != HeavyFocus::none) {
@@ -610,24 +718,30 @@ void DeskController::show_right_view(const char* id) {
     platform_.DeactivateKeyboard();
   }
   set_right_panel_visible(true);
+  active_right_view_ = id;
+  if (auto* launcher = document_.GetElementById("right-launcher"))
+    launcher->SetClass("hidden", true);
+  if (auto* tab = document_.GetElementById("right-active-tab"))
+    tab->SetClass("hidden", false);
+  if (auto* menu = document_.GetElementById("right-tab-menu"))
+    menu->SetClass("hidden", true);
   for (const char* view : {"review-view", "files-view", "terminal-view", "browser-view"})
     if (auto* element = document_.GetElementById(view))
       element->SetClass("hidden", std::string_view(view) != id);
-  const std::pair<const char*, const char*> tabs[] = {
-      {"review-tab", "review-view"}, {"files-tab", "files-view"},
-      {"terminal-tab", "terminal-view"}, {"browser-tab", "browser-view"}};
-  for (const auto& [tab, view] : tabs)
-    if (auto* element = document_.GetElementById(tab))
-      element->SetClass("active", std::string_view(view) == id);
   const std::pair<const char*, const char*> labels[] = {
       {"review-view", "审查"}, {"files-view", "文件"},
       {"terminal-view", "终端"}, {"browser-view", "浏览器"}};
   for (const auto& [view, label] : labels)
     if (std::string_view(view) == id)
       text(document_, "active-right-label", label);
-  text(document_, "active-right-shortcut",
-       std::string_view(id) == "review-view" ? "Ctrl+Shift+G" :
-       std::string_view(id) == "files-view" ? "Ctrl+P" : "");
+  if (auto* icon = document_.GetElementById("active-right-icon")) {
+    const char* source = std::string_view(id) == "review-view"
+        ? "../../assets/figma/icon-51.svg"
+        : std::string_view(id) == "files-view"
+              ? "../../assets/figma/icon-18.svg"
+              : "../../assets/figma/icon-19.svg";
+    icon->SetAttribute("src", source);
+  }
 }
 
 void DeskController::refresh_review() {
@@ -649,8 +763,12 @@ void DeskController::refresh_review() {
 }
 
 void DeskController::render_review_snapshot(const GitSnapshot& snapshot) {
+  const auto branch_name = snapshot.branch.empty() ? "workspace" : snapshot.branch;
   if (auto* branch = document_.GetElementById("branch-button"))
-    branch->SetInnerRML("⑂ " + escape(snapshot.branch.empty() ? "workspace" : snapshot.branch) + "⌄");
+    branch->SetInnerRML("⑂ " + escape(branch_name) + "⌄");
+  text(document_, "environment-branch", escape(branch_name));
+  text(document_, "environment-change-count",
+       std::to_string(snapshot.files.size()) + " 个文件");
   if (auto* count = document_.QuerySelector(".count-pill"))
     count->SetInnerRML(std::to_string(snapshot.files.size()));
   auto* empty = document_.GetElementById("review-empty");
@@ -924,6 +1042,10 @@ void DeskController::rebuild_file_tree() {
   };
   append(append, "", 0);
   surface->set_rows(std::move(rows));
+  if (const auto root = file_tree_children_.find("");
+      root != file_tree_children_.end())
+    text(document_, "environment-index",
+         std::to_string(root->second.size()) + " 个根条目");
   if (!current_file_.empty()) {
     std::error_code error;
     const auto relative = std::filesystem::relative(
@@ -1673,7 +1795,8 @@ void DeskController::render_navigation() {
         << "<span class='chevron'>"
         << (item.kind == "session" ? "" : item.expanded ? "⌄" : "›")
         << "</span><svg src='../../assets/figma/"
-        << (item.kind == "session" ? "icon-23.svg" : "icon-18.svg")
+        << (item.kind == "group" ? "icon-06.svg"
+            : item.kind == "project" ? "icon-08.svg" : "icon-09.svg")
         << "'></svg><span>" << escape(item.title)
         << "</span></button>";
   }
@@ -1732,9 +1855,12 @@ void DeskController::apply_settings(const tokmon::cbor::Value& payload) {
   selected_access_ = cbor_string(*values, "access_mode", selected_access_);
   text(document_, "active-model",
        escape(selected_model_.empty() ? "选择模型⌄" : selected_model_ + "⌄"));
-  text(document_, "effort-button", "♙ " + escape(selected_effort_) + "⌄");
-  text(document_, "access-button",
-       selected_access_ == "full" ? "♢ 完全访问⌄" : "♢ 受限访问⌄");
+  if (auto* button = document_.GetElementById("effort-button"))
+    button->SetInnerRML("<svg src='../../assets/figma/icon-40.svg'></svg>" +
+                        escape(selected_effort_) + "⌄");
+  if (auto* button = document_.GetElementById("access-button"))
+    button->SetInnerRML("<svg src='../../assets/figma/icon-28.svg'></svg>" +
+        std::string(selected_access_ == "full" ? "完全访问⌄" : "受限访问⌄"));
   render_navigation();
   render_settings_page(settings_page_);
   enqueue_intent("model.providers", tokmon::cbor::object({}));
@@ -1870,6 +1996,12 @@ void DeskController::finish_workspace_switch() {
     text(document_, "daemon-status", escape("工作空间切换失败：" + error));
     return;
   }
+  set_cbor(settings_values_, "last_workspace",
+           workspace_.root().generic_string());
+  std::string settings_error;
+  if (!save_local_settings(settings_error))
+    text(document_, "daemon-status",
+         escape("工作空间已切换，但保存最近工作空间失败：" + settings_error));
   watcher_.reset(result.workspace);
   git_.set_workspace(result.workspace);
   change_tracker_.set_workspace(result.workspace);
@@ -1961,6 +2093,8 @@ void DeskController::update_composer_placeholder() {
   const auto* composer = control(document_, "composer");
   if (auto* placeholder = document_.GetElementById("composer-placeholder"))
     placeholder->SetClass("hidden", composer && !composer->GetValue().empty());
+  if (auto* send = document_.GetElementById("send-button"))
+    send->SetClass("disabled", !composer || composer->GetValue().empty());
 }
 
 void DeskController::render_slash_commands() {
@@ -2228,6 +2362,16 @@ void DeskController::preview_file(Rml::Element& row) {
   const auto selected = workspace_.root() / relative;
   std::error_code type_error;
   if (std::filesystem::is_directory(selected, type_error)) return;
+  // At the legacy launcher width the file feature intentionally shows only
+  // the tree. Opening a file expands to the old editor-capable width.
+  if (right_panel_width_ < 408) {
+    right_panel_width_ = 620;
+    set_cbor(settings_values_, "right_panel_width",
+             static_cast<std::int64_t>(right_panel_width_));
+    apply_panel_layout();
+    std::string ignored;
+    (void)save_local_settings(ignored);
+  }
   current_file_.clear();
   heavy_focus_ = HeavyFocus::none;
   ++syntax_generation_;
@@ -3128,7 +3272,7 @@ bool DeskController::handle_raw_event(const SDL_Event& event) {
           static_cast<int>(std::lround(x - panel_resize_anchor_x_));
       const int limit = std::min(720, viewport_width -
           (sidebar_visible_ ? sidebar_width_ + 1 : 0) - 301);
-      if (next <= 214) {
+      if (next < 214) {
         set_right_panel_visible(false);
       } else if (limit >= 214) {
         right_panel_width_ = std::clamp(next, 214, limit);
@@ -3575,12 +3719,19 @@ void DeskController::ProcessEvent(Rml::Event& event) {
   if ((event.GetType() == "input" || event.GetType() == "change" ||
        event.GetType() == "keyup") &&
       id == "file-search") {
+    if (const auto* search = control(document_, "file-search"))
+      if (auto* placeholder = document_.GetElementById("file-search-placeholder"))
+        placeholder->SetClass("hidden", !search->GetValue().empty());
     search_files();
     return;
   }
   if ((event.GetType() == "input" || event.GetType() == "change" ||
        event.GetType() == "keyup") &&
       id == "navigation-search") {
+    if (const auto* search = control(document_, "navigation-search"))
+      if (auto* placeholder =
+              document_.GetElementById("navigation-search-placeholder"))
+        placeholder->SetClass("hidden", !search->GetValue().empty());
     filter_navigation();
     return;
   }
@@ -3648,11 +3799,14 @@ void DeskController::ProcessEvent(Rml::Event& event) {
     if (kind == "effort") {
       selected_effort_ = value;
       set_cbor(settings_values_, "reasoning", selected_effort_);
-      text(document_, "effort-button", "♙ " + escape(selected_effort_) + "⌄");
+      if (auto* button = document_.GetElementById("effort-button"))
+        button->SetInnerRML("<svg src='../../assets/figma/icon-40.svg'></svg>" +
+                            escape(selected_effort_) + "⌄");
     } else if (kind == "access") {
       selected_access_ = value;
-      text(document_, "access-button",
-           selected_access_ == "full" ? "♢ 完全访问⌄" : "♢ 受限访问⌄");
+      if (auto* button = document_.GetElementById("access-button"))
+        button->SetInnerRML("<svg src='../../assets/figma/icon-28.svg'></svg>" +
+            std::string(selected_access_ == "full" ? "完全访问⌄" : "受限访问⌄"));
     } else if (kind == "provider") {
       selected_provider_ = value;
       if (const auto* providers = tokmon::cbor::find(providers_payload_, "providers");
@@ -3714,7 +3868,29 @@ void DeskController::ProcessEvent(Rml::Event& event) {
   else if (id == "reset-settings") reset_settings();
   else if (id == "close-new-session" || id == "cancel-new-session") toggle_hidden("new-session-overlay");
   else if (id == "confirm-new-session") create_session();
-  else if (id == "environment-toggle") toggle_hidden("environment-panel");
+  else if (id == "environment-toggle" || id == "environment-close") {
+    const auto* panel = document_.GetElementById("environment-panel");
+    const bool opening = panel && panel->IsClassSet("hidden");
+    if (auto* mutable_panel = document_.GetElementById("environment-panel"))
+      mutable_panel->SetClass("hidden", !opening);
+    if (auto* orb = document_.GetElementById("environment-orb"))
+      orb->SetClass("hidden", opening);
+  }
+  else if (id == "environment-refresh") {
+    refresh_review();
+    file_tree_children_.clear();
+    refresh_files();
+    text(document_, "environment-index", "正在刷新…");
+  }
+  else if (id == "environment-settings") {
+    if (auto* panel = document_.GetElementById("environment-panel"))
+      panel->SetClass("hidden", true);
+    if (auto* orb = document_.GetElementById("environment-orb"))
+      orb->SetClass("hidden", false);
+    render_settings_page("workspace");
+    if (auto* overlay = document_.GetElementById("settings-overlay"))
+      overlay->SetClass("hidden", false);
+  }
   else if (id == "chat-mode") {
     document_.GetElementById("chat-mode")->SetClass("active", true);
     document_.GetElementById("trajectory-mode")->SetClass("active", false);
@@ -3758,12 +3934,6 @@ void DeskController::ProcessEvent(Rml::Event& event) {
     }
     document_.GetElementById("composer-popover")->SetClass("hidden", true);
   }
-  else if (id == "network-toggle") {
-    auto* button = document_.GetElementById("network-toggle");
-    const bool enabled = !button->IsClassSet("active");
-    button->SetClass("active", enabled);
-    set_cbor(settings_values_, "network", enabled);
-  }
   else if (id == "attach-button") choose_attachment();
   else if (id == "access-button" || id == "active-model" || id == "effort-button") {
     auto* popover = document_.GetElementById("composer-popover");
@@ -3803,6 +3973,8 @@ void DeskController::ProcessEvent(Rml::Event& event) {
   }
   else if (id == "right-toggle") {
     set_right_panel_visible(!right_panel_visible_);
+    if (right_panel_visible_ && active_right_view_ == "launcher")
+      show_right_launcher();
   }
   else if (id == "right-collapse") {
     set_right_panel_visible(false);
@@ -3811,8 +3983,15 @@ void DeskController::ProcessEvent(Rml::Event& event) {
     if (auto* body = document_.GetElementById("app-shell"))
       body->SetClass("right-fullscreen", !body->IsClassSet("right-fullscreen"));
   }
-  else if (id == "review-tab") show_right_view("review-view");
-  else if (id == "files-tab") { show_right_view("files-view"); refresh_files(); }
+  else if (id == "right-tab-close") show_right_launcher();
+  else if (id == "launcher-review" || id == "review-tab") {
+    show_right_view("review-view");
+    refresh_review();
+  }
+  else if (id == "launcher-files" || id == "files-tab") {
+    show_right_view("files-view");
+    refresh_files();
+  }
   else if (id == "terminal-tab") {
     show_right_view("terminal-view");
     start_terminal();
@@ -3844,7 +4023,7 @@ void DeskController::ProcessEvent(Rml::Event& event) {
             document_.GetElementById("diff-surface")))
       surface->set_split_view(diff_split_view_);
   }
-  else if (id == "add-tab-button") show_toast("已打开全部标签页");
+  else if (id == "add-tab-button") toggle_hidden("right-tab-menu");
   else if (id == "branch-button") toggle_branch_menu();
   else if (id == "close-diff") {
     current_diff_path_.clear();

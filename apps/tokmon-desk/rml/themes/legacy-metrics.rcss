@@ -3,24 +3,27 @@ body { margin: 0; width: 100%; height: 100%; font-family: "MiSans VF"; font-size
 button, input, textarea { font-family: "MiSans VF"; font-size: 12px; }
 .hidden { display: none; }
 .sidebar { position: absolute; left: 0; top: 0; bottom: 0; width: 240px; border-right-width: 1px; }
-.workspace { position: absolute; left: 240px; right: 440px; top: 0; bottom: 0; }
-.right-panel { position: absolute; right: 0; top: 0; bottom: 0; width: 440px; border-left-width: 1px; }
+.workspace { position: absolute; left: 240px; right: 214px; top: 0; bottom: 0; }
+.right-panel { position: absolute; right: 0; top: 0; bottom: 0; width: 214px; border-left-width: 1px; }
 body.sidebar-hidden .sidebar { display: none; }
 body.sidebar-hidden .workspace { left: 0; }
 body.right-hidden .right-panel { display: none; }
 body.right-hidden .workspace { right: 0; }
 .panel-resizer { position: absolute; top: 46px; bottom: 0; width: 9px; z-index: 19; cursor: col-resize; background-color: transparent; }
 .sidebar-resizer { left: 235px; }
-.right-resizer { right: 436px; }
+.right-resizer { right: 210px; }
 body.sidebar-hidden .sidebar-resizer, body.right-hidden .right-resizer { display: none; }
 .panel-resizer:hover { border-left-width: 1px; border-left-color: #c86a28; }
-.brand-row { height: 48px; padding: 0 16px; display: flex; align-items: center; gap: 9px; }
+.brand-row { height: 46px; padding: 0 16px; display: flex; align-items: center; gap: 9px; border-bottom-width: 1px; }
 .brand-logo { width: 24px; height: 24px; }
 .brand-name { color: #1c1917; font-size: 17px; font-weight: 700; letter-spacing: -0.3px; }
 .new-session-button { margin: 10px 12px 14px; width: 216px; height: 42px; border-width: 0; border-radius: 12px; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 13.5px; font-weight: 500; }
 .new-session-button svg { width: 16px; height: 16px; }
 .search-box { margin: 0 12px; height: 32px; border-width: 1px; border-color: transparent; border-radius: 12px; padding: 0 12px; display: flex; align-items: center; gap: 8px; }
-.search-box:focus-within { background-color: #ffffff; border-color: rgba(200, 106, 40, 0.4); }
+.search-box { position: relative; }
+.search-placeholder { position: absolute; left: 34px; right: 8px; top: 7px; height: 18px; color: #a8a29e; font-size: 12px; line-height: 18px; pointer-events: none; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.search-placeholder.hidden { display: none; }
+.search-box:focus-within { background-color: #ffffff; border-color: rgba(200, 106, 40, 102); }
 .search-box svg { width: 16px; height: 16px; flex: none; }
 .search-box input, .panel-search input { width: 100%; height: 28px; border-width: 0; background-color: transparent; font-size: 12.5px; }
 .tree-caption { margin: 14px 20px 10px; color: #78716c; font-size: 11.5px; font-weight: 500; letter-spacing: 0.5px; }
@@ -36,23 +39,37 @@ body.sidebar-hidden .sidebar-resizer, body.right-hidden .right-resizer { display
 .tree-row:hover .row-add { opacity: 1; }
 .settings-button { position: absolute; left: 12px; right: 12px; bottom: 0; height: 42px; padding-left: 10px; display: flex; align-items: center; gap: 10px; border-width: 0; border-top-width: 1px; border-top-color: #f0eee8; background-color: transparent; font-size: 13.5px; font-weight: 500; }
 .settings-button svg { width: 16px; height: 16px; }
+.settings-button span { display: block; }
+.settings-status-dot { display: block; width: 7px; height: 7px; margin-left: auto; margin-right: 4px; border-radius: 4px; background-color: #16a34a; }
 .workspace-titlebar { height: 46px; border-bottom-width: 1px; padding: 0 16px; display: flex; align-items: center; gap: 8px; }
 .title-icon { width: 24px; height: 24px; border-width: 0; background-color: transparent; }
 .session-title { color: #1c1917; font-size: 14.5px; font-weight: 600; letter-spacing: -0.25px; }
 .title-edit { width: 24px; height: 24px; padding: 0; border-width: 0; background-color: transparent; color: #a8a29e; }
 .title-edit svg { width: 14px; height: 14px; }
-.mode-pill { display: flex; width: 92px; height: 24px; padding: 2px; margin-left: 12px; border-radius: 8px; background-color: rgba(237, 235, 228, 0.7); }
+.mode-pill { display: flex; width: 92px; height: 24px; padding: 2px; margin-left: 12px; border-radius: 8px; background-color: rgba(237, 235, 228, 179); }
 .mode-pill button { width: 44px; height: 20px; padding: 0; border-width: 0; border-radius: 6px; background-color: transparent; color: #78716c; font-size: 12px; font-weight: 500; }
 .mode-pill button.active { background-color: #ffffff; color: #1c1917; font-weight: 600; }
 .project-chip { padding: 4px 9px; border-radius: 7px; display: flex; align-items: center; gap: 5px; font-size: 10px; }
 .project-chip svg { width: 13px; height: 13px; }
-.environment-button { margin-left: auto; border-width: 0; background-color: transparent; color: #78716c; }
-.environment-panel { position: absolute; top: 44px; left: 12px; right: 12px; padding: 12px; border-width: 1px; border-radius: 10px; z-index: 5; }
+.environment-orb { position: absolute; z-index: 18; right: 16px; top: 48px; width: 48px; height: 48px; border-width: 1px; border-color: #ddd9d4; border-radius: 18px; background-color: rgba(255, 255, 255, 250); }
+.environment-orb-hit { position: absolute; left: 0; top: 0; width: 48px; height: 48px; padding: 0; border-width: 0; border-radius: 18px; background-color: transparent; }
+.environment-ring { position: absolute; display: block; border-style: solid; background-color: transparent; }
+.environment-ring.outer { left: 9px; top: 9px; width: 28px; height: 28px; border-width: 2px; border-color: #78716c; border-radius: 14px; }
+.environment-ring.inner { left: 14px; top: 14px; width: 18px; height: 18px; border-width: 2px; border-color: #a8a29e; border-radius: 9px; }
+.environment-core { position: absolute; display: block; left: 19px; top: 19px; width: 8px; height: 8px; border-radius: 4px; background-color: #c86a28; }
+.environment-online { position: absolute; display: block; right: 3px; top: 3px; width: 8px; height: 8px; border-width: 2px; border-color: #ffffff; border-radius: 6px; background-color: #16a34a; }
+.environment-panel { position: absolute; top: 48px; right: 16px; width: 275px; height: 270px; padding: 12px 14px; border-width: 1px; border-radius: 16px; z-index: 22; }
+.environment-panel-head { height: 28px; display: flex; align-items: center; gap: 7px; }
+.environment-panel-head strong { font-size: 13px; font-weight: 650; }
+.environment-panel-status { width: 7px; height: 7px; border-radius: 4px; background-color: #16a34a; }
+.environment-panel-head button { width: 28px; height: 28px; margin-left: auto; padding: 0; border-width: 0; border-radius: 9px; background-color: transparent; color: #78716c; }
 .branch-chip { float: right; padding: 3px 7px; border-radius: 6px; }
-.environment-grid { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
-.environment-row { display: flex; gap: 10px; }
-.environment-row > span:first-child { width: 90px; flex: none; color: #78716c; }
+.environment-grid { margin-top: 8px; display: flex; flex-direction: column; gap: 5px; }
+.environment-row { height: 27px; display: flex; align-items: center; gap: 10px; }
+.environment-row > span:first-child { width: 64px; flex: none; color: #78716c; }
 .environment-row > code, .environment-row > span:last-child { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.environment-actions { height: 32px; margin-top: 9px; display: flex; gap: 7px; }
+.environment-actions button { flex: 1; height: 32px; padding: 0 8px; border-width: 1px; border-color: #e7e5e4; border-radius: 8px; background-color: #ffffff; color: #57534e; }
 .initial-session { position: absolute; left: 0; right: 0; top: 46px; bottom: 164px; }
 .starter-block { position: absolute; left: 24px; right: 24px; top: 50%; height: 186px; margin-top: -94px; }
 .starter-block h1 { height: 36px; margin: 0 0 24px; color: #1c1917; text-align: center; font-size: 23px; font-weight: 650; letter-spacing: -0.35px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -98,35 +115,50 @@ body.sidebar-hidden .sidebar-resizer, body.right-hidden .right-resizer { display
 .composer-wrap { position: absolute; left: 24px; right: 24px; bottom: 0; max-width: 760px; height: 164px; margin: 0 auto; }
 .workspace-context { position: absolute; left: 20px; right: 20px; top: 24px; height: 28px; padding: 0 12px 4px; border-top-left-radius: 12px; border-top-right-radius: 12px; background-color: #f4f4f4; display: flex; align-items: center; gap: 8px; font-size: 11px; overflow: hidden; }
 .workspace-context svg { width: 14px; height: 14px; }
-.composer-card { position: absolute; left: 0; right: 0; top: 48px; width: 100%; height: 100px; border-width: 1px; border-radius: 16px; padding: 12px; display: flex; flex-direction: column; justify-content: space-between; }
+.composer-card { position: absolute; left: 0; right: 0; top: 48px; width: 100%; height: 100px; border-width: 1px; border-radius: 16px; padding: 0; display: block; }
 .composer-placeholder { position: absolute; left: 12px; right: 12px; top: 20px; height: 18px; z-index: 2; color: #a8a29e; font-size: 13.5px; line-height: 18px; pointer-events: none; }
 .composer-placeholder.hidden { display: none; }
-.composer-card input { width: 100%; height: 34px; border-width: 0; color: #292524; background-color: transparent; font-size: 13.5px; }
-.composer-toolbar { display: flex; align-items: center; justify-content: space-between; }
+.composer-card input { position: absolute; left: 12px; right: 12px; top: 12px; width: auto; height: 34px; border-width: 0; color: #292524; background-color: transparent; font-size: 13.5px; }
+.composer-toolbar { position: absolute; left: 12px; right: 12px; bottom: 12px; height: 28px; display: flex; align-items: center; justify-content: space-between; }
 .composer-tools, .composer-options { display: flex; gap: 6px; align-items: center; }
 .round-button, .context-ring, .send-button { width: 28px; height: 28px; border-radius: 50%; border-width: 1px; }
 .round-button svg, .context-ring svg, .send-button svg { width: 14px; height: 14px; }
 .tool-pill svg, .select-pill svg { width: 13px; height: 13px; margin-right: 5px; vertical-align: middle; }
 .tool-pill, .select-pill { height: 28px; padding: 0 9px; border-width: 1px; border-radius: 14px; }
 .send-button { border-width: 0; font-size: 17px; }
+.send-button.disabled { background-color: #e5e5e5; color: #a8a29e; }
+.send-button.disabled svg { opacity: 0.35; }
 .window-controls { height: 46px; border-bottom-width: 1px; padding: 0 7px; display: flex; align-items: center; }
 .window-controls button { width: 28px; height: 28px; border-width: 0; border-radius: 6px; background-color: transparent; }
 .global-window-controls { position: absolute; right: 7px; top: 0; width: 96px; height: 46px; z-index: 40; display: flex; align-items: center; justify-content: flex-end; }
 .global-window-controls button { width: 28px; height: 28px; padding: 0; border-width: 0; border-radius: 6px; background-color: transparent; }
 .global-window-controls svg { width: 14px; height: 14px; }
 .global-window-controls .close-window:hover { background-color: #dc2626; color: #ffffff; }
-.right-panel .window-controls { padding-right: 104px; }
-.active-right-title { display: flex; align-items: center; gap: 7px; margin-left: 80px; }
-.active-right-title svg { width: 14px; height: 14px; }
-.active-right-title strong { font-size: 12.5px; }
-.active-right-title span { margin-left: 70px; padding: 3px 9px; border-width: 1px; border-color: #f0eee8; border-radius: 10px; color: #a8a29e; font-size: 9px; }
+.right-panel .window-controls { padding: 0 104px 0 10px; }
+.right-open-tabs { height: 46px; display: flex; align-items: center; gap: 6px; }
+.right-tab-pill { height: 28px; padding: 0 8px 0 10px; border-width: 1px; border-color: rgba(0, 0, 0, 15); border-radius: 14px; background-color: #ffffff; display: flex; align-items: center; gap: 6px; }
+.right-tab-pill.hidden { display: none; }
+.right-tab-pill svg { width: 14px; height: 14px; }
+.right-tab-pill strong { font-size: 12.5px; font-weight: 500; }
+.right-tab-close { width: 18px !important; height: 18px !important; color: #a8a29e; }
+.add-tab-button { width: 28px !important; height: 28px !important; font-size: 16px; }
 .window-spacer { flex: 1; }
 .close-window:hover { background-color: #ef4444; color: white; }
-.right-tabs { height: 44px; border-bottom-width: 1px; display: flex; align-items: stretch; }
-.right-tab { flex: 1; border-width: 0; border-bottom-width: 2px; border-bottom-color: transparent; background-color: transparent; font-size: 11px; }
-.right-tab svg { width: 14px; height: 14px; vertical-align: middle; margin-right: 5px; }
-.right-tab span { display: block; font-size: 8px; color: #a8a29e; }
-.right-view { position: absolute; left: 0; right: 0; top: 90px; bottom: 0; }
+.right-launcher { position: absolute; left: 0; right: 0; top: 46px; bottom: 0; }
+.launcher-list { position: absolute; left: 20px; right: 20px; top: 50%; max-width: 260px; height: 98px; margin: -49px auto 0; display: flex; flex-direction: column; gap: 10px; }
+.launcher-entry { width: 100%; height: 44px; padding: 0 10px; border-width: 1px; border-color: transparent; border-radius: 16px; background-color: #f5f5f4; display: flex; align-items: center; justify-content: space-between; color: #292524; }
+.launcher-entry:hover { background-color: rgba(0, 0, 0, 10); border-color: rgba(0, 0, 0, 13); }
+.launcher-entry > span { display: flex; align-items: center; gap: 12px; }
+.launcher-entry svg { width: 16px; height: 16px; }
+.launcher-entry strong { font-size: 13.5px; font-weight: 500; }
+.launcher-entry kbd { display: block; width: 74px; height: 20px; padding: 0; border-width: 1px; border-color: rgba(0, 0, 0, 18); border-radius: 10px; background-color: #ffffff; color: #a8a29e; font-family: "MiSans VF"; font-size: 9.5px; line-height: 20px; text-align: center; flex: none; }
+.right-tab-menu { position: absolute; z-index: 35; left: 10px; top: 42px; width: 190px; padding: 6px; border-width: 1px; border-color: #e7e5e4; border-radius: 10px; background-color: #ffffff; }
+.right-tab-menu > strong { display: block; padding: 5px 7px; color: #a8a29e; font-size: 10px; }
+.right-tab-menu button { width: 100%; min-height: 32px; padding: 0 8px; border-width: 0; border-radius: 7px; background-color: transparent; display: flex; align-items: center; gap: 7px; text-align: left; }
+.right-tab-menu button:hover { background-color: #f7f3ed; }
+.right-tab-menu button svg { width: 14px; height: 14px; }
+.right-tab-menu button span { margin-left: auto; color: #a8a29e; font-size: 9px; }
+.right-view { position: absolute; left: 0; right: 0; top: 46px; bottom: 0; }
 .review-toolbar { height: 44px; border-bottom-width: 1px; display: flex; align-items: center; padding: 0 8px; gap: 5px; }
 .review-toolbar button, .review-summary button, .browser-toolbar button { height: 28px; padding: 0 8px; border-width: 1px; border-color: #e7e5e4; border-radius: 7px; background-color: #fafaf9; }
 .review-toolbar button:nth-child(2) { flex: 1; }
@@ -173,7 +205,9 @@ body.sidebar-hidden .sidebar-resizer, body.right-hidden .right-resizer { display
 .diff-error { margin: 12px; padding: 10px; border-radius: 7px; color: #fecaca; background-color: #4a2424; }
 .danger, .danger-button { color: #b91c1c; }
 .danger-button { height: 34px; padding: 0 14px; border-width: 0; border-radius: 8px; background-color: #dc2626; color: white; }
-.panel-search { margin: 10px; height: 32px; border-radius: 8px; padding: 0 8px; }
+.panel-search { position: relative; margin: 10px; height: 32px; border-radius: 8px; padding: 0 8px; }
+.panel-search-placeholder { position: absolute; left: 9px; right: 9px; top: 7px; height: 18px; z-index: 0; color: #a8a29e; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
+.panel-search input { position: relative; z-index: 1; width: 100%; height: 32px; padding: 0; border-width: 0; background-color: transparent; color: #44403c; }
 .file-actions { flex: none; height: 30px; margin: -4px 10px 6px; display: flex; align-items: center; gap: 4px; }
 .file-actions button { height: 24px; padding: 0 7px; border-width: 1px; border-color: #e7e5e4; border-radius: 6px; font-size: 9px; }
 .file-actions .danger-quiet { color: #dc2626; }
@@ -231,7 +265,7 @@ body.sidebar-hidden .sidebar-resizer, body.right-hidden .right-resizer { display
 body.sidebar-hidden .left-toggle { left: 6px; }
 body.right-hidden .right-toggle { right: 110px; }
 body.right-hidden .environment-button { margin-right: 160px; }
-.overlay { position: absolute; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; }
+.overlay { position: absolute; left: 0; right: 0; top: 0; bottom: 0; width: 100%; height: 100%; z-index: 100; display: flex; align-items: center; justify-content: center; background-color: rgba(0, 0, 0, 89); }
 .overlay.hidden { display: none; }
 .settings-dialog { width: 760px; height: 540px; border-width: 1px; border-radius: 14px; display: flex; overflow: hidden; }
 .settings-sidebar { width: 180px; padding: 22px 12px; border-right-width: 1px; }
@@ -305,7 +339,7 @@ body.right-hidden .environment-button { margin-right: 160px; }
 .attachment-pill { max-width: 140px; padding: 4px 7px; border-width: 1px; border-color: #e7e5e4; border-radius: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer-popover { position: absolute; left: 252px; right: 452px; bottom: 146px; z-index: 80; display: flex; justify-content: center; pointer-events: none; }
 .composer-popover.hidden { display: none; }
-.popover-card { min-width: 230px; max-width: 420px; padding: 10px; border-width: 1px; border-color: #e7e5e4; border-radius: 11px; background-color: #ffffff; box-shadow: 0 8px 24px rgba(41, 37, 36, 0.16); pointer-events: auto; }
+.popover-card { min-width: 230px; max-width: 420px; padding: 10px; border-width: 1px; border-color: #e7e5e4; border-radius: 11px; background-color: #ffffff; pointer-events: auto; }
 .popover-card > strong { display: block; margin: 3px 6px 8px; }
 .choice-popover button { width: 100%; min-height: 34px; padding: 6px 8px; border-width: 0; border-radius: 7px; background-color: transparent; display: flex; justify-content: space-between; text-align: left; }
 .choice-popover button:hover, .choice-popover button.selected { background-color: #f7efe5; color: #8b5229; }
@@ -316,3 +350,23 @@ body.right-hidden .environment-button { margin-right: 160px; }
 .title-popover input { min-width: 260px; flex: 1; height: 34px; padding: 0 9px; border-width: 1px; border-color: #e7e5e4; border-radius: 8px; }
 body.right-fullscreen .sidebar, body.right-fullscreen .workspace, body.right-fullscreen .left-toggle, body.right-fullscreen .right-toggle { display: none; }
 body.right-fullscreen .right-panel { left: 0; width: auto; }
+
+/* The legacy Slint shell switched the utility pane to icon/ellipsis mode under
+   300 px. The launcher is intentionally 214 px wide, so feature pages must
+   retain that compact contract until the user opens a file or resizes it. */
+.right-panel.narrow .right-tab-pill { width: 54px; padding: 0 5px; justify-content: center; }
+.right-panel.narrow .right-tab-pill strong { display: none; }
+.right-panel.narrow .right-tab-close { width: 16px !important; }
+.right-panel.narrow .review-toolbar { padding: 0 5px; gap: 4px; }
+.right-panel.narrow .review-toolbar #branch-button { width: 66px; min-width: 0; padding: 0 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.right-panel.narrow .review-toolbar #commit-button { width: 34px; flex: none; padding: 0; font-size: 0; }
+.right-panel.narrow .review-toolbar #commit-button svg { width: 14px; height: 14px; }
+.right-panel.narrow .review-toolbar #refresh-review { width: 30px; padding: 0; }
+.right-panel.narrow .review-summary { padding: 0 7px; gap: 5px; }
+.right-panel.narrow .review-summary #diff-view-toggle { width: 42px; padding: 0 4px; }
+.right-panel.narrow #files-view .file-actions { margin-left: 7px; margin-right: 7px; gap: 3px; }
+.right-panel.narrow #files-view .file-actions button { padding: 0 5px; }
+.right-panel.narrow #files-view .editor-toolbar,
+.right-panel.narrow #files-view .editor-findbar,
+.right-panel.narrow #files-view .file-preview { display: none; }
+.right-panel.narrow #files-view .file-tree { flex: 1; height: auto; border-bottom-width: 0; }

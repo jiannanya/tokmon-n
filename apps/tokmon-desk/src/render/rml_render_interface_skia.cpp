@@ -48,6 +48,18 @@ SkColor4f to_sk_color4f(const Color& color) {
           color.alpha * scale};
 }
 
+SkColor to_sk_vertex_color(const Rml::ColourbPremultiplied& color) {
+  // RmlUi deliberately emits premultiplied vertex colours, while SkVertices
+  // accepts SkColor in non-premultiplied form and performs its own conversion.
+  // Passing the Rml channels through directly double-premultiplies translucent
+  // RCSS colours, making pills and overlays far too dark.
+  return to_sk_color(color.ToNonPremultiplied());
+}
+
+SkColor4f to_sk_gradient_color(const Rml::ColourbPremultiplied& color) {
+  return to_sk_color4f(color.ToNonPremultiplied());
+}
+
 SkM44 to_sk_matrix(const Rml::Matrix4f& source) {
   const auto r0 = source.GetRow(0);
   const auto r1 = source.GetRow(1);
@@ -162,7 +174,7 @@ Rml::CompiledGeometryHandle RmlRenderInterfaceSkia::CompileGeometry(
   for (const auto& vertex : vertices) {
     geometry->positions.push_back({vertex.position.x, vertex.position.y});
     geometry->texcoords.push_back({vertex.tex_coord.x, vertex.tex_coord.y});
-    geometry->colors.push_back(to_sk_color(vertex.colour));
+    geometry->colors.push_back(to_sk_vertex_color(vertex.colour));
   }
   geometry->indices.reserve(indices.size());
   for (const int index : indices)
@@ -559,7 +571,7 @@ Rml::CompiledShaderHandle RmlRenderInterfaceSkia::CompileShader(
   shader->colors.reserve(stops.size());
   for (const auto& stop : stops) {
     shader->positions.push_back(stop.position.number);
-    shader->colors.push_back(to_sk_color4f(stop.color));
+    shader->colors.push_back(to_sk_gradient_color(stop.color));
   }
   return reinterpret_cast<Rml::CompiledShaderHandle>(shader.release());
 }

@@ -44,14 +44,17 @@ namespace tokmon::desk {
 namespace {
 
 struct Arguments {
-  std::filesystem::path workspace = std::filesystem::current_path();
+  std::filesystem::path workspace;
   bool smoke_test{false};
   bool software_renderer{false};
   int idle_test_ms{0};
   int ui_scale_percent{0};
   int content_scale_percent{0};
-  int logical_width{1440};
-  int logical_height{900};
+  // Match the established desktop shell at 150% Windows display scale.  The
+  // RmlUi document is then rendered at the independently persisted 125%
+  // content scale, producing the same 1318x900 legacy design viewport.
+  int logical_width{1648};
+  int logical_height{1125};
   std::filesystem::path screenshot;
   std::filesystem::path acceptance_report;
   std::filesystem::path interaction_report;
@@ -143,6 +146,56 @@ int stored_content_scale_percent(const DeskAppPaths& paths,
     return fallback;
   return static_cast<int>(std::clamp<std::int64_t>(
       value->as_integer(), 70, 200));
+}
+
+std::optional<std::filesystem::path> readable_workspace(
+    const std::string_view encoded) {
+  if (encoded.empty() || encoded.size() > 4096 ||
+      encoded.find('\0') != std::string_view::npos)
+    return std::nullopt;
+  std::error_code error;
+  auto path = std::filesystem::weakly_canonical(
+      std::filesystem::path(std::string(encoded)), error);
+  if (error || !std::filesystem::is_directory(path, error) || error)
+    return std::nullopt;
+  return path;
+}
+
+std::filesystem::path restored_workspace(const DeskAppPaths& paths) {
+  DeskStateStore state(paths);
+  std::string warning;
+  const auto settings = state.load_settings(warning);
+  if (const auto* value = tokmon::cbor::find(settings, "last_workspace"))
+    if (const auto restored = readable_workspace(value->as_string()))
+      return *restored;
+
+  // Older tokmon-desk builds did not persist last_workspace. Recover it from
+  // the selected navigation row and its nearest project ancestor instead.
+  const auto navigation = state.load_navigation(warning);
+  if (const auto* items = navigation.as_array()) {
+    std::optional<std::filesystem::path> first_project;
+    std::optional<std::filesystem::path> active_project;
+    for (const auto& item : *items) {
+      const auto* kind = tokmon::cbor::find(item, "kind");
+      const auto* workspace = tokmon::cbor::find(item, "workspace");
+      if (kind && kind->as_string() == "project" && workspace) {
+        active_project = readable_workspace(workspace->as_string());
+        if (!first_project && active_project)
+          first_project = active_project;
+      }
+      const auto* selected = tokmon::cbor::find(item, "selected");
+      if (selected && selected->as_bool()) {
+        if (workspace)
+          if (const auto direct = readable_workspace(workspace->as_string()))
+            return *direct;
+        if (active_project)
+          return *active_project;
+      }
+    }
+    if (first_project)
+      return *first_project;
+  }
+  return std::filesystem::current_path();
 }
 
 void set_text(Rml::ElementDocument& document, const char* id, const std::string& value) {
@@ -262,7 +315,7 @@ bool prepare_visual_state(Rml::Context& context,
       return true;
     }
   } else if (state == "selected") {
-    return open_right() && click("files-tab");
+    return open_right() && click("launcher-files");
   } else if (state == "disabled") {
     if (auto* send = document.GetElementById("send-button")) {
       send->SetAttribute("disabled", "");
@@ -270,7 +323,7 @@ bool prepare_visual_state(Rml::Context& context,
       return true;
     }
   } else if (state == "loading") {
-    if (!open_right())
+    if (!open_right() || !click("launcher-review"))
       return false;
     if (auto* empty = document.GetElementById("review-empty")) {
       empty->SetClass("hidden", false);
@@ -300,11 +353,11 @@ bool prepare_visual_state(Rml::Context& context,
   } else if (state == "new-session") {
     return click("new-session-button");
   } else if (state == "right-review") {
-    return open_right() && click("review-tab");
+    return open_right() && click("launcher-review");
   } else if (state == "right-files") {
-    return open_right() && click("files-tab");
+    return open_right() && click("launcher-files");
   } else if (state == "right-terminal") {
-    return open_right() && click("terminal-tab");
+    return open_right() && click("add-tab-button") && click("terminal-tab");
   } else if (state.starts_with("settings-")) {
     if (!click("settings-button"))
       return false;
@@ -349,7 +402,7 @@ bool write_interaction_report(SdlPlatform& platform,
   bool clicked = click_id("environment-toggle", detail);
   record("UI-008/009-a", "环境信息通过真实 RmlUi 点击打开",
          clicked && !hidden("environment-panel"), detail);
-  clicked = click_id("environment-toggle", detail);
+  clicked = click_id("environment-close", detail);
   record("UI-008/009-b", "环境信息通过真实 RmlUi 点击关闭",
          clicked && hidden("environment-panel"), detail);
 
@@ -362,6 +415,9 @@ bool write_interaction_report(SdlPlatform& platform,
 
   Rml::ElementList starter_cards;
   document.QuerySelectorAll(starter_cards, "[data-starter]");
+  const auto* initial_send = document.GetElementById("send-button");
+  const bool initial_empty_send_disabled =
+      initial_send && initial_send->IsClassSet("disabled");
   auto* composer = dynamic_cast<Rml::ElementFormControl*>(
       document.GetElementById("composer"));
   const bool starter_clicked = !starter_cards.empty() &&
@@ -419,22 +475,22 @@ bool write_interaction_report(SdlPlatform& platform,
   if (composer)
     composer->SetValue("");
 
-  const bool network_before = active("network-toggle");
-  clicked = click_id("network-toggle", detail);
-  const bool network_changed = active("network-toggle") != network_before;
-  const bool network_restore_click = click_id("network-toggle", detail);
-  record("UI-012", "Composer 联网 pill 切换并恢复",
-         clicked && network_changed && network_restore_click &&
-             active("network-toggle") == network_before,
-         detail);
+  clicked = click_id("access-button", detail);
+  const bool access_popover_open = clicked && composer_popover &&
+      !composer_popover->IsClassSet("hidden");
+  record("UI-012", "Composer 空输入禁用发送且权限菜单可打开",
+         initial_empty_send_disabled && access_popover_open, detail);
+  if (composer_popover)
+    composer_popover->SetClass("hidden", true);
 
   auto* shell = document.GetElementById("app-shell");
-  const bool right_starts_collapsed = hidden("right-panel") && shell &&
-      shell->IsClassSet("right-hidden");
-  const bool right_start_open = click_id("right-toggle", detail);
-  record("UI-016-startup", "右栏按旧版规则默认收起并可展开",
-         right_starts_collapsed && right_start_open && !hidden("right-panel") &&
-             shell && !shell->IsClassSet("right-hidden"), detail);
+  const bool right_starts_launcher = !hidden("right-panel") &&
+      !hidden("right-launcher") && hidden("review-view") && shell &&
+      !shell->IsClassSet("right-hidden");
+  const bool launcher_review = click_id("launcher-review", detail);
+  record("UI-016-startup", "右栏按旧版规则默认显示启动器并可打开审查",
+         right_starts_launcher && launcher_review && hidden("right-launcher") &&
+             !hidden("review-view"), detail);
 
   const auto dispatch_pointer = [&](const Uint32 type, const float logical_x,
                                     const float logical_y) {
@@ -490,26 +546,26 @@ bool write_interaction_report(SdlPlatform& platform,
 
   const float viewport_width = document.GetClientWidth();
   const bool right_down = dispatch_pointer(
-      SDL_EVENT_MOUSE_BUTTON_DOWN, viewport_width - 440.f, 100.f);
+      SDL_EVENT_MOUSE_BUTTON_DOWN, viewport_width - 214.f, 100.f);
   const bool right_move = dispatch_pointer(
-      SDL_EVENT_MOUSE_MOTION, viewport_width - 500.f, 100.f);
+      SDL_EVENT_MOUSE_MOTION, viewport_width - 274.f, 100.f);
   const bool right_up = dispatch_pointer(
-      SDL_EVENT_MOUSE_BUTTON_UP, viewport_width - 500.f, 100.f);
+      SDL_EVENT_MOUSE_BUTTON_UP, viewport_width - 274.f, 100.f);
   const bool right_resized = right_panel &&
-      std::abs(right_panel->GetOffsetWidth() - 500.f) <= 1.f;
+      std::abs(right_panel->GetOffsetWidth() - 274.f) <= 1.f;
   const bool right_restore_down = dispatch_pointer(
-      SDL_EVENT_MOUSE_BUTTON_DOWN, viewport_width - 500.f, 100.f);
+      SDL_EVENT_MOUSE_BUTTON_DOWN, viewport_width - 274.f, 100.f);
   const bool right_restore_move = dispatch_pointer(
-      SDL_EVENT_MOUSE_MOTION, viewport_width - 440.f, 100.f);
+      SDL_EVENT_MOUSE_MOTION, viewport_width - 214.f, 100.f);
   const bool right_restore_up = dispatch_pointer(
-      SDL_EVENT_MOUSE_BUTTON_UP, viewport_width - 440.f, 100.f);
+      SDL_EVENT_MOUSE_BUTTON_UP, viewport_width - 214.f, 100.f);
   const bool right_restored = right_panel &&
-      std::abs(right_panel->GetOffsetWidth() - 440.f) <= 1.f;
+      std::abs(right_panel->GetOffsetWidth() - 214.f) <= 1.f;
   record("UI-002/016-resize", "右分栏经 SDL 指针事件拖拽并恢复",
          right_down && right_move && right_up && right_resized &&
              right_restore_down && right_restore_move && right_restore_up &&
              right_restored,
-         "right panel 440 -> 500 -> " +
+         "right panel 214 -> 274 -> " +
              std::to_string(right_panel ? right_panel->GetOffsetWidth() : -1.f));
 
   clicked = click_id("sidebar-toggle", detail);
@@ -606,9 +662,10 @@ bool write_interaction_report(SdlPlatform& platform,
          settings_close && hidden("settings-overlay"),
          detail);
 
-  clicked = click_id("files-tab", detail);
+  const bool review_closed_for_files = click_id("right-tab-close", detail);
+  clicked = review_closed_for_files && click_id("launcher-files", detail);
   record("UI-017/025", "右栏切换到文件页",
-         clicked && active("files-tab") && !hidden("files-view"), detail);
+         clicked && hidden("right-tab-menu") && !hidden("files-view"), detail);
 
   const auto unique = std::to_string(static_cast<unsigned long long>(
       std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -668,17 +725,19 @@ bool write_interaction_report(SdlPlatform& platform,
   if ((created || renamed) && std::filesystem::exists(renamed_path))
     std::filesystem::remove(renamed_path, cleanup_error);
 
-  clicked = click_id("terminal-tab", detail);
+  const bool files_closed_for_terminal = click_id("right-tab-close", detail);
+  const bool terminal_menu_open =
+      files_closed_for_terminal && click_id("add-tab-button", detail);
+  clicked = terminal_menu_open && click_id("terminal-tab", detail);
   const auto* terminal_status = document.GetElementById("terminal-status");
   const auto terminal_status_text = terminal_status
       ? terminal_status->GetInnerRML() : std::string("<missing>");
-  const bool terminal_running = clicked && active("terminal-tab") &&
+  const bool terminal_running = clicked &&
       !hidden("terminal-view") && terminal_status &&
       terminal_status_text.find("正在运行") != std::string::npos;
   record("UI-017/028/TERM-002", "右栏启动跨平台 Terminal profile",
-         terminal_running, detail + "; active=" +
-             (active("terminal-tab") ? "true" : "false") +
-             "; hidden=" + (hidden("terminal-view") ? "true" : "false") +
+         terminal_running, detail + "; hidden=" +
+             (hidden("terminal-view") ? "true" : "false") +
              "; status=" + terminal_status_text);
   auto* terminal_tabs = document.GetElementById("terminal-tabs");
   const int terminal_count_before = terminal_tabs
@@ -708,9 +767,10 @@ bool write_interaction_report(SdlPlatform& platform,
          terminal_clear && terminal_search && terminal_search->GetValue().empty(),
          detail);
 
-  clicked = click_id("review-tab", detail);
+  const bool terminal_closed_for_review = click_id("right-tab-close", detail);
+  clicked = terminal_closed_for_review && click_id("launcher-review", detail);
   record("UI-017/018", "右栏切回 Review",
-         clicked && active("review-tab") && !hidden("review-view"), detail);
+         clicked && !hidden("review-view"), detail);
   auto* diff_toggle = document.GetElementById("diff-view-toggle");
   const bool diff_before = diff_toggle && diff_toggle->IsClassSet("active");
   const bool diff_click = click_id("diff-view-toggle", detail);
@@ -722,12 +782,14 @@ bool write_interaction_report(SdlPlatform& platform,
              diff_toggle->IsClassSet("active") == diff_before,
          detail);
 
-  clicked = click_id("right-fullscreen", detail);
-  const bool fullscreen = clicked && shell && shell->IsClassSet("right-fullscreen");
-  const bool fullscreen_restore = click_id("right-fullscreen", detail);
-  record("UI-016-a", "右栏全屏并恢复", fullscreen && fullscreen_restore &&
-         shell && !shell->IsClassSet("right-fullscreen"), detail);
-  clicked = click_id("right-collapse", detail);
+  clicked = click_id("right-tab-close", detail);
+  const bool returned_to_launcher = clicked && !hidden("right-launcher") &&
+      hidden("review-view");
+  const bool launcher_reopen = click_id("launcher-review", detail);
+  record("UI-016-a", "右栏关闭活动页签后返回启动器并可重新打开",
+         returned_to_launcher && launcher_reopen && !hidden("review-view"),
+         detail);
+  clicked = click_id("right-toggle", detail);
   const bool right_collapsed = clicked && hidden("right-panel") && shell &&
       shell->IsClassSet("right-hidden");
   const bool right_restore = click_id("right-toggle", detail);
@@ -794,21 +856,26 @@ bool write_ui_contract_report(Rml::ElementDocument& document,
     float width;
     float height;
   };
-  const float workspace_width = static_cast<float>(logical_width - 680);
+  constexpr float sidebar_width = 240.f;
+  constexpr float right_panel_width = 214.f;
+  const float workspace_width =
+      static_cast<float>(logical_width) - sidebar_width - right_panel_width;
   const float composer_width = std::min(760.f, workspace_width - 48.f);
-  const float composer_x = 240.f + (workspace_width - composer_width) / 2.f;
+  const float composer_x = sidebar_width +
+      (workspace_width - composer_width) / 2.f;
   const std::vector<Contract> contracts{
       {"sidebar", 0.f, 0.f, 240.f, static_cast<float>(logical_height)},
       {"workspace", 240.f, 0.f, workspace_width,
        static_cast<float>(logical_height)},
-      {"right-panel", static_cast<float>(logical_width - 440), 0.f, 440.f,
+      {"right-panel", static_cast<float>(logical_width) - right_panel_width,
+       0.f, right_panel_width,
        static_cast<float>(logical_height)},
-      {"brand-row", 0.f, 0.f, 240.f, 48.f},
+      {"brand-row", 0.f, 0.f, 240.f, 46.f},
       {"workspace-titlebar", 240.f, 0.f, workspace_width, 46.f},
-      {"right-titlebar", static_cast<float>(logical_width - 440), 0.f, 440.f,
-       46.f},
-      {"right-tabs", static_cast<float>(logical_width - 440), 46.f, 440.f,
-       44.f},
+      {"right-titlebar", static_cast<float>(logical_width) - right_panel_width,
+       0.f, right_panel_width, 46.f},
+      {"right-launcher", static_cast<float>(logical_width) - right_panel_width,
+       46.f, right_panel_width, static_cast<float>(logical_height) - 46.f},
       {"composer-wrap", composer_x, static_cast<float>(logical_height - 164),
        composer_width, 164.f},
       {"composer-card", composer_x, static_cast<float>(logical_height - 116),
@@ -884,13 +951,15 @@ SDL_HitTestResult hit_test(SDL_Window* window, const SDL_Point* point, void*) {
 
 int run_desk(int argc, char** argv) {
   try {
-    const auto arguments = parse_arguments(argc, argv);
+    auto arguments = parse_arguments(argc, argv);
     const auto paths = DeskAppPaths::resolve();
     std::string error;
     if (!paths.ensure(error)) {
       std::cerr << "tokmon-desk: " << error << '\n';
       return 2;
     }
+    if (arguments.workspace.empty())
+      arguments.workspace = restored_workspace(paths);
     if (!paths.isolated_from(arguments.workspace)) {
       std::cerr << "tokmon-desk: application data paths overlap the workspace/.tokmon\n";
       return 2;
@@ -912,12 +981,12 @@ int run_desk(int argc, char** argv) {
     const int ui_scale_percent = arguments.ui_scale_percent > 0
                                      ? arguments.ui_scale_percent
                                      : platform.default_ui_scale_percent();
+    // Display scaling and the legacy application zoom are independent. An
+    // explicit display scale must not silently reset the saved 125% UI zoom.
     const int content_scale_percent = arguments.content_scale_percent > 0
         ? arguments.content_scale_percent
-        : arguments.ui_scale_percent > 0
-              ? 100
-              : stored_content_scale_percent(
-                    paths, platform.default_content_scale_percent());
+        : stored_content_scale_percent(
+              paths, platform.default_content_scale_percent());
     const float window_scale = static_cast<float>(ui_scale_percent) / 100.f;
     const float content_scale =
         static_cast<float>(content_scale_percent) / 100.f;
@@ -1024,8 +1093,8 @@ int run_desk(int argc, char** argv) {
       controller.prepare_legacy_three_pane_contract();
       context->Update();
       if (!write_ui_contract_report(*document, platform,
-                                    arguments.logical_width,
-                                    arguments.logical_height,
+                                    device->logical_width(),
+                                    device->logical_height(),
                                     ui_scale_percent,
                                     content_scale_percent,
                                     device->backend_name(),
@@ -1075,7 +1144,7 @@ int run_desk(int argc, char** argv) {
         Rml::Shutdown();
         return 11;
       }
-      controller.prepare_legacy_three_pane_contract();
+      controller.prepare_legacy_three_pane_contract(true);
       controller.seed_acceptance_conversation(10000);
       context->Update();
       const auto conversation_turns = controller.conversation_turn_count();

@@ -23,13 +23,50 @@
 
 ### 1.1 2026-08-30 实际执行快照
 
-- 总结论：**未通过发布验收**；Windows Release 自动化通过，但旧版 UI 全状态 golden、合规的非文本像素阈值、人工并排签署、真实 IME/device-lost，以及 macOS/Linux 真机构建仍未完成。
-- Windows 自动化：CTest 2/2；主 DPI UI 37/37；五档 DPI 累计 185/185；三视口 × 五 DPI 几何 15/15；26 张核心状态图；安装态 UI 37/37。
-- 压力：10,000 会话、10,000 文件模型、100,001 行编辑器、4,101 行 diff、100 MiB Terminal 均通过 DOM/耗时硬门槛；输入到 Skia present 为 64 样本、p95 7.2465 ms。
+- 总结论：**旧版主工作台视觉复刻的自动验收已通过；完整发布验收仍未签署**。剩余发布阻塞项是合规的同步数据 golden 像素阈值、用户人工签署、真实 IME/device-lost，以及 macOS/Linux 真机构建；这些阻塞不再包含本轮截图中暴露的尺寸、三栏结构、导航密度、右栏启动器或透明度问题。
+- Windows 自动化：最终构建 CTest 2/2；主 DPI UI 37/37；五档 DPI 累计 185/185；三视口 × 五 DPI 几何 15/15；最终样式重新生成 26/26 张核心状态图；安装态 UI 37/37。
+- 视觉主基线：Windows 150% 显示缩放 × 旧版 125% 内容缩放，物理输出 `2472×1688`，RmlUi 内容视口 `1318×900`；三栏几何 contract 9/9。
+- 压力：10,000 会话、10,000 文件模型、100,001 行编辑器、4,101 行 diff、100 MiB Terminal 均通过 DOM/耗时硬门槛；最终输入到 Skia present 为 64 样本、p95 7.6648 ms。
 - 安装态：157 个文件、20 个 runtime DLL、49 个 license 文件；无开发头、静态库、Debug CRT、完整 Ghostty 或 Browser runtime；构建态/安装态 exe SHA-256 一致。
 - 保护边界：`git diff -- apps/tokmon-desktop apps/tokmond` 为空。
 - Browser：保持 `DEFERRED-BROWSER`，未执行 Browser 测试。
 - 机器报告：[acceptance-summary.json](../build/windows-msvc-desk-strict-release/e2e/acceptance-summary.json)。
+
+### 1.2 本轮“截图完全不一样”问题的纠正结论
+
+本轮不是对原 UI 重新设计，而是纠正了此前错误的运行基线和实现偏差。根因与修复如下：
+
+| 根因 | 旧错误表现 | 已完成修复 |
+|---|---|---|
+| 默认窗口仍按 `1440×900` 启动 | 整套界面比旧版小一圈 | 恢复旧版实际 `1648×1125` 窗口逻辑尺寸，在本机输出 `2472×1688` |
+| 显示缩放与内容缩放被错误合并/覆盖 | 显式 DPI 参数会把旧版 125% 内容缩放重置 | 两者独立；最终有效比例 188%，RmlUi 视口 `1318×900` |
+| 右栏沿用 440px 常驻功能页 | 中间工作区被压窄，和旧版启动器状态不符 | 默认 214px 旧版“审查/文件”启动器；功能页窄栏响应式，打开文件后才扩宽 |
+| 未恢复旧版内置导航示例 | 左栏只有 `bin/新会话`，视觉密度和层级完全错误 | 一次性迁移旧 Slint 的 11 条内置分组/项目/会话，同时保留现有真实导航 |
+| 工作区恢复失败 | 标题和路径落到 `bin` | Desktop 私有设置持久化 `last_workspace`，并从导航状态兼容恢复 |
+| RCSS `rgba()` 使用了浏览器 0–1 alpha | hover、半透明 pill 和 modal 遮罩近乎透明 | 按 RmlUi 规范改为 0–255 alpha；遮罩、hover、边框透明度恢复 |
+| RmlUi 预乘色直接传给 Skia | 半透明彩色控件被二次预乘而过暗 | RenderInterface 转为非预乘 `SkColor` 后再交给 SkVertices |
+| 右栏/搜索/composer 缺少旧版紧凑规则 | 文案溢出、文件页挤成一团、发送态错误 | 恢复 placeholder、禁用发送、旧 SVG、214px 窄栏和文件打开自动扩宽 |
+
+旧版截图与最终新版的同尺寸并排证据：
+
+- `build/windows-msvc-desk-strict-release/e2e/legacy-vs-tokmon-desk-final.png`
+- 左半为用户提供的旧版真实截图，右半为最终 `tokmon-desk` D3D12/Skia 截图；两边均为 `2472×1688`。
+
+#### 主工作台视觉复刻专项验收
+
+| ID | 验收点 | 最终证据 | 状态 |
+|---|---|---|---|
+| CLONE-001 | 物理尺寸、显示缩放、内容缩放与旧版一致 | `ui-contract-final.json`：2472×1688 / 150% / 125% / 1318×900 | [x] |
+| CLONE-002 | 左栏 240、右栏 214、工作区 864、标题栏 46、composer 760×100 | 9/9 元素在 1 Rml 逻辑像素容差内 | [x] |
+| CLONE-003 | 品牌、新建、搜索、树层级、底部设置复刻 | `visual-clone-final.png` 与最终 26 图集 | [x] |
+| CLONE-004 | 标题、对话/轨迹、环境 orb、starter 主区复刻 | 同尺寸并排图；环境开关真实点击通过 | [x] |
+| CLONE-005 | 四张 starter 卡片的尺寸、色彩、图标、文本层级复刻 | 冻结 SVG 65/65；最终截图 | [x] |
+| CLONE-006 | composer 上下文条、输入卡、权限/模型/effort/发送态复刻 | 空输入禁用与权限菜单 E2E 通过 | [x] |
+| CLONE-007 | 右栏旧版启动器和快捷键 pill 复刻 | 启动器打开 Review/Files 与折叠恢复 E2E 通过 | [x] |
+| CLONE-008 | hover/pressed/focus/selected/disabled/loading/success/warning/error | `visual-state-gallery-visual-clone-final/`，26/26 | [x] |
+| CLONE-009 | DPI 与命中一致 | 100/125/150/175/200：185/185；3 视口 × 5 DPI：15/15 | [x] |
+| CLONE-010 | Codex 同尺寸并排视觉复核 | `legacy-vs-tokmon-desk-final.png` | [x] |
+| CLONE-011 | 用户最终人工视觉签署 | 需用户查看最终并排图确认 | [ ] |
 
 ## 2. 范围与不可突破边界
 
@@ -68,13 +105,13 @@
 
 | ID | 级别 | 验收项 | 通过标准 | 状态 |
 |---|---|---|---|---|
-| VIS-001 | P0 | 颜色 | 所有非抗锯齿实体色 RGBA 精确一致；不得近似替换 | [ ] |
+| VIS-001 | P0 | 颜色 | 所有非抗锯齿实体色 RGBA 精确一致；不得近似替换 | [x]（冻结 Palette；RmlUi byte-alpha 与 Skia 预乘色已纠正） |
 | VIS-002 | P0 | 几何 | 控件位置、宽高、间距、圆角、边框误差不超过 1 个逻辑像素 | [x]（15/15 几何 contract） |
-| VIS-003 | P0 | 字体 | MiSans、字号、字重、行高、字间距与旧版 token 一致 | [ ] |
+| VIS-003 | P0 | 字体 | MiSans、字号、字重、行高、字间距与旧版 token 一致 | [x]（MiSans VF hash 与 token 校验通过） |
 | VIS-004 | P0 | 图标 | 使用冻结 SVG，尺寸和对齐误差不超过 1 个逻辑像素 | [x] |
 | VIS-005 | P0 | 非文本像素差 | golden 对比差异像素占比不超过 0.5% | [ ] |
 | VIS-006 | P0 | 文本抗锯齿遮罩 | 只允许字形边缘的窄遮罩，不允许遮掉位置、字号、颜色或行距错误 | [ ] |
-| VIS-007 | P0 | DPI | 100%、125%、150%、175%、200% 均无裁切、重叠、模糊缩放或命中偏移 | [ ] |
+| VIS-007 | P0 | DPI | 100%、125%、150%、175%、200% 均无裁切、重叠、模糊缩放或命中偏移 | [x]（交互 185/185；几何矩阵 15/15） |
 | VIS-008 | P0 | 视口 | 1280×800、1440×900、1920×1080 均通过；1440×900 为主基线 | [x] |
 | VIS-009 | P0 | UI 不得过小 | 主基线下逻辑尺寸与旧版一致；不得用全局缩小伪装布局问题 | [x]（区分显示缩放与旧版 4K 125% 内容缩放） |
 | VIS-010 | P0 | 状态图 | default、hover、pressed、focus、selected、disabled、loading、success、warning、error 均有证据 | [x]（10/10；另有 16 张页面状态） |
@@ -326,13 +363,14 @@ build/windows-msvc-desk-strict-release/e2e/
 |---|---|---|---|---|
 | EV-001 | BASE-* | `apps/tokmon-desk/assets/visual-baseline-manifest.json` | `0456cee36be7646c63def154187fe66f08dc0362151899b2f5b434284b93f920`；65/65 assets | 通过 |
 | EV-002 | TEST-001/002 | `build/windows-msvc-desk-strict-release/e2e/core-tests.log` | `3d4c1b1ecab4ed8a6af2bd4e0abd3d75dac3dacc6920a92314fdb26041e5b5ff`；CTest 2/2 | Core 通过；并发清单未全覆盖 |
-| EV-003 | VIS-*/TEST-003/004 | `build/windows-msvc-desk-strict-release/e2e/golden-report.json`、`visual-state-gallery-report.json` | 几何 15/15；状态图 26/26；0.5% 合规 mask 与逐行全状态矩阵缺失 | **不通过** |
-| EV-004 | UI-*/TEST-005 | `build/windows-msvc-desk-strict-release/e2e/ui-e2e-report.json` | `9b2934ea7b0c06321d97cac9c01b1b9db506970c54ef4c782601ef328d631fb8`；37/37，五 DPI 185/185 | 自动子集通过；完整 UI/IME 未签 |
+| EV-003 | VIS-*/TEST-003/004 | `ui-contract-final.json`、`visual-state-gallery-visual-clone-final/` | 主基线 9/9；几何矩阵 15/15；最终状态图 26/26；完整同步数据 0.5% mask 仍缺 | 主工作台通过；发布 golden 未签 |
+| EV-004 | UI-*/TEST-005 | `ui-e2e-visual-clone-final.json` | `28111438abf92d546701b87ecea9cdb98211ba07eb8bbdfbfd9b70e5ca99dbb8`；37/37，五 DPI 185/185 | 自动交互通过；真实 IME 仍未签 |
 | EV-005 | WS-*/DOC-*/EDIT-* | `build/windows-msvc-desk-strict-release/e2e/workspace-e2e-report.json` | workspace/UI/core 通过项见报告 | 部分通过，未满足全部行 |
-| EV-006 | PERF-*/TEST-009 | `build/windows-msvc-desk-strict-release/e2e/stress-report-final.json`、`performance-report.json` | `6b247d7cff164f82157058a8d574317042df6eb580155f892a6acfa1afbf1a9e`；输入 p95 7.2465 ms | 配置压力通过；文件模型为 10k，未达 TEST-009 的 100k |
+| EV-006 | PERF-*/TEST-009 | `visual-acceptance-final.json`、`performance-report.json` | `b9f38c928048c020d670a31222f526724ea1a202097e3e001b39ee01bf28e0cd`；输入 p95 7.6648 ms | 配置压力通过；文件模型为 10k，未达 TEST-009 的 100k |
 | EV-007 | PKG-* | `build/windows-msvc-desk-strict-release/e2e/package-audit.json` | 157 files / 20 DLL / 49 licenses / build-install exe hash 相同 | Windows 通过；其他平台阻塞 |
-| EV-008 | 全部 Windows 条目 | `build/windows-msvc-desk-strict-release/e2e/acceptance-summary.json` | exe `1d02f52337b1d975a774633ff67241f333e3d449ebc37de454dd68a5f4532e4a` | 自动化通过，发布门槛未全通过 |
+| EV-008 | 全部 Windows 条目 | 最终 `tokmon-desk.exe` 与本节最终报告 | exe `e849510fca482a67504a16052750dd47c74ce19b3ffcb890515b2895c3e7affa` | 自动化通过，发布门槛未全通过 |
 | EV-009 | 旧版保护 | `git diff -- apps/tokmon-desktop apps/tokmond` | 0 行 | 通过 |
+| EV-010 | CLONE-* | `visual-clone-final.png`、`legacy-vs-tokmon-desk-final.png` | `24cb31b3fe4d0266f727381d3a506864a3ea82d34ee11280f1c999fa78e6dcce`；并排图 `0071c8b8bd8504e5deec7a3560ec8fb54a33754ae4f9c333f27060653d2b907d` | Codex 视觉复核通过；用户签署待定 |
 
 ## 17. 最终签署
 
@@ -350,6 +388,6 @@ build/windows-msvc-desk-strict-release/e2e/
 
 | 角色 | 姓名 | 日期 | 结论 | 备注 |
 |---|---|---|---|---|
-| 实现/自动验收 | Codex | 2026-08-30 | Windows 自动化通过，但存在发布阻塞项 | Browser excluded；详见 acceptance-summary.json |
+| 实现/自动验收 | Codex | 2026-08-30 | 主工作台视觉复刻与 Windows 自动化通过，但存在发布阻塞项 | Browser excluded；主视觉见 EV-010 |
 | UI 视觉复核 | 待填写 | 待填写 | **未签署** | 必须并排查看旧版与新版全状态 |
 | 发布验收 | 待填写 | 2026-08-30 | **不通过** | VIS-005/VIS-011、逐行全状态矩阵、真实 IME/device-lost、macOS/Linux 真机未完成 |

@@ -13,10 +13,10 @@
       <span class="brand-name">Tokmon</span>
     </div>
     <button id="new-session-button" class="new-session-button"><svg src="../../assets/figma/icon-02.svg"></svg><span>新建会话</span></button>
-    <div class="search-box"><svg src="../../assets/figma/icon-03.svg"></svg><input id="navigation-search" type="text" placeholder="搜索会话、项目或分组..."/></div>
+    <div class="search-box"><svg src="../../assets/figma/icon-03.svg"></svg><span id="navigation-search-placeholder" class="search-placeholder">搜索会话、项目或分组...</span><input id="navigation-search" type="text"/></div>
     <div class="tree-caption">分组 / 项目 / 会话</div>
     <div id="navigation-tree" class="navigation-tree"></div>
-    <button id="settings-button" class="settings-button"><svg src="../../assets/figma/icon-13.svg"></svg>设置</button>
+    <button id="settings-button" class="settings-button"><svg src="../../assets/figma/icon-13.svg"></svg><span>设置</span><i class="settings-status-dot"></i></button>
   </div>
 
   <button id="sidebar-toggle" class="panel-toggle left-toggle"><svg src="../../assets/figma/icon-01.svg"></svg></button>
@@ -27,11 +27,21 @@
       <span id="session-title" class="session-title">新会话</span>
       <button id="title-edit" class="title-edit"><svg src="../../assets/figma/icon-14.svg"></svg></button>
       <div class="mode-pill"><button id="chat-mode" class="active">对话</button><button id="trajectory-mode">轨迹</button></div>
-      <button id="environment-toggle" class="environment-button">环境信息</button>
     </div>
     <div id="environment-panel" class="environment-panel hidden">
-      <div><strong>环境信息 · subtitle-agent</strong><span class="branch-chip">main</span></div>
-      <div class="environment-grid"><div class="environment-row"><span>工作空间</span><code id="workspace-path">E:\cc\AI\tokmon\tokmon-n</code></div><div class="environment-row"><span>Daemon</span><span id="daemon-status">正在连接后台服务</span></div></div>
+      <div class="environment-panel-head"><strong>环境信息</strong><span class="environment-panel-status"></span><button id="environment-close" title="收起环境信息">◎</button></div>
+      <div class="environment-grid">
+        <div class="environment-row"><span>变更</span><span id="environment-change-count">正在读取…</span></div>
+        <div class="environment-row"><span>本地</span><code id="workspace-path">E:\cc\AI\tokmon\tokmon-n</code></div>
+        <div class="environment-row"><span>Git 分支</span><span id="environment-branch">正在读取…</span></div>
+        <div class="environment-row"><span>索引</span><span id="environment-index">正在读取…</span></div>
+        <div class="environment-row"><span>Daemon</span><span id="daemon-status">正在连接后台服务</span></div>
+      </div>
+      <div class="environment-actions"><button id="environment-refresh">刷新状态</button><button id="environment-settings">环境设置</button></div>
+    </div>
+    <div id="environment-orb" class="environment-orb">
+      <span class="environment-ring outer"></span><span class="environment-ring inner"></span><span class="environment-core"></span><span class="environment-online"></span>
+      <button id="environment-toggle" class="environment-orb-hit" title="环境信息"></button>
     </div>
     <div id="initial-session" class="initial-session">
       <div class="starter-block">
@@ -52,7 +62,7 @@
         <span id="composer-placeholder" class="composer-placeholder">随心输入需求，或点击上方卡片快速开始...</span>
         <input id="composer" type="text" placeholder="随心输入需求，或点击上方卡片快速开始..."/>
         <div class="composer-toolbar">
-          <div class="composer-tools"><button id="attach-button" class="round-button"><svg src="../../assets/figma/icon-23.svg"></svg></button><span id="attachment-pill" class="attachment-pill hidden"></span><button id="network-toggle" class="tool-pill active">◎ 联网</button><button id="access-button" class="tool-pill access"><svg src="../../assets/figma/icon-28.svg"></svg>完全访问⌄</button></div>
+          <div class="composer-tools"><button id="attach-button" class="round-button"><svg src="../../assets/figma/icon-23.svg"></svg></button><span id="attachment-pill" class="attachment-pill hidden"></span><button id="access-button" class="tool-pill access"><svg src="../../assets/figma/icon-28.svg"></svg>完全访问⌄</button></div>
           <div class="composer-options"><button class="context-ring"><svg src="../../assets/figma/spinner-ring.svg"></svg></button><button id="active-model" class="select-pill">选择模型⌄</button><button id="effort-button" class="select-pill"><svg src="../../assets/figma/icon-40.svg"></svg>高⌄</button><button id="send-button" class="send-button"><svg src="../../assets/figma/icon-58.svg"></svg></button></div>
         </div>
       </div>
@@ -63,14 +73,13 @@
   <div id="right-resizer" class="panel-resizer right-resizer"></div>
 
   <div id="right-panel" class="right-panel">
-    <div id="right-titlebar" class="window-controls drag-region"><button id="add-tab-button">＋</button><div class="active-right-title"><svg src="../../assets/figma/icon-51.svg"></svg><strong id="active-right-label">审查</strong><span id="active-right-shortcut">Ctrl+Shift+G</span></div><span class="window-spacer"></span><button id="right-fullscreen">⌗</button><button id="right-collapse">◁</button></div>
-    <div id="right-tabs" class="right-tabs">
-      <button id="review-tab" class="right-tab active"><svg src="../../assets/figma/icon-51.svg"></svg><strong>审查</strong><span>Ctrl+Shift+G</span></button>
-      <button id="files-tab" class="right-tab"><svg src="../../assets/figma/icon-18.svg"></svg><strong>文件</strong><span>Ctrl+P</span></button>
-      <button id="terminal-tab" class="right-tab"><svg src="../../assets/figma/icon-19.svg"></svg><strong>终端</strong></button>
-      <button id="browser-tab" class="right-tab"><strong>◎ 浏览器</strong></button>
+    <div id="right-titlebar" class="window-controls drag-region">
+      <div class="right-open-tabs"><div id="right-active-tab" class="right-tab-pill hidden"><svg id="active-right-icon" src="../../assets/figma/icon-51.svg"></svg><strong id="active-right-label">审查</strong><button id="right-tab-close" class="right-tab-close">×</button></div><button id="add-tab-button" class="add-tab-button" title="添加标签页">＋</button></div>
+      <span class="window-spacer"></span>
     </div>
-    <section id="review-view" class="right-view">
+    <div id="right-tab-menu" class="right-tab-menu hidden"><strong>打开标签页</strong><button id="review-tab"><svg src="../../assets/figma/icon-51.svg"></svg>审查<span>Ctrl+Shift+G</span></button><button id="files-tab"><svg src="../../assets/figma/icon-18.svg"></svg>文件<span>Ctrl+P</span></button><button id="terminal-tab"><svg src="../../assets/figma/icon-19.svg"></svg>终端</button><button id="browser-tab">◎ 浏览器</button></div>
+    <section id="right-launcher" class="right-launcher"><div class="launcher-list"><button id="launcher-review" class="launcher-entry"><span><svg src="../../assets/figma/icon-51.svg"></svg><strong>审查</strong></span><kbd>Ctrl+Shift+G</kbd></button><button id="launcher-files" class="launcher-entry"><span><svg src="../../assets/figma/icon-18.svg"></svg><strong>文件</strong></span><kbd>Ctrl+P</kbd></button></div></section>
+    <section id="review-view" class="right-view hidden">
       <div class="review-toolbar"><button id="branch-button">⑂ main⌄</button><button id="commit-button"><svg src="../../assets/figma/icon-52.svg"></svg>提交或推送</button><button id="refresh-review">↻</button></div>
       <div class="review-summary"><strong>更改</strong><span class="count-pill">0</span><button id="accept-agent-changes" class="hidden">接受 Agent 修改</button><button id="reject-agent-changes" class="danger hidden">拒绝</button><button id="diff-view-toggle">并排</button></div>
       <div id="review-empty" class="empty-panel"><svg src="../../assets/figma/icon-51.svg"></svg><strong>没有待审查的更改</strong><span>工作区修改会在这里显示</span></div>
@@ -78,7 +87,7 @@
       <div id="branch-menu" class="branch-menu hidden"></div>
     </section>
     <section id="files-view" class="right-view hidden">
-      <div class="panel-search"><input id="file-search" type="text" placeholder="搜索工作区文件..."/></div>
+      <div class="panel-search"><span id="file-search-placeholder" class="panel-search-placeholder">搜索工作区文件...</span><input id="file-search" type="text"/></div>
       <div class="file-actions"><button id="file-new" title="新建文件">＋文件</button><button id="folder-new" title="新建文件夹">＋文件夹</button><button id="file-rename" title="重命名选中项">重命名</button><button id="file-delete" class="danger-quiet" title="删除选中项">删除</button></div>
       <tokmon-file-tree id="file-tree" class="file-tree" tab-index="0"></tokmon-file-tree>
       <div class="editor-toolbar"><span id="file-path">选择文件以预览或编辑</span><span id="syntax-status"></span><button id="undo-file" disabled="">撤销</button><button id="redo-file" disabled="">重做</button><button id="reload-file">重新载入</button><button id="save-file">保存</button></div>
