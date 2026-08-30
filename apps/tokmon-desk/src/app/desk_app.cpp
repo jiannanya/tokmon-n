@@ -297,7 +297,7 @@ bool prepare_visual_state(Rml::Context& context,
   };
   const auto open_right = [&] {
     auto* panel = document.GetElementById("right-panel");
-    return panel && (!panel->IsClassSet("hidden") || click("right-toggle"));
+    return panel && (!panel->IsClassSet("hidden") || click("right-restore"));
   };
   const auto fullscreen_right = [&] {
     auto* shell = document.GetElementById("app-shell");
@@ -1741,7 +1741,7 @@ bool write_interaction_report(SdlPlatform& platform,
   clicked = click_id("sidebar-toggle", detail);
   const bool sidebar_collapsed = clicked && hidden("sidebar") && shell &&
       shell->IsClassSet("sidebar-hidden");
-  const bool sidebar_restore_click = click_id("sidebar-toggle", detail);
+  const bool sidebar_restore_click = click_id("sidebar-restore", detail);
   record("UI-006", "左侧栏折叠并恢复",
          sidebar_collapsed && sidebar_restore_click && !hidden("sidebar") &&
              !shell->IsClassSet("sidebar-hidden"),
@@ -2549,7 +2549,15 @@ bool write_interaction_report(SdlPlatform& platform,
   clicked = click_id("right-toggle", detail);
   const bool right_collapsed = clicked && hidden("right-panel") && shell &&
       shell->IsClassSet("right-hidden");
-  const bool right_restore = click_id("right-toggle", detail);
+  const std::string collapse_detail = detail;
+  const bool right_restore = click_id("right-restore", detail);
+  detail = "collapse=" + std::string(clicked ? "1" : "0") + "/hidden=" +
+      std::string(hidden("right-panel") ? "1" : "0") + "/class=" +
+      std::string(shell && shell->IsClassSet("right-hidden") ? "1" : "0") +
+      "; restore=" + std::string(right_restore ? "1" : "0") + "/open=" +
+      std::string(!hidden("right-panel") ? "1" : "0") + "/class=" +
+      std::string(shell && !shell->IsClassSet("right-hidden") ? "1" : "0") +
+      " [" + collapse_detail + "] [" + detail + "]";
   record("UI-016-b", "右栏折叠并恢复", right_collapsed && right_restore &&
          !hidden("right-panel") && shell && !shell->IsClassSet("right-hidden"),
          detail);

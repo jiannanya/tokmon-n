@@ -13,6 +13,7 @@
     <div id="brand-row" class="brand-row drag-region">
       <svg class="brand-logo" data-attr-src="view.asset_root + '/figma/icon-00.svg'"></svg>
       <span class="brand-name">Tokmon</span>
+      <button id="sidebar-toggle" class="brand-collapse" title="折叠侧边栏"><svg data-attr-src="view.asset_root + '/figma/icon-01.svg'"></svg></button>
     </div>
     <button id="new-session-button" class="new-session-button"><svg data-attr-src="view.asset_root + '/figma/icon-02.svg'"></svg><span>新建会话</span></button>
     <div class="search-box"><svg data-attr-src="view.asset_root + '/figma/icon-03.svg'"></svg><span id="navigation-search-placeholder" class="search-placeholder">搜索会话、项目或分组...</span><input id="navigation-search" type="text"/></div>
@@ -27,11 +28,12 @@
     <button id="settings-button" class="settings-button"><i class="settings-divider"></i><svg data-attr-src="view.asset_root + '/figma/icon-13.svg'"></svg><span>设置</span><i class="settings-status-dot"></i></button>
   </div>
 
-  <button id="sidebar-toggle" class="panel-toggle left-toggle"><svg data-attr-src="view.asset_root + '/figma/icon-01.svg'"></svg></button>
   <div id="sidebar-resizer" class="panel-resizer sidebar-resizer"></div>
 
   <div id="workspace" class="workspace">
     <div id="workspace-titlebar" class="workspace-titlebar drag-region">
+      <button id="sidebar-restore" class="titlebar-restore" title="展开侧边栏"><svg data-attr-src="view.asset_root + '/figma/icon-01.svg'"></svg></button>
+      <button id="right-restore" class="titlebar-restore right-restore" title="展开代码审阅"><svg data-attr-src="view.asset_root + '/figma/icon-15.svg'"></svg></button>
       <span id="session-title" class="session-title">{{view.session_title}}</span>
       <button id="title-edit" class="title-edit" title="重命名会话"><svg data-attr-src="view.asset_root + '/figma/icon-14.svg'"></svg></button>
       <span class="workspace-chip"><svg data-attr-src="view.asset_root + '/figma/icon-18.svg'"></svg><span>{{view.workspace_name}}</span></span>

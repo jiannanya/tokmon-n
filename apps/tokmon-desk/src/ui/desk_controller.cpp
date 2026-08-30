@@ -232,6 +232,7 @@ void DeskController::bind(const bool start_background_work) {
                          "cancel-new-session", "confirm-new-session", "environment-toggle",
                          "environment-close", "environment-refresh", "environment-settings",
                          "thought-toggle", "workflow-toggle", "sidebar-toggle", "right-toggle",
+                         "sidebar-restore", "right-restore",
                          "review-tab", "files-tab", "terminal-tab", "browser-tab",
                          "refresh-review", "diff-view-toggle", "branch-button",
                          "accept-agent-changes", "reject-agent-changes",
@@ -472,12 +473,9 @@ void DeskController::apply_panel_layout() {
     workspace->SetProperty("right", density_units(right_panel_visible_
         ? static_cast<float>(right_panel_width_) + 0.5f : 0.f));
   }
-  if (auto* toggle = document_.GetElementById("sidebar-toggle"))
-    toggle->SetProperty("left", density_units(sidebar_visible_
-        ? static_cast<float>(sidebar_width_) - 31.f : 6.f));
   if (auto* toggle = document_.GetElementById("right-toggle"))
-    toggle->SetProperty("right", density_units(right_panel_visible_
-        ? static_cast<float>(right_panel_width_) + 13.f : 110.f));
+    toggle->SetProperty("right", density_units(
+        static_cast<float>(right_panel_width_) + 8.f));
   if (auto* divider = document_.GetElementById("sidebar-resizer"))
     divider->SetProperty("left", density_units(
         static_cast<float>(std::max(0, sidebar_width_ - 5))));
@@ -3121,6 +3119,16 @@ void DeskController::ProcessEvent(Rml::Event& event) {
   else if (id == "right-toggle") {
     set_right_panel_visible(!right_panel_visible_);
     if (right_panel_visible_ && active_right_view_ == "launcher")
+      show_right_launcher();
+  }
+  else if (id == "sidebar-restore") {
+    set_sidebar_visible(true);
+    std::string ignored;
+    (void)save_local_settings(ignored);
+  }
+  else if (id == "right-restore") {
+    set_right_panel_visible(true);
+    if (active_right_view_ == "launcher")
       show_right_launcher();
   }
   else if (id == "right-collapse") {

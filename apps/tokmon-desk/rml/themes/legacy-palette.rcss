@@ -1046,6 +1046,54 @@ small {
   border-color: #eae6dc;
 }
 
+/* Modal chrome (prototype 新建会话设置 dialog) */
+.modal-header {
+  background-color: #faf9f6;
+  border-bottom-color: #eae6dc;
+}
+
+.modal-header h2 {
+  color: #1a211c;
+}
+
+.modal-header button {
+  color: #747f78;
+}
+
+.modal-header button:hover {
+  color: #1a211c;
+}
+
+.modal-icon {
+  background-color: #edf4ec;
+  border-color: #cddcd0;
+  color: #2d5a43;
+}
+
+.modal label {
+  color: #4a534c;
+}
+
+.modal > p,
+.modal .form-error ~ p {
+  color: #747f78;
+}
+
+.modal .form-error {
+  color: #dc2626;
+}
+
+.modal-footer {
+  background-color: #faf9f6;
+  border-top-color: #eae6dc;
+}
+
+.secondary-button {
+  background-color: #ffffff;
+  color: #5c6760;
+  border-color: #eae6dc;
+}
+
 .settings-topbar,
 .settings-footer {
   border-color: #eae6dc;
@@ -1126,18 +1174,29 @@ small {
 }
 
 .setting-card input,
-.setting-select,
-.modal input,
-.select-box {
+.setting-select {
   background-color: #ffffff;
+  border-color: #eae6dc;
+  color: #1a211c;
+}
+
+.modal input,
+.modal .select-box {
+  background-color: #faf9f6;
   border-color: #eae6dc;
   color: #1a211c;
 }
 
 .setting-card input:focus,
 .setting-select:focus,
-.modal input:focus {
+.modal input:focus,
+.modal .select-box:focus {
   border-color: #2d5a43;
+}
+
+.modal input:focus,
+.modal .select-box:focus {
+  background-color: #ffffff;
 }
 
 .segmented-control {
@@ -1208,7 +1267,7 @@ small {
 }
 
 .secondary-button {
-  background-color: #f7f5ef;
+  background-color: #ffffff;
   color: #5c6760;
   border-color: #eae6dc;
 }
@@ -2250,4 +2309,59 @@ body.dark .form-error {
 .form-error {
   color: #dc2626;
   font-size: 10.5dp;
+}
+
+/* ---- Dark-mode chrome: toggles, modal strips, titlebar restore buttons ---- */
+
+body.dark .brand-collapse:hover,
+body.dark .titlebar-restore:hover {
+  background-color: rgba(255, 255, 255, 20);
+}
+
+body.dark .add-tab-button:hover {
+  background-color: rgba(255, 255, 255, 20);
+}
+
+body.dark .right-tab-close:hover {
+  background-color: rgba(255, 255, 255, 20);
+  color: #e6ede7;
+}
+
+body.dark .modal-header,
+body.dark .modal-footer {
+  background-color: #161c18;
+  border-color: rgba(255, 255, 255, 20);
+}
+
+body.dark .modal-icon {
+  background-color: #1c2c22;
+  border-color: rgba(114, 184, 144, 64);
+  color: #72b890;
+}
+
+body.dark .modal-header button:hover {
+  background-color: #243028;
+  color: #e6ede7;
+}
+
+body.dark .modal label {
+  color: #b8c7bb;
+}
+
+body.dark .modal > p {
+  color: #9bb0a0;
+}
+
+body.dark .secondary-button:hover {
+  background-color: #243028;
+  color: #e6ede7;
+}
+
+body.dark .popover-card > strong {
+  border-bottom-color: rgba(255, 255, 255, 20);
+  color: #627568;
+}
+
+body.dark .choice-popover small {
+  color: #627568;
 }
