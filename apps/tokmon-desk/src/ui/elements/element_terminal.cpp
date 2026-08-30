@@ -23,7 +23,9 @@ Rml::ColourbPremultiplied colour(const TerminalColor& value) {
 }
 
 Rml::ColourbPremultiplied colour(const legacy_theme::Color value) {
-  return Rml::Colourb(value.red, value.green, value.blue, value.alpha)
+  const auto resolved = legacy_theme::themed(value);
+  return Rml::Colourb(resolved.red, resolved.green, resolved.blue,
+                      resolved.alpha)
       .ToPremultiplied();
 }
 
@@ -262,8 +264,10 @@ void ElementTerminal::rebuild_geometry(const Rml::Vector2f size) {
 
 void ElementTerminal::OnRender() {
   const Rml::Vector2f size{GetClientWidth(), GetClientHeight()};
-  if (revision_ != geometry_revision_ || size != geometry_size_)
+  if (revision_ != geometry_revision_ || size != geometry_size_ ||
+      theme_revision_ != legacy_theme::theme_revision())
     rebuild_geometry(size);
+  theme_revision_ = legacy_theme::theme_revision();
   const auto translation = GetAbsoluteOffset(Rml::BoxArea::Content);
   if (background_geometry_)
     background_geometry_.Render(translation);

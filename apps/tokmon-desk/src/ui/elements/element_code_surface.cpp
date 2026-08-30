@@ -25,16 +25,31 @@ float density(const Rml::Element* element) {
 }
 
 Rml::ColourbPremultiplied syntax_colour(const SyntaxKind kind) {
+  const bool dark = legacy_theme::is_dark_mode();
   switch (kind) {
-    case SyntaxKind::comment: return Rml::Colourb(107, 114, 128).ToPremultiplied();
-    case SyntaxKind::keyword: return Rml::Colourb(126, 34, 206).ToPremultiplied();
-    case SyntaxKind::type: return Rml::Colourb(3, 105, 161).ToPremultiplied();
-    case SyntaxKind::string: return Rml::Colourb(159, 58, 56).ToPremultiplied();
-    case SyntaxKind::number: return Rml::Colourb(4, 120, 87).ToPremultiplied();
-    case SyntaxKind::preprocessor: return Rml::Colourb(175, 0, 219).ToPremultiplied();
-    default: return Rml::Colourb(legacy_theme::body.red,
-                                 legacy_theme::body.green,
-                                 legacy_theme::body.blue).ToPremultiplied();
+    case SyntaxKind::comment:
+      return (dark ? Rml::Colourb(127, 148, 133)
+                   : Rml::Colourb(107, 114, 128)).ToPremultiplied();
+    case SyntaxKind::keyword:
+      return (dark ? Rml::Colourb(192, 132, 252)
+                   : Rml::Colourb(126, 34, 206)).ToPremultiplied();
+    case SyntaxKind::type:
+      return (dark ? Rml::Colourb(125, 211, 252)
+                   : Rml::Colourb(3, 105, 161)).ToPremultiplied();
+    case SyntaxKind::string:
+      return (dark ? Rml::Colourb(248, 113, 113)
+                   : Rml::Colourb(159, 58, 56)).ToPremultiplied();
+    case SyntaxKind::number:
+      return (dark ? Rml::Colourb(74, 222, 128)
+                   : Rml::Colourb(4, 120, 87)).ToPremultiplied();
+    case SyntaxKind::preprocessor:
+      return (dark ? Rml::Colourb(216, 180, 254)
+                   : Rml::Colourb(175, 0, 219)).ToPremultiplied();
+    default:
+      return Rml::Colourb(legacy_theme::themed(legacy_theme::body).red,
+                          legacy_theme::themed(legacy_theme::body).green,
+                          legacy_theme::themed(legacy_theme::body).blue)
+          .ToPremultiplied();
   }
 }
 
@@ -415,9 +430,9 @@ void ElementCodeSurface::rebuild_geometry(const Rml::Vector2f size) {
           decorations,
           {gutter + 4.f * scale + caret_x - horizontal_offset_, y + scale},
           {scale, line_height - 2.f * scale},
-          Rml::Colourb(legacy_theme::accent.red,
-                       legacy_theme::accent.green,
-                       legacy_theme::accent.blue).ToPremultiplied());
+          Rml::Colourb(legacy_theme::themed(legacy_theme::accent).red,
+                       legacy_theme::themed(legacy_theme::accent).green,
+                       legacy_theme::themed(legacy_theme::accent).blue).ToPremultiplied());
       if (!composition_text_.empty()) {
         const auto composition_width = static_cast<float>(
             font_engine->GetStringWidth(face, Rml::String(composition_text_),
@@ -434,9 +449,9 @@ void ElementCodeSurface::rebuild_geometry(const Rml::Vector2f size) {
       }
     }
     add_text(std::to_string(line + 1), 7.f * scale, y,
-             Rml::Colourb(legacy_theme::faint.red,
-                          legacy_theme::faint.green,
-                          legacy_theme::faint.blue).ToPremultiplied());
+             Rml::Colourb(legacy_theme::themed(legacy_theme::faint).red,
+                          legacy_theme::themed(legacy_theme::faint).green,
+                          legacy_theme::themed(legacy_theme::faint).blue).ToPremultiplied());
 
     float x = gutter + 4.f * scale - horizontal_offset_;
     std::size_t cursor = line_start;
@@ -458,9 +473,9 @@ void ElementCodeSurface::rebuild_geometry(const Rml::Vector2f size) {
                      x, y, syntax_colour(SyntaxKind::plain));
     if (composition_x)
       (void)add_text(composition_text_, *composition_x, y,
-                     Rml::Colourb(legacy_theme::body.red,
-                                  legacy_theme::body.green,
-                                  legacy_theme::body.blue).ToPremultiplied());
+                     Rml::Colourb(legacy_theme::themed(legacy_theme::body).red,
+                                  legacy_theme::themed(legacy_theme::body).green,
+                                  legacy_theme::themed(legacy_theme::body).blue).ToPremultiplied());
     ++rendered_lines_;
   }
   decoration_geometry_ = render_manager->MakeGeometry(std::move(decorations));
@@ -468,8 +483,10 @@ void ElementCodeSurface::rebuild_geometry(const Rml::Vector2f size) {
 
 void ElementCodeSurface::OnRender() {
   const Rml::Vector2f size{GetClientWidth(), GetClientHeight()};
-  if (revision_ != geometry_revision_ || size != geometry_size_)
+  if (revision_ != geometry_revision_ || size != geometry_size_ ||
+      theme_revision_ != legacy_theme::theme_revision())
     rebuild_geometry(size);
+  theme_revision_ = legacy_theme::theme_revision();
   const auto translation = GetAbsoluteOffset(Rml::BoxArea::Content);
   if (decoration_geometry_)
     decoration_geometry_.Render(translation);

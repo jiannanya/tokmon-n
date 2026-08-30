@@ -1,133 +1,2253 @@
-/* Forest Sage / warm-white theme, aligned with the current Tokmon UI prototype. */
-body { background-color: #f4f2ec; color: #252d27; }
-.sidebar { background-color: #faf9f6; border-color: rgba(234, 230, 220, 179); }
-.workspace { background-color: #ffffff; }
-.right-panel { background-color: #ffffff; border-color: rgba(234, 230, 220, 179); }
-.new-session-button { background-color: #edf4ec; color: #2d5a43; }
-.new-session-button:hover { background-color: #dce7d9; }
-.search-box, .panel-search { background-color: #f7f5ef; color: #949e97; }
-.tree-caption, .timestamp, small { color: #949e97; }
-.tree-row { color: #38403b; }
-.tree-row:hover { background-color: rgba(45, 90, 67, 13); }
-.tree-row.selected { background-color: #eaf1e8; color: #2d5a43; }
-.brand-row, .workspace-titlebar, .window-controls { background-color: #ffffff; border-color: rgba(234, 230, 220, 179); }
-.project-chip, .branch-chip { background-color: #f3f1ea; color: #747f78; }
-.environment-panel { background-color: #faf9f6; border-color: #eae6dc; }
-.user-message { background-color: #edf4ec; border-color: #cddcd0; }
-.parameter-card { background-color: rgba(234, 241, 232, 179); }
-.thought-card { background-color: #faf9f6; border-color: #eae6dc; }
-.workflow-card { background-color: #ffffff; border-color: #eae6dc; }
-.status-dot { background-color: #16a34a; }
-.complete-pill { background-color: #f0f6ef; color: #2d5a43; border-color: #cddcd0; }
-.progress { background-color: #f3f1ea; }
-.progress div { background-color: #2d5a43; }
-.composer-card { background-color: #ffffff; border-color: #eae6dc; }
-.workspace-context, .branch { color: #2d5a43; }
-.tool-pill, .select-pill, .round-button { background-color: transparent; color: #5c6760; border-color: transparent; }
-.tool-pill.access { background-color: transparent; color: #4a7860; border-color: transparent; }
-.send-button { background-color: #2d5a43; color: #ffffff; }
-.send-button:hover, .primary-button:hover { background-color: #234937; }
-.primary-button { background-color: #2d5a43; color: #ffffff; }
-.review-toolbar, .review-summary, .browser-toolbar { border-color: #f3f1ea; }
-.empty-panel, .browser-placeholder { color: #949e97; }
-.count-pill { background-color: #f3f1ea; color: #5c6760; }
-.overlay { background-color: rgba(0, 0, 0, 89); }
-.settings-dialog, .modal { background-color: #ffffff; border-color: #eae6dc; }
-.settings-sidebar { background-color: #fbfbf9; border-color: #eae6dc; }
-.settings-nav { color: #5c6760; }
-.settings-nav:hover { background-color: #f5f3eb; }
-.settings-nav.active { background-color: #eaf1e8; color: #2d5a43; }
-.setting-card, .settings-section { border-color: #f7f5ef; }
-.toggle { background-color: #ded9cd; }
-.toggle.on { background-color: #2d5a43; }
-.toggle span { background-color: #ffffff; }
-.secondary-button, .select-box { background-color: #f7f5ef; color: #5c6760; border-color: #eae6dc; }
-.secondary-button:hover { background-color: #eae6dc; color: #2d5a43; }
-.locked-value, .path-value { color: #2d5a43; }
-.terminal-view { background-color: #faf9f6; color: #252d27; }
-.file-preview { background-color: #ffffff; color: #252d27; }
-.review-diff, .diff-surface { background-color: #ffffff; color: #1a211c; }
-#review-view, #files-view { background-color: #ffffff; color: #252d27; }
+/* Deep Forest Sage Green / Warm White Theme System (雅绿·明亮纯净白 / 森林夜色)
+   Fully aligned with Tokmon UI prototype (http://localhost:8443/). */
 
-/* Dark counterpart from the same Forest Sage system. */
-body.dark { background-color: #111613; color: #e6ede7; border-color: rgba(255, 255, 255, 20); }
-body.dark .sidebar { background-color: #161c18; border-color: rgba(255, 255, 255, 20); }
-body.dark .workspace, body.dark .right-panel,
-body.dark .brand-row, body.dark .workspace-titlebar,
-body.dark .window-controls { background-color: #1a221d; border-color: rgba(255, 255, 255, 20); }
-body.dark .new-session-button, body.dark .tree-row.selected,
-body.dark .settings-nav.active { background-color: #1c2c22; color: #72b890; }
-body.dark .new-session-button:hover, body.dark .settings-nav:hover,
-body.dark .tree-row:hover { background-color: #23382c; }
-body.dark .search-box, body.dark .panel-search,
-body.dark .project-chip, body.dark .branch-chip,
-body.dark .progress, body.dark .count-pill { background-color: #1c2520; color: #7f9485; }
-body.dark .tree-row { color: #b8c7bb; }
-body.dark .tree-caption, body.dark .timestamp, body.dark small,
-body.dark .empty-panel, body.dark .browser-placeholder { color: #627568; }
-body.dark .environment-panel, body.dark .thought-card,
-body.dark .settings-sidebar, body.dark .terminal-view { background-color: #161c18; border-color: rgba(255, 255, 255, 20); color: #e6ede7; }
-body.dark .user-message, body.dark .parameter-card { background-color: #1c2c22; border-color: rgba(114, 184, 144, 64); }
-body.dark .workflow-card, body.dark .composer-card,
-body.dark .settings-dialog, body.dark .modal,
-body.dark .file-preview, body.dark .review-diff,
-body.dark .diff-surface, body.dark #review-view,
-body.dark #files-view { background-color: #1a221d; border-color: rgba(255, 255, 255, 20); color: #e6ede7; }
-body.dark .tool-pill, body.dark .select-pill,
-body.dark .round-button, body.dark .secondary-button,
-body.dark .select-box { color: #9bb0a0; }
-body.dark .tool-pill.access, body.dark .workspace-context,
-body.dark .branch, body.dark .locked-value,
-body.dark .path-value { color: #72b890; }
-body.dark .settings-nav { color: #9bb0a0; }
-body.dark .setting-card, body.dark .settings-section { border-color: rgba(255, 255, 255, 20); }
-body.dark .secondary-button, body.dark .select-box { background-color: #1c2520; border-color: rgba(255, 255, 255, 20); }
-body.dark .secondary-button:hover { background-color: #243028; color: #8ee0af; }
-body.dark .brand-name, body.dark .session-title,
-body.dark .starter-block h1, body.dark .starter-title,
-body.dark .settings-topbar h2, body.dark .setting-card strong,
-body.dark .compact-setting-card strong, body.dark .skill-card strong,
-body.dark .rules-editor strong, body.dark .theme-heading strong,
-body.dark .theme-choice strong, body.dark .mcp-header-card strong,
-body.dark .mcp-server strong { color: #e6ede7; }
-body.dark .starter-card, body.dark .right-tab-pill,
-body.dark .panel-toggle, body.dark .environment-actions button {
+/* ========================================================================= */
+/* LIGHT THEME PALETTE                                                       */
+/* ========================================================================= */
+
+body {
+  background-color: #f4f2ec;
+  color: #252d27;
+}
+
+/* Base Surfaces & Structural Columns */
+.sidebar {
+  background-color: #ffffff;
+  border-color: rgba(234, 230, 220, 179);
+}
+
+.workspace {
+  background-color: #ffffff;
+}
+
+.right-panel {
+  background-color: #ffffff;
+  border-color: rgba(234, 230, 220, 179);
+}
+
+.brand-row,
+.workspace-titlebar,
+.window-controls {
+  background-color: #ffffff;
+  border-color: rgba(234, 230, 220, 153);
+}
+
+.brand-name {
+  color: #1a211c;
+}
+
+/* Sidebar Navigation & Controls */
+.new-session-button {
+  background-color: #f0f6ef;
+  color: #2d5a43;
+}
+
+.new-session-button:hover {
+  background-color: #e4efe2;
+}
+
+.search-box,
+.panel-search {
+  background-color: #f8f7f4;
+  border-color: #eeebe3;
+  color: #1a211c;
+}
+
+.search-box:focus-within,
+.panel-search:focus-within {
+  background-color: #ffffff;
+  border-color: #2d5a43;
+}
+
+.search-placeholder,
+.panel-search-placeholder {
+  color: #949e97;
+}
+
+.tree-caption,
+.timestamp,
+small {
+  color: #747f78;
+}
+
+.tree-row {
+  color: #4a534c;
+}
+
+.tree-row.group {
+  color: #252d27;
+}
+
+.tree-row.project {
+  color: #4a534c;
+}
+
+.tree-row.session {
+  color: #5c6760;
+}
+
+.tree-row:hover {
+  background-color: #f7f6f2;
+}
+
+.tree-row.selected {
+  background-color: #edf5ec;
+  color: #2d5a43;
+}
+
+.tree-row.selected .tree-icon,
+.tree-row.selected svg {
+  color: #2d5a43;
+}
+
+.tree-guide {
+  border-left-color: #eae6dc;
+}
+
+.row-add {
+  color: #747f78;
+}
+
+.row-add:hover {
+  background-color: #f0ece3;
+  color: #2d5a43;
+}
+
+.navigation-scrollbar-thumb {
+  background-color: #e8e4da;
+}
+
+.settings-button {
+  background-color: #ffffff;
+  color: #4a534c;
+}
+
+.settings-button:hover {
+  background-color: #f7f6f2;
+  color: #1a211c;
+}
+
+.settings-divider {
+  background-color: rgba(234, 230, 220, 179);
+}
+
+.settings-status-dot {
+  background-color: #16a34a;
+}
+
+/* Workspace Header & Modes */
+.session-title {
+  color: #1a211c;
+}
+
+.title-edit {
+  color: #949e97;
+}
+
+.title-edit:hover {
+  color: #1a211c;
+}
+
+.workspace-chip,
+.project-chip,
+.branch-chip {
+  background-color: #f7f5ef;
+  color: #747f78;
+  border-color: rgba(234, 230, 220, 153);
+}
+
+.workspace-mode-tabs {
+  background-color: transparent;
+}
+
+.mode-tab-button {
+  background-color: transparent;
+  color: #747f78;
+}
+
+.mode-tab-button:hover {
+  color: #1a211c;
+}
+
+.mode-tab-button.active {
+  color: #2d5a43;
+}
+
+.mode-tab-button .active-indicator {
+  background-color: #2d5a43;
+}
+
+.mode-pill {
+  background-color: #f3f1ea;
+}
+
+.mode-pill button {
+  color: #747f78;
+}
+
+.mode-pill button.active {
+  background-color: #ffffff;
+  color: #1a211c;
+}
+
+/* Environment AssistiveTouch Orb & Panel */
+.environment-orb {
+  background-color: #faf9f6;
+  border-color: #eae6dc;
+}
+
+.environment-ring.outer {
+  border-color: rgba(52, 61, 55, 56);
+}
+
+.environment-ring.inner {
+  border-color: rgba(52, 61, 55, 166);
+}
+
+.environment-core {
+  background-color: #2d5a43;
+}
+
+.environment-online {
+  background-color: #16a34a;
+  border-color: #ffffff;
+}
+
+.environment-panel {
+  background-color: #ffffff;
+  border-color: #ece8df;
+  color: #252d27;
+}
+
+.environment-panel-head strong {
+  color: #1a211c;
+}
+
+.environment-panel-status {
+  background-color: #16a34a;
+}
+
+.environment-panel-head button {
+  color: #747f78;
+}
+
+.environment-panel-head button:hover {
+  background-color: #f7f5ef;
+  color: #1a211c;
+}
+
+.environment-row > span:first-child {
+  color: #747f78;
+}
+
+.environment-row > code {
+  color: #2d5a43;
+  background-color: #edf4ec;
+}
+
+.environment-actions button {
+  background-color: #ffffff;
+  border-color: #eae6dc;
+  color: #5c6760;
+}
+
+.environment-actions button:hover {
+  background-color: #edf4ec;
+  border-color: #cddcd0;
+  color: #2d5a43;
+}
+
+/* Starter Grid Cards (Empty Conversation View) */
+.starter-logo-box {
+  background-color: #edf4ec;
+  border-color: #cddcd0;
+}
+
+.starter-block h1 {
+  color: #1a211c;
+}
+
+.starter-block h1 strong,
+.starter-workspace-link {
+  color: #1a211c;
+  border-bottom-color: #949e97;
+}
+
+.starter-workspace-link:hover {
+  color: #2d5a43;
+  border-bottom-color: #2d5a43;
+}
+
+.starter-workspace-pill {
+  background-color: #edf4ec;
+  color: #2d5a43;
+  border-color: #cddcd0;
+}
+
+.starter-card {
+  background-color: #ffffff;
+  border-color: #eae6dc;
+}
+
+.starter-card:hover {
+  background-color: #f9fbf8;
+  border-color: #4a7860;
+}
+
+.starter-icon {
+  background-color: #edf4ec;
+  border-color: #cddcd0;
+  color: #2d5a43;
+}
+
+.starter-icon svg {
+  color: #2d5a43;
+}
+
+.starter-title {
+  color: #1a211c;
+}
+
+.starter-card:hover .starter-title {
+  color: #2d5a43;
+}
+
+.starter-detail {
+  color: #949e97;
+}
+
+/* Conversation Stream & Chat Bubbles */
+.user-message {
+  background-color: #f0f6ef;
+  color: #252d27;
+  box-shadow: #0000000d 0dp 1dp 0dp 0dp;
+}
+
+.user-message p {
+  color: #1a211c;
+}
+
+.assistant-message {
+  color: #252d27;
+}
+
+.assistant-message h1,
+.assistant-message h2,
+.assistant-message h3,
+.thought-content h1,
+.thought-content h2,
+.thought-content h3 {
+  color: #1a211c;
+}
+
+.assistant-message blockquote,
+.thought-content blockquote {
+  border-left-color: #4a7860;
+  background-color: #f7f5ef;
+  color: #5c6760;
+}
+
+.assistant-message table,
+.thought-content table,
+.assistant-message td,
+.thought-content td {
+  border-color: #eae6dc;
+}
+
+.assistant-message hr,
+.thought-content hr {
+  background-color: #eae6dc;
+}
+
+.assistant-message code,
+.thought-content code {
+  background-color: #f4f2ec;
+  color: #345e48;
+}
+
+.assistant-message pre,
+.thought-content pre {
+  background-color: #1a211c;
+  border-color: #3f3f46;
+  color: #f4f2ec;
+}
+
+.markdown-copy {
+  background-color: #ffffff;
+  border-color: #eae6dc;
+  color: #747f78;
+}
+
+.markdown-copy:hover {
+  background-color: #f7f5ef;
+  color: #1a211c;
+}
+
+.parameter-card {
+  background-color: #edf4ec;
+  border-color: #cddcd0;
+  color: #5c6760;
+}
+
+.thought-card {
+  background-color: #faf9f5;
+  border-color: #eae6dc;
+}
+
+.thought-card .card-title {
+  color: #747f78;
+}
+
+.thought-card .card-title:hover {
+  background-color: #f0ede6;
+}
+
+.thought-content {
+  color: #5c6760;
+}
+
+.workflow-card {
+  background-color: #faf9f5;
+  border-color: #eae6dc;
+}
+
+.workflow-card .card-title {
+  color: #262626;
+}
+
+.status-dot {
+  background-color: #16a34a;
+}
+
+.complete-pill {
+  background-color: #edf4ec;
+  color: #2d5a43;
+  border-color: #cddcd0;
+}
+
+.workflow-summary {
+  color: #747f78;
+}
+
+.step-icon {
+  color: #16a34a;
+}
+
+.workflow-step.failed .step-icon {
+  color: #dc2626;
+}
+
+.step-time {
+  color: #949e97;
+}
+
+.progress {
+  background-color: #f3f1ea;
+}
+
+.progress div {
+  background-color: #2d5a43;
+}
+
+/* Composer Card & Controls */
+.composer-card {
+  background-color: #ffffff;
+  border-color: rgba(0, 0, 0, 20);
+}
+
+.composer-card:focus-within {
+  border-color: rgba(45, 90, 67, 102);
+}
+
+.workspace-context {
+  background-color: #f3f1ea;
+  color: #2d5a43;
+}
+
+.workspace-context strong,
+.workspace-context .branch {
+  color: #2d5a43;
+}
+
+.composer-card input {
+  color: #1a211c;
+}
+
+.composer-placeholder {
+  color: #949e97;
+}
+
+.round-button,
+.tool-pill,
+.select-pill,
+.context-ring {
+  background-color: transparent;
+  color: #4a534c;
+  border-color: transparent;
+}
+
+.round-button:hover,
+.tool-pill:hover,
+.select-pill:hover,
+.context-ring:hover {
+  background-color: rgba(0, 0, 0, 10);
+  color: #1a211c;
+}
+
+.tool-pill.access {
+  color: #4a534c;
+}
+
+.tool-pill.access:hover {
+  color: #2d5a43;
+}
+
+.send-button {
+  background-color: #2d5a43;
+  color: #ffffff;
+}
+
+.send-button:hover {
+  background-color: #234937;
+}
+
+.send-button.running {
+  background-color: #1a211c;
+  color: #ffffff;
+}
+
+.send-button.running:hover {
+  background-color: #dc2626;
+}
+
+.send-button.disabled {
+  background-color: rgba(0, 0, 0, 13);
+  color: #949e97;
+}
+
+/* Trajectory Toolbar, Timeline & Details */
+.trajectory {
+  background-color: #ffffff;
+  color: #252d27;
+}
+
+.trajectory-toolbar {
+  background-color: #faf9f6;
+  border-bottom-color: #eae6dc;
+  color: #5c6760;
+}
+
+.trajectory-tool,
+.trajectory-icon-tool {
+  background-color: transparent;
+  color: #5c6760;
+}
+
+.trajectory-tool:hover,
+.trajectory-icon-tool:hover {
+  background-color: rgba(0, 0, 0, 10);
+  color: #1a211c;
+}
+
+.trajectory-tool.active {
+  background-color: #edf4ec;
+  border-color: #cddcd0;
+  color: #2d5a43;
+}
+
+.trajectory-token-summary {
+  border-left-color: #eae6dc;
+  color: #949e97;
+}
+
+.trajectory-search {
+  background-color: #ffffff;
+  border-color: #eae6dc;
+  color: #949e97;
+}
+
+.trajectory-search:focus-within {
+  border-color: #2d5a43;
+}
+
+.trajectory-search input {
+  color: #1a211c;
+}
+
+.trajectory-timeline {
+  background-color: #f7f5ef;
+  border-bottom-color: #eae6dc;
+}
+
+.trajectory-lane-labels {
+  border-right-color: #eeeae2;
+  color: #949e97;
+}
+
+.trajectory-range {
+  border-color: #2d5a43;
+  background-color: rgba(45, 90, 67, 38);
+}
+
+.trajectory-range.dragging {
+  background-color: rgba(45, 90, 67, 66);
+}
+
+.trajectory-zoom-status {
+  border-color: #d7d3ca;
+  background-color: rgba(255, 255, 255, 221);
+  color: #5c6760;
+}
+
+.trajectory-zoom-status:hover {
+  border-color: #4a7860;
+  color: #2d5a43;
+}
+
+.trajectory-no-timing,
+.trajectory-empty {
+  color: #949e97;
+}
+
+.trajectory-empty strong {
+  color: #5c6760;
+}
+
+.trajectory-span {
+  background-color: #747f78;
+}
+
+.trajectory-span.user {
+  background-color: #0284c7;
+}
+
+.trajectory-span.context {
+  background-color: #16a34a;
+}
+
+.trajectory-span.system {
+  background-color: #64748b;
+}
+
+.trajectory-span.message {
+  background-color: #4a7860;
+}
+
+.trajectory-span.model {
+  background-color: #2d5a43;
+}
+
+.trajectory-span.tool {
+  background-color: #d97706;
+}
+
+.trajectory-span.error {
+  background-color: #dc2626;
+}
+
+.trajectory-span.selected {
+  box-shadow: #ffffff 0dp 0dp 0dp 1dp, #2d5a43 0dp 0dp 0dp 2dp;
+}
+
+.trajectory-ledger {
+  background-color: #ffffff;
+}
+
+.trajectory-table-head {
+  background-color: #faf9f6;
+  border-bottom-color: #eae6dc;
+  color: #747f78;
+}
+
+.trajectory-turn-header {
+  background-color: #fcfbfa;
+  border-bottom-color: #eae6dc;
+  border-top-color: #eae6dc;
+  color: #252d27;
+}
+
+.trajectory-turn-header:hover {
+  background-color: #f6f3eb;
+}
+.trajectory-cell {
+  background-color: #ffffff;
+  border-bottom-color: #f7f5ef;
+}
+
+.trajectory-cell:hover {
+  background-color: #faf9f6;
+}
+
+.trajectory-cell.selected {
+  background-color: #edf4ec;
+  box-shadow: #2d5a43 2dp 0dp 0dp 0dp inset;
+}
+
+.trajectory-cell.failed {
+  background-color: #fff7f7;
+}
+
+.trajectory-cell.failed.selected {
+  box-shadow: #dc2626 2dp 0dp 0dp 0dp inset;
+}
+
+/* Trajectory Cell Tags */
+.trajectory-cell.user .trajectory-cell-event b {
+  color: #0369a1;
+  background-color: #e0f2fe;
+  border-color: #bae6fd;
+}
+
+.trajectory-cell.context .trajectory-cell-event b {
+  color: #15803d;
+  background-color: #dcfce7;
+  border-color: #bbf7d0;
+}
+
+.trajectory-cell.message .trajectory-cell-event b {
+  color: #7e22ce;
+  background-color: #f3e8ff;
+  border-color: #e9d5ff;
+}
+
+.trajectory-cell.model .trajectory-cell-event b {
+  color: #2d5a43;
+  background-color: #edf4ec;
+  border-color: #cddcd0;
+}
+
+.trajectory-cell.tool .trajectory-cell-event b {
+  color: #b45309;
+  background-color: #fef3c7;
+  border-color: #fde68a;
+}
+
+.trajectory-cell.error .trajectory-cell-event b {
+  color: #b91c1c;
+  background-color: #fef2f2;
+  border-color: #fecaca;
+}
+
+.trajectory-cell-content strong {
+  color: #252d27;
+}
+
+.trajectory-cell-content small {
+  color: #747f78;
+}
+
+.trajectory-table-footer {
+  background-color: #faf9f6;
+  border-top-color: #eae6dc;
+  color: #949e97;
+}
+
+.trajectory-details {
+  background-color: #ffffff;
+  border-left-color: #eae6dc;
+}
+
+.trajectory-details-head {
+  background-color: #faf9f6;
+  border-bottom-color: #eae6dc;
+}
+
+.trajectory-details-head strong {
+  color: #1a211c;
+}
+
+.trajectory-detail-tabs {
+  background-color: #ffffff;
+  border-bottom-color: #eae6dc;
+}
+
+.trajectory-detail-tabs button {
+  color: #747f78;
+}
+
+.trajectory-detail-tabs button:hover {
+  color: #1a211c;
+  background-color: #faf9f6;
+}
+
+.trajectory-detail-tabs button.active {
+  color: #2d5a43;
+  border-bottom-color: #2d5a43;
+}
+
+.trajectory-status {
+  background-color: #dcfce7;
+  color: #166534;
+}
+
+.trajectory-status.failed {
+  background-color: #fee2e2;
+  color: #991b1b;
+}
+
+.trajectory-detail-overview pre,
+.trajectory-detail-payload {
+  background-color: #faf9f6;
+  border-color: #eae6dc;
+  color: #5c6760;
+}
+
+/* Right Panel & Launcher */
+.right-tab-pill {
+  background-color: #ffffff;
+  border-color: rgba(0, 0, 0, 18);
+  color: #1a211c;
+}
+
+.right-tab-close {
+  color: #949e97;
+}
+
+.right-tab-close:hover {
+  color: #1a211c;
+}
+
+.right-fullscreen-button {
+  color: #747f78;
+}
+
+.right-fullscreen-button:hover {
+  background-color: #f4f2ec;
+  color: #1a211c;
+}
+
+.panel-toggle {
+  background-color: #ffffff;
+  border-color: #eae6dc;
+  color: #747f78;
+}
+
+.panel-toggle:hover {
+  background-color: #f7f5ef;
+  color: #2d5a43;
+}
+
+.launcher-entry {
+  background-color: #f7f5ef;
+  color: #252d27;
+}
+
+.launcher-entry:hover {
+  background-color: #eae6dc;
+}
+
+.launcher-entry kbd {
+  background-color: #ffffff;
+  border-color: rgba(0, 0, 0, 20);
+  color: #747f78;
+}
+
+.right-tab-menu,
+.branch-menu {
+  background-color: #ffffff;
+  border-color: #eae6dc;
+}
+
+.right-tab-menu button:hover,
+.branch-menu button:hover {
+  background-color: #f7f5ef;
+  color: #2d5a43;
+}
+
+.branch-menu button.active {
+  background-color: #edf4ec;
+  color: #2d5a43;
+}
+
+/* Review & Git Surfaces */
+.review-toolbar,
+.review-summary,
+.browser-toolbar {
+  border-color: #eae6dc;
+}
+
+.review-toolbar button,
+.review-summary button,
+.browser-toolbar button {
+  background-color: #ffffff;
+  border-color: #eae6dc;
+  color: #252d27;
+}
+
+.review-toolbar button:hover,
+.review-summary button:hover,
+.browser-toolbar button:hover {
+  background-color: #f7f5ef;
+}
+
+.review-toolbar #commit-button {
+  background-color: #ffffff;
+  color: #252d27;
+  border-color: #ece8df;
+}
+
+.review-toolbar #commit-button:hover {
+  background-color: #edf4ec;
+  border-color: #2d5a43;
+}
+
+.count-pill {
+  background-color: #edf4ec;
+  color: #2d5a43;
+  border-color: #cddcd0;
+}
+
+.review-diff,
+.diff-surface,
+#review-view,
+#files-view {
+  background-color: #ffffff;
+  color: #252d27;
+}
+
+.diff-header {
+  background-color: #ffffff;
+  border-bottom-color: #eae6dc;
+  color: #1a211c;
+}
+
+.diff-header #close-diff {
+  background-color: #faf9f6;
+  border-color: #eae6dc;
+  color: #5c6760;
+}
+
+.diff-header #close-diff:hover {
+  background-color: #edf4ec;
+  border-color: #cddcd0;
+  color: #2d5a43;
+}
+
+.diff-hunk-actions {
+  background-color: #faf9f6;
+  border-bottom-color: #eae6dc;
+}
+
+.diff-hunk-actions button {
+  background-color: #ffffff;
+  border-color: #eae6dc;
+  color: #5c6760;
+}
+
+.diff-hunk-actions button:hover {
+  background-color: #edf4ec;
+  border-color: #cddcd0;
+  color: #2d5a43;
+}
+
+.diff-hunk {
+  border-color: #eae6dc;
+}
+
+.diff-hunk-toolbar {
+  background-color: #faf9f6;
+}
+
+.diff-line i {
+  background-color: #faf9f6;
+  color: #949e97;
+}
+
+.diff-line.add {
+  background-color: rgba(220, 252, 231, 120);
+  color: #166534;
+}
+
+.diff-line.remove {
+  background-color: rgba(254, 226, 226, 120);
+  color: #991b1b;
+}
+
+/* File Tree & Editor */
+.file-tree-pane {
+  background-color: #faf9f6;
+  border-left-color: rgba(234, 230, 220, 179);
+}
+
+.file-editor-pane {
+  background-color: #ffffff;
+}
+
+.editor-toolbar {
+  background-color: #ffffff;
+  border-bottom-color: rgba(234, 230, 220, 179);
+}
+
+.editor-findbar {
+  background-color: #faf9f6;
+  border-bottom-color: rgba(234, 230, 220, 179);
+}
+
+.file-actions button,
+.editor-toolbar button {
+  background-color: #ffffff;
+  border-color: #eae6dc;
+  color: #5c6760;
+}
+
+.file-actions button:hover,
+.editor-toolbar button:hover {
+  background-color: #edf4ec;
+  border-color: #cddcd0;
+  color: #2d5a43;
+}
+
+.file-preview {
+  background-color: #ffffff;
+  color: #252d27;
+}
+
+/* Terminal */
+.terminal-view {
+  background-color: #faf9f6;
+  color: #252d27;
+}
+
+.terminal-toolbar {
+  background-color: #ffffff;
+  border-color: #eae6dc;
+  color: #252d27;
+}
+
+.terminal-tabs button.active {
+  background-color: #eaf1e8;
+  color: #2d5a43;
+  border-color: #cddcd0;
+}
+
+.terminal-toolbar input {
+  background-color: #f3f1ea;
+  color: #252d27;
+}
+
+.terminal-toolbar input:focus {
+  background-color: #ffffff;
+  border-color: #2d5a43;
+}
+
+.terminal-hint {
+  background-color: #f4f2ec;
+  color: #747f78;
+}
+
+/* Settings Dialog & Overlays */
+.overlay {
+  background-color: rgba(0, 0, 0, 89);
+}
+
+.settings-dialog,
+.modal {
+  background-color: #ffffff;
+  border-color: #eae6dc;
+}
+
+.settings-topbar,
+.settings-footer {
+  border-color: #eae6dc;
+}
+
+.settings-topbar h2 {
+  color: #1a211c;
+}
+
+.settings-search {
+  background-color: #faf9f6;
+  border-color: #eae6dc;
+  color: #1a211c;
+}
+
+.settings-search:focus {
+  border-color: #2d5a43;
+  background-color: #ffffff;
+}
+
+.settings-close {
+  color: #747f78;
+}
+
+.settings-close:hover {
+  background-color: #f7f5ef;
+  color: #1a211c;
+}
+
+.settings-sidebar {
+  background-color: #fbfbf9;
+  border-color: #eae6dc;
+}
+
+.settings-nav {
+  color: #5c6760;
+}
+
+.settings-nav:hover {
+  background-color: #f5f3eb;
+}
+
+.settings-nav.active {
+  background-color: #eaf1e8;
+  color: #2d5a43;
+}
+
+.setting-card,
+.settings-section {
+  border-color: #eae6dc;
+}
+
+.setting-card strong {
+  color: #1a211c;
+}
+
+.setting-card p,
+.compact-setting-card p,
+.skill-card p,
+.mcp-header-card p,
+.mcp-server p,
+.rules-editor > div span,
+.theme-heading p,
+.about-brand p {
+  color: #747f78;
+}
+
+.toggle {
+  background-color: #eae6dc;
+}
+
+.toggle.on {
+  background-color: #2d5a43;
+}
+
+.toggle span {
+  background-color: #ffffff;
+}
+
+.setting-card input,
+.setting-select,
+.modal input,
+.select-box {
+  background-color: #ffffff;
+  border-color: #eae6dc;
+  color: #1a211c;
+}
+
+.setting-card input:focus,
+.setting-select:focus,
+.modal input:focus {
+  border-color: #2d5a43;
+}
+
+.segmented-control {
+  background-color: #f3f1ea;
+}
+
+.segmented-control button {
+  color: #747f78;
+}
+
+.segmented-control button.selected {
+  background-color: #ffffff;
+  color: #1a211c;
+}
+
+.theme-choice {
+  background-color: #ffffff;
+  border-color: #eae6dc;
+  color: #1a211c;
+}
+
+.theme-choice.selected {
+  background-color: #edf4ec;
+  border-color: #2d5a43;
+}
+
+.light-preview {
+  background-color: #faf9f6;
+  border-color: #eae6dc;
+}
+
+.dark-preview {
+  background-color: #181614;
+  border-color: #3d342a;
+}
+
+.theme-preview i {
+  background-color: #eae6dc;
+}
+
+.theme-preview i:nth-child(2) {
+  background-color: #cddcd0;
+}
+
+.theme-preview i:nth-child(3) {
+  background-color: #2d5a43;
+}
+
+.dark-preview i {
+  background-color: #28221b;
+}
+
+.dark-preview i:nth-child(2) {
+  background-color: #332a20;
+}
+
+.dark-preview i:nth-child(3) {
+  background-color: #e88d43;
+}
+
+.primary-button {
+  background-color: #2d5a43;
+  color: #ffffff;
+}
+
+.primary-button:hover {
+  background-color: #234937;
+}
+
+.secondary-button {
+  background-color: #f7f5ef;
+  color: #5c6760;
+  border-color: #eae6dc;
+}
+
+.secondary-button:hover {
+  background-color: #eae6dc;
+  color: #2d5a43;
+}
+
+.reset-settings {
+  color: #747f78;
+}
+
+.reset-settings:hover {
+  background-color: #edf4ec;
+  color: #2d5a43;
+}
+
+.tag {
+  background-color: #f7f5ef;
+  color: #747f78;
+  border-color: #eae6dc;
+}
+
+.accent-tag {
+  background-color: #edf4ec;
+  color: #2d5a43;
+}
+
+.running-tag {
+  background-color: #ecfdf5;
+  color: #166534;
+}
+
+.stopped-tag {
+  background-color: #f3f1ea;
+  color: #747f78;
+}
+
+.compact-setting-card,
+.skill-card,
+.mcp-server,
+.provider-row {
+  background-color: #ffffff;
+  border-color: #eae6dc;
+}
+
+.provider-row.selected {
+  background-color: #edf4ec;
+}
+
+.rules-editor textarea {
+  background-color: #faf9f6;
+  border-color: #eae6dc;
+  color: #1a211c;
+}
+
+.rules-editor textarea:focus {
+  border-color: #2d5a43;
+  background-color: #ffffff;
+}
+
+.mcp-header-card,
+.about-brand {
+  background-color: #f7f5ef;
+  border-color: #eae6dc;
+}
+
+.mcp-header-card em,
+.about-brand em {
+  color: #2d5a43;
+}
+
+.path-value {
+  background-color: #faf9f6;
+  border-color: #eae6dc;
+  color: #2d5a43;
+}
+
+.locked-value {
+  color: #2d5a43;
+}
+
+.close-window:hover {
+  background-color: #dc2626;
+  color: #ffffff;
+}
+
+.danger,
+.danger-button {
+  color: #dc2626;
+}
+
+.danger-button {
+  background-color: #dc2626;
+  color: #ffffff;
+}
+
+.danger-button:hover {
+  background-color: #b91c1c;
+}
+
+
+/* ========================================================================= */
+/* DARK THEME SYSTEM (雅绿·森林夜色 / body.dark)                               */
+/* ========================================================================= */
+
+body.dark {
+  background-color: #111613;
+  color: #e6ede7;
+  border-color: rgba(255, 255, 255, 20);
+}
+
+body.dark .sidebar {
+  background-color: #161c18;
+  border-color: rgba(255, 255, 255, 20);
+}
+
+body.dark .workspace,
+body.dark .right-panel,
+body.dark .brand-row,
+body.dark .workspace-titlebar,
+body.dark .window-controls {
+  background-color: #1a221d;
+  border-color: rgba(255, 255, 255, 20);
+}
+
+body.dark .brand-name {
+  color: #e6ede7;
+}
+
+body.dark .new-session-button {
+  background-color: #1c2c22;
+  color: #72b890;
+}
+
+body.dark .new-session-button:hover {
+  background-color: #23382c;
+  color: #8ee0af;
+}
+
+body.dark .search-box,
+body.dark .panel-search {
+  background-color: #151c17;
+  border-color: rgba(255, 255, 255, 20);
+  color: #e6ede7;
+}
+
+body.dark .search-box:focus-within,
+body.dark .panel-search:focus-within {
+  background-color: #1c2520;
+  border-color: #72b890;
+}
+
+body.dark .search-placeholder,
+body.dark .panel-search-placeholder {
+  color: #627568;
+}
+
+body.dark .tree-row {
+  color: #b8c7bb;
+}
+
+body.dark .tree-row.group {
+  color: #e6ede7;
+}
+
+body.dark .tree-row.project {
+  color: #d6e0d7;
+}
+
+body.dark .tree-row.session {
+  color: #9bb0a0;
+}
+
+body.dark .tree-row:hover {
+  background-color: #23382c;
+}
+
+body.dark .tree-row.selected {
+  background-color: #1c2c22;
+  color: #72b890;
+}
+
+body.dark .tree-row.selected svg {
+  color: #72b890;
+}
+
+body.dark .tree-caption,
+body.dark .timestamp,
+body.dark small,
+body.dark .empty-panel,
+body.dark .browser-placeholder {
+  color: #627568;
+}
+
+body.dark .tree-guide {
+  border-left-color: rgba(255, 255, 255, 20);
+}
+
+body.dark .row-add {
+  color: #7f9485;
+}
+
+body.dark .row-add:hover {
+  background-color: #23382c;
+  color: #72b890;
+}
+
+body.dark .navigation-scrollbar-thumb {
+  background-color: #25332b;
+}
+
+body.dark .settings-button {
+  background-color: #161c18;
+  color: #b8c7bb;
+}
+
+body.dark .settings-button:hover {
+  background-color: #23382c;
+  color: #e6ede7;
+}
+
+body.dark .settings-divider {
+  background-color: rgba(255, 255, 255, 20);
+}
+
+body.dark .session-title {
+  color: #e6ede7;
+}
+
+body.dark .title-edit {
+  color: #627568;
+}
+
+body.dark .title-edit:hover {
+  color: #e6ede7;
+}
+
+body.dark .workspace-chip,
+body.dark .project-chip,
+body.dark .branch-chip {
+  background-color: #1c2520;
+  color: #7f9485;
+  border-color: rgba(255, 255, 255, 20);
+}
+
+body.dark .mode-tab-button {
+  color: #7f9485;
+}
+
+body.dark .mode-tab-button:hover {
+  color: #e6ede7;
+}
+
+body.dark .mode-tab-button.active {
+  color: #72b890;
+}
+
+body.dark .mode-tab-button .active-indicator {
+  background-color: #72b890;
+}
+
+body.dark .mode-pill {
+  background-color: #1c2520;
+}
+
+body.dark .mode-pill button {
+  color: #7f9485;
+}
+
+body.dark .mode-pill button.active {
+  background-color: #2a382f;
+  color: #e6ede7;
+}
+
+body.dark .environment-orb {
+  background-color: #1a221d;
+  border-color: rgba(255, 255, 255, 20);
+}
+
+body.dark .environment-panel {
+  background-color: #161c18;
+  border-color: rgba(255, 255, 255, 20);
+  color: #e6ede7;
+}
+
+body.dark .environment-panel-head strong {
+  color: #e6ede7;
+}
+
+body.dark .environment-panel-head button {
+  color: #7f9485;
+}
+
+body.dark .environment-panel-head button:hover {
+  background-color: #243028;
+  color: #e6ede7;
+}
+
+body.dark .environment-row > span:first-child {
+  color: #7f9485;
+}
+
+body.dark .environment-row > code {
+  color: #72b890;
+  background-color: #1c2c22;
+}
+
+body.dark .environment-actions button {
+  background-color: #1a221d;
+  border-color: rgba(255, 255, 255, 20);
+  color: #d6e0d7;
+}
+
+body.dark .environment-actions button:hover {
+  background-color: #23382c;
+  color: #72b890;
+}
+
+body.dark .starter-logo-box {
+  background-color: #1c2c22;
+  border-color: rgba(114, 184, 144, 64);
+}
+
+body.dark .starter-block h1 {
+  color: #e6ede7;
+}
+
+body.dark .starter-block h1 strong,
+body.dark .starter-workspace-link {
+  color: #e6ede7;
+  border-bottom-color: #627568;
+}
+
+body.dark .starter-workspace-link:hover {
+  color: #72b890;
+  border-bottom-color: #72b890;
+}
+
+body.dark .starter-workspace-pill {
+  background-color: #1c2c22;
+  color: #72b890;
+  border-color: rgba(114, 184, 144, 64);
+}
+
+body.dark .starter-card {
+  background-color: #1a221d;
+  border-color: rgba(255, 255, 255, 20);
+}
+
+body.dark .starter-card:hover {
+  background-color: #202b24;
+  border-color: #3d684f;
+}
+
+body.dark .starter-icon {
+  background-color: #1c2c22;
+  border-color: rgba(114, 184, 144, 64);
+  color: #72b890;
+}
+
+body.dark .starter-icon svg {
+  color: #72b890;
+}
+
+body.dark .starter-title {
+  color: #e6ede7;
+}
+
+body.dark .starter-card:hover .starter-title {
+  color: #72b890;
+}
+
+body.dark .starter-detail {
+  color: #627568;
+}
+
+body.dark .user-message {
+  background-color: #251d16;
+  color: #ede5da;
+  box-shadow: rgba(0, 0, 0, 20) 0dp 1dp 0dp 0dp;
+}
+
+body.dark .user-message p {
+  color: #ede5da;
+}
+
+body.dark .assistant-message {
+  color: #d6e0d7;
+}
+
+body.dark .assistant-message h1,
+body.dark .assistant-message h2,
+body.dark .assistant-message h3,
+body.dark .thought-content h1,
+body.dark .thought-content h2,
+body.dark .thought-content h3 {
+  color: #e6ede7;
+}
+
+body.dark .assistant-message blockquote,
+body.dark .thought-content blockquote {
+  border-left-color: #72b890;
+  background-color: #161c18;
+  color: #b8c7bb;
+}
+
+body.dark .assistant-message table,
+body.dark .thought-content table,
+body.dark .assistant-message td,
+body.dark .thought-content td {
+  border-color: rgba(255, 255, 255, 20);
+}
+
+body.dark .assistant-message hr,
+body.dark .thought-content hr {
+  background-color: rgba(255, 255, 255, 20);
+}
+
+body.dark .assistant-message code,
+body.dark .thought-content code {
+  background-color: #1c2520;
+  color: #72b890;
+}
+
+body.dark .assistant-message pre,
+body.dark .thought-content pre {
+  background-color: #101412;
+  border-color: rgba(255, 255, 255, 20);
+  color: #e6ede7;
+}
+
+body.dark .markdown-copy {
+  background-color: #1a221d;
+  border-color: rgba(255, 255, 255, 20);
+  color: #7f9485;
+}
+
+body.dark .markdown-copy:hover {
+  background-color: #243028;
+  color: #e6ede7;
+}
+
+body.dark .parameter-card {
+  background-color: #1c2c22;
+  border-color: rgba(114, 184, 144, 64);
+  color: #b8c7bb;
+}
+
+body.dark .thought-card,
+body.dark .workflow-card {
+  background-color: #161c18;
+  border-color: rgba(255, 255, 255, 20);
+}
+
+body.dark .thought-card .card-title {
+  color: #7f9485;
+}
+
+body.dark .thought-card .card-title:hover {
+  background-color: #202b24;
+}
+
+body.dark .thought-content {
+  color: #b8c7bb;
+}
+
+body.dark .workflow-card .card-title {
+  color: #e6ede7;
+}
+
+body.dark .complete-pill {
+  background-color: #1c2c22;
+  color: #72b890;
+  border-color: rgba(114, 184, 144, 64);
+}
+
+body.dark .workflow-summary {
+  color: #7f9485;
+}
+
+body.dark .composer-card {
+  background-color: #1a221d;
+  border-color: rgba(255, 255, 255, 20);
+}
+
+body.dark .workspace-context {
+  background-color: #1c2520;
+  color: #72b890;
+}
+
+body.dark .workspace-context strong,
+body.dark .workspace-context .branch {
+  color: #72b890;
+}
+
+body.dark .composer-card input {
+  color: #e6ede7;
+}
+
+body.dark .composer-placeholder {
+  color: #627568;
+}
+
+body.dark .round-button,
+body.dark .tool-pill,
+body.dark .select-pill,
+body.dark .context-ring {
+  color: #9bb0a0;
+}
+
+body.dark .round-button:hover,
+body.dark .tool-pill:hover,
+body.dark .select-pill:hover,
+body.dark .context-ring:hover {
+  background-color: rgba(255, 255, 255, 20);
+  color: #e6ede7;
+}
+
+body.dark .tool-pill.access {
+  color: #72b890;
+}
+
+body.dark .send-button {
+  background-color: #72b890;
+  color: #111613;
+}
+
+body.dark .send-button:hover {
+  background-color: #8ee0af;
+}
+
+body.dark .send-button.running {
+  background-color: #e6ede7;
+  color: #111613;
+}
+
+body.dark .send-button.running:hover {
+  background-color: #dc2626;
+  color: #ffffff;
+}
+
+body.dark .send-button.disabled {
+  background-color: rgba(255, 255, 255, 20);
+  color: #627568;
+}
+
+body.dark .trajectory,
+body.dark .trajectory-ledger,
+body.dark .trajectory-details,
+body.dark #review-view,
+body.dark #files-view,
+body.dark .file-editor-pane,
+body.dark .file-preview,
+body.dark .diff-surface,
+body.dark .review-diff {
+  background-color: #1a221d;
+  color: #e6ede7;
+}
+
+body.dark .trajectory-toolbar,
+body.dark .trajectory-timeline,
+body.dark .trajectory-table-head,
+body.dark .trajectory-table-footer,
+body.dark .trajectory-details-head,
+body.dark .file-tree-pane,
+body.dark .editor-findbar,
+body.dark .terminal-view,
+body.dark .diff-hunk-actions,
+body.dark .diff-hunk-toolbar {
+  background-color: #161c18;
+  border-color: rgba(255, 255, 255, 20);
+  color: #e6ede7;
+}
+
+body.dark .trajectory-tool,
+body.dark .trajectory-icon-tool {
+  color: #9bb0a0;
+}
+
+body.dark .trajectory-tool:hover,
+body.dark .trajectory-icon-tool:hover {
+  background-color: rgba(255, 255, 255, 20);
+  color: #e6ede7;
+}
+
+body.dark .trajectory-tool.active {
+  background-color: #1c2c22;
+  color: #72b890;
+  border-color: rgba(114, 184, 144, 64);
+}
+
+body.dark .trajectory-search,
+body.dark .trajectory-turn-header,
+body.dark .trajectory-cell {
+  background-color: #161c18;
+  border-color: rgba(255, 255, 255, 20);
+  color: #e6ede7;
+}
+
+body.dark .trajectory-cell:hover {
+  background-color: #202b24;
+}
+
+body.dark .trajectory-cell.selected {
+  background-color: #1c2c22;
+  box-shadow: #72b890 2dp 0dp 0dp 0dp inset;
+}
+
+body.dark .trajectory-cell-content strong {
+  color: #e6ede7;
+}
+
+body.dark .trajectory-cell-content small {
+  color: #7f9485;
+}
+
+body.dark .trajectory-detail-tabs button {
+  color: #7f9485;
+}
+
+body.dark .trajectory-detail-tabs button:hover {
+  color: #e6ede7;
+  background-color: #202b24;
+}
+
+body.dark .trajectory-detail-tabs button.active {
+  color: #72b890;
+  border-bottom-color: #72b890;
+}
+
+body.dark .trajectory-detail-overview pre,
+body.dark .trajectory-detail-payload {
+  background-color: #1a221d;
+  color: #b8c7bb;
+}
+
+body.dark .right-tab-pill {
   background-color: #1a221d;
   border-color: rgba(255, 255, 255, 20);
   color: #e6ede7;
 }
-body.dark .starter-card:hover { background-color: #202b24; border-color: #3d684f; }
-body.dark .launcher-entry { background-color: #1c2520; color: #e6ede7; }
-body.dark .launcher-entry:hover { background-color: #243028; }
-body.dark .launcher-entry kbd { background-color: #26332b; border-color: rgba(255, 255, 255, 20); color: #9bb0a0; }
-body.dark .workspace-context, body.dark .segmented-control,
-body.dark .tag, body.dark .stopped-tag { background-color: #1c2520; color: #9bb0a0; }
-body.dark .mode-pill button.active,
-body.dark .segmented-control button.selected { background-color: #2a382f; color: #e6ede7; }
-body.dark .composer-card input, body.dark .panel-search input { color: #e6ede7; }
-body.dark .settings-topbar, body.dark .settings-footer { border-color: rgba(255, 255, 255, 20); }
-body.dark .settings-search, body.dark .setting-card input,
-body.dark .setting-select, body.dark .path-value,
-body.dark .provider-config-grid input, body.dark .provider-config-grid select,
-body.dark .rules-editor textarea {
+
+body.dark .launcher-entry {
+  background-color: #1c2520;
+  color: #e6ede7;
+}
+
+body.dark .launcher-entry:hover {
+  background-color: #243028;
+}
+
+body.dark .launcher-entry kbd {
+  background-color: #26332b;
+  border-color: rgba(255, 255, 255, 20);
+  color: #9bb0a0;
+}
+
+body.dark .review-toolbar button,
+body.dark .review-summary button,
+body.dark .browser-toolbar button,
+body.dark .diff-hunk-actions button,
+body.dark .diff-header #close-diff,
+body.dark .file-actions button,
+body.dark .editor-toolbar button,
+body.dark .terminal-toolbar {
   background-color: #1c2520;
   border-color: rgba(255, 255, 255, 20);
-  color: #d5e0d7;
+  color: #e6ede7;
 }
-body.dark .settings-search:focus { background-color: #202b24; border-color: #72b890; }
-body.dark .settings-close { color: #9bb0a0; }
-body.dark .settings-close:hover { background-color: #243028; color: #e6ede7; }
-body.dark .setting-card p, body.dark .compact-setting-card p,
-body.dark .skill-card p, body.dark .mcp-header-card p,
-body.dark .mcp-server p, body.dark .rules-editor > div span,
-body.dark .theme-heading p, body.dark .about-brand p { color: #7f9485; }
-body.dark .compact-setting-card, body.dark .skill-card,
-body.dark .provider-row, body.dark .provider-config-grid,
-body.dark .mcp-overview, body.dark .mcp-header-card,
-body.dark .mcp-server, body.dark .about-brand,
+
+body.dark .review-toolbar button:hover,
+body.dark .review-summary button:hover,
+body.dark .browser-toolbar button:hover,
+body.dark .diff-hunk-actions button:hover,
+body.dark .diff-header #close-diff:hover,
+body.dark .file-actions button:hover,
+body.dark .editor-toolbar button:hover {
+  background-color: #243028;
+  color: #8ee0af;
+}
+
+body.dark .review-toolbar #commit-button {
+  background-color: #1c2520;
+  color: #e6ede7;
+  border-color: rgba(255, 255, 255, 20);
+}
+
+body.dark .review-toolbar #commit-button:hover {
+  background-color: #243028;
+  border-color: #72b890;
+}
+
+body.dark .count-pill {
+  background-color: #1c2c22;
+  color: #72b890;
+  border-color: rgba(114, 184, 144, 64);
+}
+
+body.dark .terminal-tabs button.active {
+  background-color: #1c2c22;
+  color: #72b890;
+  border-color: rgba(114, 184, 144, 64);
+}
+
+body.dark .terminal-toolbar input {
+  background-color: #151c17;
+  color: #e6ede7;
+}
+
+body.dark .terminal-toolbar input:focus {
+  border-color: #72b890;
+  background-color: #1c2520;
+}
+
+body.dark .terminal-hint {
+  background-color: #161c18;
+  color: #7f9485;
+}
+
+body.dark .terminal-view tokmon-terminal {
+  background-color: #101412;
+  border-color: rgba(255, 255, 255, 20);
+}
+
+body.dark .settings-dialog,
+body.dark .modal {
+  background-color: #1a221d;
+  border-color: rgba(255, 255, 255, 20);
+  color: #e6ede7;
+}
+
+body.dark .settings-topbar h2 {
+  color: #e6ede7;
+}
+
+body.dark .settings-search,
+body.dark .setting-card input,
+body.dark .setting-select,
+body.dark .modal input,
+body.dark .select-box,
+body.dark .provider-config-grid input,
+body.dark .provider-config-grid select,
+body.dark .rules-editor textarea {
+  background-color: #151c17;
+  border-color: rgba(255, 255, 255, 20);
+  color: #e6ede7;
+}
+
+body.dark .settings-search:focus,
+body.dark .setting-card input:focus,
+body.dark .setting-select:focus,
+body.dark .modal input:focus,
+body.dark .rules-editor textarea:focus {
+  border-color: #72b890;
+  background-color: #1c2520;
+}
+
+body.dark .settings-sidebar {
+  background-color: #161c18;
+  border-color: rgba(255, 255, 255, 20);
+}
+
+body.dark .settings-nav {
+  color: #9bb0a0;
+}
+
+body.dark .settings-nav:hover {
+  background-color: #23382c;
+  color: #e6ede7;
+}
+
+body.dark .settings-nav.active {
+  background-color: #1c2c22;
+  color: #72b890;
+}
+
+body.dark .setting-card,
+body.dark .settings-section {
+  border-color: rgba(255, 255, 255, 20);
+}
+
+body.dark .setting-card strong,
+body.dark .compact-setting-card strong,
+body.dark .skill-card strong,
+body.dark .mcp-header-card strong,
+body.dark .mcp-server strong,
+body.dark .rules-editor strong,
+body.dark .theme-heading strong,
+body.dark .about-brand strong {
+  color: #e6ede7;
+}
+
+body.dark .toggle {
+  background-color: #2a382f;
+}
+
+body.dark .toggle.on {
+  background-color: #72b890;
+}
+
+body.dark .segmented-control {
+  background-color: #1c2520;
+}
+
+body.dark .segmented-control button {
+  color: #7f9485;
+}
+
+body.dark .segmented-control button.selected {
+  background-color: #2a382f;
+  color: #e6ede7;
+}
+
 body.dark .theme-choice {
   background-color: #1a221d;
   border-color: rgba(255, 255, 255, 20);
   color: #e6ede7;
 }
-body.dark .theme-choice.selected { background-color: #1c2c22; border-color: #72b890; }
+
+body.dark .theme-choice.selected {
+  background-color: #1c2c22;
+  border-color: #72b890;
+}
+
+body.dark .primary-button {
+  background-color: #72b890;
+  color: #111613;
+}
+
+body.dark .primary-button:hover {
+  background-color: #8ee0af;
+}
+
+body.dark .secondary-button {
+  background-color: #1c2520;
+  border-color: rgba(255, 255, 255, 20);
+  color: #d6e0d7;
+}
+
+body.dark .secondary-button:hover {
+  background-color: #243028;
+  color: #8ee0af;
+}
+
+body.dark .reset-settings {
+  color: #7f9485;
+}
+
+body.dark .reset-settings:hover {
+  background-color: #1c2c22;
+  color: #72b890;
+}
+
+body.dark .tag,
+body.dark .stopped-tag {
+  background-color: #1c2520;
+  color: #7f9485;
+  border-color: rgba(255, 255, 255, 20);
+}
+
+body.dark .accent-tag {
+  background-color: #1c2c22;
+  color: #72b890;
+}
+
+body.dark .running-tag {
+  background-color: #1c2c22;
+  color: #8ee0af;
+}
+
+body.dark .compact-setting-card,
+body.dark .skill-card,
+body.dark .mcp-server,
+body.dark .provider-row {
+  background-color: #1a221d;
+  border-color: rgba(255, 255, 255, 20);
+  color: #e6ede7;
+}
+
+body.dark .provider-row.selected {
+  background-color: #1c2c22;
+}
+
+body.dark .mcp-header-card,
+body.dark .about-brand {
+  background-color: #161c18;
+  border-color: rgba(255, 255, 255, 20);
+  color: #e6ede7;
+}
+
+body.dark .mcp-header-card em,
+body.dark .about-brand em,
+body.dark .path-value,
+body.dark .locked-value {
+  color: #72b890;
+}
+
+body.dark .path-value {
+  background-color: #151c17;
+  border-color: rgba(255, 255, 255, 20);
+}
+
+/* ---- Dark-mode gaps: floating surfaces, window chrome, trajectory aids ---- */
+
+body.dark .panel-toggle {
+  background-color: #1a221d;
+  border-color: rgba(255, 255, 255, 20);
+  color: #7f9485;
+}
+
+body.dark .panel-toggle:hover {
+  background-color: #243028;
+  color: #72b890;
+}
+
+body.dark .window-controls button:hover {
+  background-color: rgba(255, 255, 255, 20);
+}
+
+body.dark .right-tab-menu,
+body.dark .branch-menu,
+body.dark .navigation-context-menu,
+body.dark .popover-card {
+  background-color: #1a221d;
+  border-color: rgba(255, 255, 255, 20);
+  color: #e6ede7;
+}
+
+body.dark .navigation-context-menu span {
+  background-color: rgba(255, 255, 255, 20);
+}
+
+body.dark .file-empty-icon {
+  background-color: #1c2520;
+  border-color: rgba(255, 255, 255, 20);
+}
+
+body.dark .settings-nav-icon {
+  border-color: rgba(255, 255, 255, 20);
+  color: #7f9485;
+}
+
+body.dark .environment-orb {
+  decorator: linear-gradient(180deg, #1c2520 0%, #161c18 100%);
+}
+
+body.dark .environment-ring.outer {
+  border-color: rgba(230, 237, 231, 56);
+}
+
+body.dark .environment-ring.inner {
+  border-color: rgba(230, 237, 231, 166);
+}
+
+body.dark .environment-online {
+  border-color: #1a221d;
+}
+
+body.dark .environment-panel {
+  background-color: rgba(22, 28, 24, 242);
+  box-shadow: rgba(0, 0, 0, 77) 0dp 16dp 40dp 0dp, rgba(0, 0, 0, 26) 0dp 2dp 8dp 0dp;
+}
+
+body.dark .attachment-pill {
+  background-color: #1c2520;
+  border-color: rgba(255, 255, 255, 20);
+  color: #b8c7bb;
+}
+
+body.dark .editor-findbar button {
+  background-color: #1c2520;
+  color: #9bb0a0;
+}
+
+body.dark .review-summary button.active {
+  background-color: #1c2c22;
+  border-color: rgba(114, 184, 144, 64);
+  color: #72b890;
+}
+
+body.dark .review-toolbar #branch-button:hover,
+body.dark .review-toolbar #refresh-review:hover {
+  background-color: #243028;
+}
+
+body.dark .trajectory-range {
+  border-color: #72b890;
+  background-color: rgba(114, 184, 144, 38);
+}
+
+body.dark .trajectory-range.dragging {
+  background-color: rgba(114, 184, 144, 66);
+}
+
+body.dark .trajectory-zoom-status {
+  border-color: rgba(255, 255, 255, 26);
+  background-color: rgba(22, 28, 24, 221);
+  color: #9bb0a0;
+}
+
+body.dark .trajectory-details-dot {
+  background-color: #7f9485;
+}
+
+body.dark .terminal-toolbar button:hover {
+  background-color: #243028;
+}
+
+body.dark .provider-row.selected {
+  background-color: #1c2c22;
+}
+
+body.dark .choice-popover button:hover,
+body.dark .choice-popover button.selected,
+body.dark .navigation-context-menu button:hover,
+body.dark .navigation-context-menu button:focus {
+  background-color: #1c2c22;
+  color: #72b890;
+}
+
+body.dark .right-toast {
+  border-color: rgba(255, 255, 255, 26);
+}
+
+body.dark .starter-card:hover {
+  border-color: #4a7860;
+}
+
+body.dark .panel-resizer:hover {
+  border-left-color: #72b890;
+}
+
+body.dark .form-error {
+  color: #f87171;
+}
+
+.form-error {
+  color: #dc2626;
+  font-size: 10.5dp;
+}

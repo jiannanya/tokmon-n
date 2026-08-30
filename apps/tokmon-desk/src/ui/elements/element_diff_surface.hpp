@@ -54,6 +54,7 @@ class ElementDiffSurface final : public Rml::Element {
   std::vector<TextGeometry> text_geometry_;
   Rml::Vector2f geometry_size_{};
   std::uint64_t revision_{0};
+  std::uint64_t theme_revision_{0};
   std::uint64_t geometry_revision_{~std::uint64_t{0}};
   bool split_view_{false};
 };

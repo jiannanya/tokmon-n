@@ -1,6 +1,7 @@
 #include "ui/modules/settings_controller.hpp"
 
 #include "ui/desk_view_model.hpp"
+#include "ui/theme_palette.hpp"
 #include "ui/modules/browser_controller.hpp"
 #include "terminal/terminal_service.hpp"
 
@@ -178,6 +179,7 @@ void SettingsController::values_to_view(
   view.quiet_hours = string("quiet_hours", "关闭");
   view.density = string("density", "舒适");
   view.theme_mode = string("theme_mode", "浅色");
+  legacy_theme::set_dark_mode(view.theme_mode == "深色");
   view.default_agent = string("default_agent", "代码助手");
   view.global_rules = string(
       "global_rules",
@@ -434,7 +436,10 @@ void SettingsController::toggle(const std::string_view key) {
 void SettingsController::choose(const std::string_view key, std::string value) {
   auto& view = view_model_.state().settings;
   if (key == "startup") view.startup = value;
-  else if (key == "theme_mode") view.theme_mode = value;
+  else if (key == "theme_mode") {
+    view.theme_mode = value;
+    legacy_theme::set_dark_mode(value == "深色");
+  }
   else if (key == "mcp_approval") view.mcp_approval = value;
   else return;
   set(std::string(key), std::move(value));

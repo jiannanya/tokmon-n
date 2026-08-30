@@ -126,17 +126,17 @@ struct GhosttyVt::Impl {
       // is generated against the same warm surface and foreground used by the
       // old Slint UI so explicit ANSI colours retain readable contrast.
       const GhosttyColorRgb foreground{
-          legacy_theme::body.red,
-          legacy_theme::body.green,
-          legacy_theme::body.blue};
+          legacy_theme::themed(legacy_theme::body).red,
+          legacy_theme::themed(legacy_theme::body).green,
+          legacy_theme::themed(legacy_theme::body).blue};
       const GhosttyColorRgb background{
-          legacy_theme::surface_warm.red,
-          legacy_theme::surface_warm.green,
-          legacy_theme::surface_warm.blue};
+          legacy_theme::themed(legacy_theme::surface_warm).red,
+          legacy_theme::themed(legacy_theme::surface_warm).green,
+          legacy_theme::themed(legacy_theme::surface_warm).blue};
       const GhosttyColorRgb cursor{
-          legacy_theme::accent.red,
-          legacy_theme::accent.green,
-          legacy_theme::accent.blue};
+          legacy_theme::themed(legacy_theme::accent).red,
+          legacy_theme::themed(legacy_theme::accent).green,
+          legacy_theme::themed(legacy_theme::accent).blue};
       std::array<GhosttyColorRgb, 256> palette{};
       ghostty_color_palette_default(palette.data());
       ghostty_color_palette_generate(palette.data(), nullptr, &background,

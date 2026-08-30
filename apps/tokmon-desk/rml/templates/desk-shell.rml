@@ -33,8 +33,12 @@
   <div id="workspace" class="workspace">
     <div id="workspace-titlebar" class="workspace-titlebar drag-region">
       <span id="session-title" class="session-title">{{view.session_title}}</span>
-      <button id="title-edit" class="title-edit"><svg data-attr-src="view.asset_root + '/figma/icon-14.svg'"></svg></button>
-      <div class="mode-pill"><button id="chat-mode" class="active">对话</button><button id="trajectory-mode">轨迹</button></div>
+      <button id="title-edit" class="title-edit" title="重命名会话"><svg data-attr-src="view.asset_root + '/figma/icon-14.svg'"></svg></button>
+      <span class="workspace-chip"><svg data-attr-src="view.asset_root + '/figma/icon-18.svg'"></svg><span>{{view.workspace_name}}</span></span>
+      <div class="workspace-mode-tabs">
+        <button id="chat-mode" class="mode-tab-button active"><svg data-attr-src="view.asset_root + '/figma/icon-21.svg'"></svg><span>对话</span><i class="active-indicator"></i></button>
+        <button id="trajectory-mode" class="mode-tab-button"><svg data-attr-src="view.asset_root + '/figma/icon-45.svg'"></svg><span>轨迹</span><i class="active-indicator"></i></button>
+      </div>
     </div>
     <div id="environment-panel" class="environment-panel hidden">
       <div class="environment-panel-head"><strong>环境信息</strong><span class="environment-panel-status"></span><button id="environment-close" title="收起环境信息">◎</button></div>
@@ -50,6 +54,7 @@
     <div id="environment-orb" class="environment-orb"><span class="environment-ring outer"></span><span class="environment-ring inner"></span><span class="environment-core"></span><span class="environment-online"></span><button id="environment-toggle" class="environment-orb-hit" title="环境信息"></button></div>
     <div id="initial-session" class="initial-session" data-if="view.conversation_empty">
       <div class="starter-block">
+        <div class="starter-logo-box"><svg data-attr-src="view.asset_root + '/figma/icon-00.svg'"></svg></div>
         <h1><span>你想在</span><strong id="starter-workspace-name">{{view.workspace_name}}</strong><span>中创造什么？</span></h1>
         <div class="starter-grid">
           <button class="starter-card" starter-kind="explore"><span class="starter-icon explore"><svg data-attr-src="view.asset_root + '/figma/starter-explore.svg'"></svg></span><span class="starter-title">探索并理解代码</span><span class="starter-detail">梳理架构、依赖与核心逻辑</span></button>
