@@ -1017,6 +1017,30 @@ bool write_interaction_report(SdlPlatform& platform,
   record("UI-012-input", "Composer 输入启用发送、清空后重新禁用",
          nonempty_send_enabled && enabled_send &&
              enabled_send->IsClassSet("disabled"), "input state toggled");
+  bool composer_shift_enter = false;
+  std::string composer_multiline_value;
+  if (composer) {
+    composer->SetValue("");
+    composer->Focus();
+    (void)context.ProcessTextInput("第一行 中文 123 !@#");
+    (void)context.ProcessKeyDown(Rml::Input::KI_RETURN,
+                                Rml::Input::KM_SHIFT);
+    (void)context.ProcessTextInput('\n');
+    (void)context.ProcessTextInput("second-line");
+    context.ProcessKeyUp(Rml::Input::KI_RETURN, Rml::Input::KM_SHIFT);
+    context.Update();
+    composer_multiline_value = composer->GetValue();
+    // RmlUi reports whether an event propagated, not whether the form control
+    // accepted the text.  The value is the observable multiline contract.
+    composer_shift_enter =
+        composer_multiline_value == "第一行 中文 123 !@#\nsecond-line";
+    composer->SetValue("");
+    composer->DispatchEvent("input", {}, false);
+    context.Update();
+  }
+  record("UI-012-multiline", "Composer Shift+Enter 插入换行且不发送",
+         composer_shift_enter,
+         "value-bytes=" + std::to_string(composer_multiline_value.size()));
   controller.seed_acceptance_chat_state(true, false);
   context.Update();
   const auto* running_send = document.GetElementById("send-button");
@@ -1039,7 +1063,7 @@ bool write_interaction_report(SdlPlatform& platform,
 
   // Keep the code-bearing first turn inside the virtualized window while the
   // exact clipboard contract is exercised. Stress/tail behavior follows.
-  controller.seed_acceptance_conversation(20);
+  controller.seed_acceptance_conversation(1);
   context.Update();
   (void)controller.update();
   context.Update();
@@ -1229,6 +1253,50 @@ bool write_interaction_report(SdlPlatform& platform,
               "; code-bytes=" + std::to_string(copied_code.size()) +
               "; code=" + copied_code + "; message-click=" +
               message_copy_detail + "; code-click=" + code_copy_detail);
+  // Template proxy nodes intentionally have no layout box.  Attach a visible
+  // fixture that uses the production classes so this assertion measures the
+  // actual CSS geometry instead of a virtual-template placeholder.
+  Rml::Element* geometry_assistant = nullptr;
+  auto* geometry_host = document.GetElementById("app-shell");
+  if (geometry_host) {
+    auto fixture = document.CreateElement("article");
+    fixture->SetClass("assistant-message", true);
+    fixture->SetProperty("position", "absolute");
+    fixture->SetProperty("left", "400dp");
+    fixture->SetProperty("top", "200dp");
+    fixture->SetProperty("width", "600dp");
+    fixture->SetInnerRML(
+        "<div class=\"code-block-wrap\"><pre class=\"code-block\">"
+        "int answer = 42;\n</pre></div>");
+    geometry_assistant = geometry_host->AppendChild(std::move(fixture));
+    context.Update();
+  }
+  float code_wrapper_width = 0.f;
+  float code_pre_width = 0.f;
+  Rml::ElementList geometry_wrappers;
+  if (geometry_assistant)
+    geometry_assistant->QuerySelectorAll(geometry_wrappers, ".code-block-wrap");
+  if (!geometry_wrappers.empty()) {
+    code_wrapper_width = geometry_wrappers.front()->GetOffsetWidth();
+    Rml::ElementList blocks;
+    geometry_wrappers.front()->QuerySelectorAll(blocks, "pre.code-block");
+    if (!blocks.empty())
+      code_pre_width = blocks.front()->GetOffsetWidth();
+  }
+  const float assistant_width = geometry_assistant
+      ? geometry_assistant->GetOffsetWidth() : 0.f;
+  const bool code_block_full_width = assistant_width > 0.f &&
+      code_wrapper_width >= assistant_width * 0.75f &&
+      code_pre_width >= code_wrapper_width * 0.75f;
+  record("UI-014/CHAT-004", "Markdown 代码块占满消息内容宽度且正文不塌缩",
+         code_block_full_width,
+         "assistant=" + std::to_string(assistant_width) +
+             "; wrapper=" + std::to_string(code_wrapper_width) +
+             "; pre=" + std::to_string(code_pre_width));
+  if (geometry_host && geometry_assistant) {
+    (void)geometry_host->RemoveChild(geometry_assistant);
+    context.Update();
+  }
   controller.seed_acceptance_conversation(120);
   context.Update();
   (void)controller.update();
@@ -2721,6 +2789,22 @@ bool write_ui_contract_report(Rml::ElementDocument& document,
 
 SDL_HitTestResult hit_test(SDL_Window* window, const SDL_Point* point,
                            void* user_data) {
+  int window_width = 0;
+  int window_height = 0;
+  SDL_GetWindowSize(window, &window_width, &window_height);
+  constexpr int resize_edge = 8;
+  const bool left = point->x < resize_edge;
+  const bool right = point->x >= window_width - resize_edge;
+  const bool top = point->y < resize_edge;
+  const bool bottom = point->y >= window_height - resize_edge;
+  if (top && left) return SDL_HITTEST_RESIZE_TOPLEFT;
+  if (top && right) return SDL_HITTEST_RESIZE_TOPRIGHT;
+  if (bottom && left) return SDL_HITTEST_RESIZE_BOTTOMLEFT;
+  if (bottom && right) return SDL_HITTEST_RESIZE_BOTTOMRIGHT;
+  if (top) return SDL_HITTEST_RESIZE_TOP;
+  if (bottom) return SDL_HITTEST_RESIZE_BOTTOM;
+  if (left) return SDL_HITTEST_RESIZE_LEFT;
+  if (right) return SDL_HITTEST_RESIZE_RIGHT;
   const auto* platform = static_cast<const SdlPlatform*>(user_data);
   const float scale = platform
       ? std::max(platform->ui_scale(), 0.5f)

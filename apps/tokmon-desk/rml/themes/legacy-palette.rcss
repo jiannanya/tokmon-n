@@ -469,7 +469,7 @@ small {
   color: #2d5a43;
 }
 
-.composer-card input {
+.composer-card textarea {
   color: #1a211c;
 }
 
@@ -1765,7 +1765,7 @@ body.dark .workspace-context .branch {
   color: #72b890;
 }
 
-body.dark .composer-card input {
+body.dark .composer-card textarea {
   color: #e6ede7;
 }
 

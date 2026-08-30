@@ -1,6 +1,7 @@
 #include "platform/sdl_platform.hpp"
 
 #include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/Input.h>
 
 #include <algorithm>
@@ -199,11 +200,16 @@ bool SdlPlatform::pump_event(Rml::Context& context, bool& quit, bool& resized) {
     case SDL_EVENT_MOUSE_WHEEL:
       context.ProcessMouseWheel(-event.wheel.y, modifiers());
       break;
-    case SDL_EVENT_KEY_DOWN:
-      context.ProcessKeyDown(key_identifier(event.key.key), modifiers());
-      if (event.key.key == SDLK_RETURN || event.key.key == SDLK_KP_ENTER)
+    case SDL_EVENT_KEY_DOWN: {
+      const int modifier_state = modifiers();
+      const auto* focus = context.GetFocusElement();
+      const bool composer = focus && focus->GetId() == "composer";
+      context.ProcessKeyDown(key_identifier(event.key.key), modifier_state);
+      if ((event.key.key == SDLK_RETURN || event.key.key == SDLK_KP_ENTER) &&
+          (!composer || (modifier_state & Rml::Input::KM_SHIFT) != 0))
         context.ProcessTextInput('\n');
       break;
+    }
     case SDL_EVENT_KEY_UP:
       context.ProcessKeyUp(key_identifier(event.key.key), modifiers());
       break;

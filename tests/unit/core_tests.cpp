@@ -1337,6 +1337,14 @@ TEST_CASE("model context keeps configuration name and configured model inseparab
   REQUIRE_FALSE(mismatch);
   REQUIRE(mismatch.error().code == tokmon::ErrorCode::schema_mismatch);
 
+  config.model_providers.at("deepseek").reasoning_effort = "MAX";
+  auto configured_effort = tokmon::resolve_model_provider_context(config,
+      tokmon::cbor::object({{"name", "deepseek"},
+                            {"model", "deepseek-v4-flash"}}));
+  REQUIRE(configured_effort);
+  REQUIRE(tokmon::cbor::find(*configured_effort, "reasoning_effort")->as_string() ==
+          "max");
+
   auto fallback = tokmon::resolve_model_provider_context(
       config, tokmon::cbor::Value::Map{});
   REQUIRE(fallback);

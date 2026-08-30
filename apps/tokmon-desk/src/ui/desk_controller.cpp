@@ -1,5 +1,6 @@
 #include "ui/desk_controller.hpp"
 
+#include "editor/grapheme.hpp"
 #include "platform/sdl_platform.hpp"
 #include "ui/elements/element_code_surface.hpp"
 #include "ui/elements/element_diff_surface.hpp"
@@ -242,6 +243,7 @@ void DeskController::bind(const bool start_background_work) {
                          "browser-back", "browser-forward", "browser-reload",
                          "browser-takeover", "browser-click", "browser-fill",
                          "title-edit", "chat-mode", "trajectory-mode", "attach-button",
+                         "choose-workspace",
                          "access-button", "active-model", "effort-button",
                          "right-fullscreen", "right-collapse", "add-tab-button",
                          "right-tab-close", "launcher-review", "launcher-files",
@@ -308,6 +310,8 @@ void DeskController::bind(const bool start_background_work) {
   listen("trajectory-lane-track", "mouseup");
   listen("trajectory-lane-track", "mousescroll");
   listen("trajectory-lane-track", "keydown");
+  listen("sidebar-resizer", "mousedown");
+  listen("right-resizer", "mousedown");
   for (const char* id : {"navigation-tree", "review-empty", "review-diff",
                          "branch-menu", "terminal-tabs", "settings-body",
                          "composer-popover", "trajectory"})
@@ -911,7 +915,7 @@ void DeskController::render_search_results(
     auto label = result.relative_path + ":" + std::to_string(result.line) +
                  ":" + std::to_string(result.column) + "  " + result.preview;
     if (label.size() > 220)
-      label.resize(220);
+      label.resize(clamp_grapheme_boundary(label, 220));
     rows.push_back({workspace_.root() / result.relative_path,
                     result.relative_path, std::move(label), 0, false, false});
   }
@@ -1139,6 +1143,30 @@ void DeskController::choose_attachment() {
         shared->complete.store(true, std::memory_order_release);
       },
       state, platform_.window(), nullptr, 0, start.c_str(), false);
+}
+
+void DeskController::choose_workspace() {
+  if (workspace_dialog_ &&
+      !workspace_dialog_->complete.load(std::memory_order_acquire))
+    return;
+  workspace_dialog_ = std::make_shared<AttachmentDialogState>();
+  auto* state = new std::shared_ptr<AttachmentDialogState>(workspace_dialog_);
+  const auto start = workspace_.root().string();
+  SDL_ShowOpenFolderDialog(
+      [](void* userdata, const char* const* files, int) {
+        std::unique_ptr<std::shared_ptr<AttachmentDialogState>> holder(
+            static_cast<std::shared_ptr<AttachmentDialogState>*>(userdata));
+        auto shared = *holder;
+        {
+          std::scoped_lock lock(shared->mutex);
+          if (!files)
+            shared->error = SDL_GetError();
+          else if (files[0])
+            shared->selected = std::filesystem::path(files[0]);
+        }
+        shared->complete.store(true, std::memory_order_release);
+      },
+      state, platform_.window(), start.c_str(), false);
 }
 
 void DeskController::apply_pending_photons() {
@@ -2315,9 +2343,13 @@ bool DeskController::handle_raw_event(const SDL_Event& event) {
     const float layout_scale = std::max(
         document_.GetContext()->GetDensityIndependentPixelRatio(), 0.01f);
     const float viewport_width = document_.GetClientWidth() / layout_scale;
+    // A generous 25dp target straddles each one-pixel visual boundary. This
+    // keeps the divider usable at high DPI and when injected pointer events
+    // are rounded from capture pixels to SDL window coordinates.
+    constexpr float panel_resize_hit_slop = 20.f;
     if (y >= 46.f + legacy_frame_inset && sidebar_visible_ &&
         std::abs(x - (static_cast<float>(sidebar_width_) +
-                      legacy_frame_inset)) <= 6.f) {
+                      legacy_frame_inset)) <= panel_resize_hit_slop) {
       panel_resize_ = PanelResize::sidebar;
       panel_resize_anchor_x_ = x;
       panel_resize_start_width_ = sidebar_width_;
@@ -2326,7 +2358,8 @@ bool DeskController::handle_raw_event(const SDL_Event& event) {
     }
     if (y >= 46.f + legacy_frame_inset && right_panel_visible_ &&
         std::abs(x - (viewport_width - legacy_frame_inset -
-                      static_cast<float>(right_panel_width_))) <= 6.f) {
+                      static_cast<float>(right_panel_width_))) <=
+            panel_resize_hit_slop) {
       panel_resize_ = PanelResize::right;
       panel_resize_anchor_x_ = x;
       panel_resize_start_width_ = right_panel_width_;
@@ -2535,6 +2568,21 @@ void DeskController::ProcessEvent(Rml::Event& event) {
   auto* listener = event.GetCurrentElement();
   if (!listener) return;
   const auto& listener_id = listener->GetId();
+  if (event.GetType() == "mousedown" &&
+      (listener_id == "sidebar-resizer" || listener_id == "right-resizer") &&
+      event.GetParameter<int>("button", 0) == 0) {
+    const float layout_scale = std::max(
+        document_.GetContext()->GetDensityIndependentPixelRatio(), 0.01f);
+    panel_resize_ = listener_id == "sidebar-resizer"
+        ? PanelResize::sidebar : PanelResize::right;
+    panel_resize_anchor_x_ = static_cast<float>(
+        event.GetParameter<int>("mouse_x", 0)) / layout_scale;
+    panel_resize_start_width_ = panel_resize_ == PanelResize::sidebar
+        ? sidebar_width_ : right_panel_width_;
+    SDL_CaptureMouse(true);
+    event.StopPropagation();
+    return;
+  }
   const bool overlay_listener =
       listener_id == "settings-overlay" || listener_id == "new-session-overlay" ||
       listener_id == "commit-overlay" || listener_id == "discard-overlay" ||
@@ -2797,7 +2845,11 @@ void DeskController::ProcessEvent(Rml::Event& event) {
       }
     }
     if (key == Rml::Input::KI_RETURN) {
-      if (id == "composer") send_message();
+      const bool shift = event.GetParameter<int>("shift_key", 0) != 0;
+      if (id == "composer" && !shift) {
+        send_message();
+        event.StopPropagation();
+      }
       else if (id == "editor-find") find_editor(false);
       else if (id == "editor-replace") replace_editor_selection();
       else if (id == "editor-line") go_to_editor_line();
@@ -3244,6 +3296,7 @@ void DeskController::ProcessEvent(Rml::Event& event) {
     }
   }
   else if (id == "send-button") send_message();
+  else if (id == "choose-workspace") choose_workspace();
   else if (id == "browser-launch" || id == "browser-go") browser_.launch();
   else if (id == "browser-refresh") browser_.refresh();
   else if (id == "browser-back") browser_.back();
@@ -3433,6 +3486,28 @@ bool DeskController::update() {
       }
     }
   }
+  if (workspace_dialog_ &&
+      workspace_dialog_->complete.load(std::memory_order_acquire)) {
+    std::filesystem::path selected;
+    std::string dialog_error;
+    {
+      std::scoped_lock lock(workspace_dialog_->mutex);
+      selected = workspace_dialog_->selected;
+      dialog_error = workspace_dialog_->error;
+    }
+    workspace_dialog_.reset();
+    changed = true;
+    if (!dialog_error.empty()) {
+      settings_.set_status("工作区选择失败：" + dialog_error);
+    } else if (!selected.empty()) {
+      if (auto* overlay = document_.GetElementById("settings-overlay"))
+        overlay->SetClass("hidden", true);
+      (void)navigation_.ensure_workspace_project(selected);
+      render_navigation();
+      save_navigation();
+      begin_workspace_switch(std::move(selected), true);
+    }
+  }
   if (intent_future_.valid() &&
       intent_future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
     changed = true;
@@ -3596,6 +3671,8 @@ bool DeskController::update() {
       failure.kind = "act.failed";
       failure.payload = tokmon::cbor::object({{"detail", result.error}});
       incoming.push_back(std::move(failure));
+      show_toast("请求失败：" + (result.error.empty()
+          ? std::string("后台未返回错误详情") : result.error));
     }
     {
       std::scoped_lock lock(photon_mutex_);
@@ -3617,6 +3694,13 @@ bool DeskController::update() {
       show_toast("停止失败：" + result.error);
     }
   }
+  // A completed chat may enqueue its terminal response or local failure after
+  // the first photon drain near the beginning of this update. Drain once more
+  // before sleeping so a fast failure and the final assistant chunk are never
+  // left invisible until the next unrelated input event.
+  apply_pending_photons();
+  changed = changed || conversation_dirty_;
+  render_conversation();
   changed = browser_.update() || changed;
   changed = terminal_.update() || changed;
   return changed;

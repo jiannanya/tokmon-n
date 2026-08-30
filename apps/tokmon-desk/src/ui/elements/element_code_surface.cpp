@@ -57,13 +57,12 @@ Rml::ColourbPremultiplied syntax_colour(const SyntaxKind kind) {
 
 ElementCodeSurface::ElementCodeSurface(const Rml::String& tag)
     : Rml::Element(tag) {
-#if defined(_WIN32)
-  SetProperty("font-family", "Consolas");
-#elif defined(__APPLE__)
-  SetProperty("font-family", "Menlo");
-#else
-  SetProperty("font-family", "DejaVu Sans Mono");
-#endif
+  // The editor must use the packaged face as well as the surrounding shell.
+  // Platform monospace fonts (notably Consolas) do not contain complete CJK
+  // coverage, so committed IME text was stored correctly but rendered as
+  // tofu. MiSans is packaged, checksum-pinned, and loaded before this element
+  // is instantiated, which gives every supported locale deterministic glyphs.
+  SetProperty("font-family", "MiSans VF");
 }
 
 void ElementCodeSurface::set_document(std::string text,

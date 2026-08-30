@@ -93,7 +93,8 @@
             </div>
 
             <div class="settings-page" data-if="view.settings.page == 'workspace'">
-              <div class="setting-card"><div class="setting-copy"><strong>当前路径</strong><p>项目文件的真实工作目录</p></div><code class="path-value">{{view.settings.workspace_path}}</code></div>
+              <div class="setting-card workspace-path-card"><div class="setting-copy"><strong>当前路径</strong><p>项目文件的真实工作目录</p></div><code class="path-value">{{view.settings.workspace_path}}</code></div>
+              <div class="setting-card"><div class="setting-copy"><strong>添加或切换工作区</strong><p>选择真实目录并为它创建独立项目会话</p></div><div class="setting-action"><button id="choose-workspace" class="secondary-button">选择文件夹…</button></div></div>
               <div class="setting-card"><div class="setting-copy"><strong>索引模式</strong><p>控制文件搜索和语法索引范围</p></div><select id="setting-index-mode" class="setting-select" data-value="view.settings.index_mode"><option value="标准">标准</option><option value="智能索引">智能索引</option><option value="深度索引">深度索引</option></select></div>
               <div class="setting-card"><div class="setting-copy"><strong>自动同步</strong><p>监控文件系统变化并更新工作区视图</p></div><button class="toggle" data-class-on="view.settings.workspace_sync" setting-toggle="workspace_sync"><span></span></button></div>
               <div class="setting-card"><div class="setting-copy"><strong>Git 集成</strong><p>显示审查、暂存、提交和推送操作</p></div><button class="toggle" data-class-on="view.settings.git" setting-toggle="git"><span></span></button></div>

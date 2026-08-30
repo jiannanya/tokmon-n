@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <regex>
 #include <set>
@@ -860,10 +861,15 @@ Result<cbor::Value> resolve_model_provider_context(
 
   const auto requested_effort = cbor::find(request, "effort")
       ? std::string(cbor::find(request, "effort")->as_string()) : std::string{};
+  auto configured_effort = provider.reasoning_effort;
+  std::ranges::transform(configured_effort, configured_effort.begin(),
+      [](const unsigned char character) {
+        return static_cast<char>(std::tolower(character));
+      });
   const auto normalized_effort = requested_effort == "较低" || requested_effort == "低"
       ? std::string("low") : requested_effort == "中等" || requested_effort == "标准"
       ? std::string("medium") : requested_effort == "高" ? std::string("high") :
-        requested_effort == "最高" ? std::string("max") : provider.reasoning_effort;
+        requested_effort == "最高" ? std::string("max") : configured_effort;
   auto context = cbor::object({
       {"name", provider.name}, {"protocol", provider.protocol},
       {"endpoint", provider.endpoint}, {"model", provider.model},

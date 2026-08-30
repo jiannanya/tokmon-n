@@ -96,6 +96,7 @@ private:
   void send_message();
   void stop_message();
   void choose_attachment();
+  void choose_workspace();
   void apply_pending_photons();
   void render_conversation();
   void render_trajectory();
@@ -327,6 +328,7 @@ private:
     std::atomic_bool complete{false};
   };
   std::shared_ptr<AttachmentDialogState> attachment_dialog_;
+  std::shared_ptr<AttachmentDialogState> workspace_dialog_;
   std::filesystem::path selected_attachment_;
   std::chrono::steady_clock::time_point toast_until_{};
   bool quit_requested_{false};
