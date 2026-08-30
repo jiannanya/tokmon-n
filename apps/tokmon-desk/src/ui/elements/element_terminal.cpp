@@ -1,7 +1,10 @@
 #include "ui/elements/element_terminal.hpp"
 
+#include "ui/theme_palette.hpp"
+
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/ElementInstancer.h>
+#include <RmlUi/Core/ElementUtilities.h>
 #include <RmlUi/Core/Factory.h>
 #include <RmlUi/Core/FontEngineInterface.h>
 #include <RmlUi/Core/MeshUtilities.h>
@@ -17,6 +20,16 @@ namespace {
 
 Rml::ColourbPremultiplied colour(const TerminalColor& value) {
   return Rml::Colourb(value.red, value.green, value.blue, 255).ToPremultiplied();
+}
+
+Rml::ColourbPremultiplied colour(const legacy_theme::Color value) {
+  return Rml::Colourb(value.red, value.green, value.blue, value.alpha)
+      .ToPremultiplied();
+}
+
+float density(const Rml::Element* element) {
+  return Rml::ElementUtilities::GetDensityIndependentPixelRatio(
+      const_cast<Rml::Element*>(element));
 }
 
 bool same_style(const TerminalCell& left, const TerminalCell& right) {
@@ -169,9 +182,9 @@ void ElementTerminal::rebuild_geometry(const Rml::Vector2f size) {
 
   const float cell_width = size.x / snapshot_.columns;
   const float cell_height = size.y / snapshot_.rows;
+  const float scale = density(this);
   Rml::Mesh backgrounds;
-  const auto selected_background =
-      Rml::Colourb(87, 83, 78, 255).ToPremultiplied();
+  const auto selected_background = colour(legacy_theme::accent_background);
   for (std::uint16_t row = 0; row < snapshot_.rows; ++row) {
     for (std::uint16_t column = 0; column < snapshot_.columns; ++column) {
       const auto index = static_cast<std::size_t>(row) * snapshot_.columns + column;
@@ -192,10 +205,10 @@ void ElementTerminal::rebuild_geometry(const Rml::Vector2f size) {
     Rml::Vector2f cursor_position{cursor_x, cursor_y};
     Rml::Vector2f cursor_size{cell_width, cell_height};
     if (snapshot_.cursor.style == TerminalCursor::Style::bar)
-      cursor_size.x = std::max(1.0f, std::round(cell_width * 0.16f));
+      cursor_size.x = std::max(scale, std::round(cell_width * 0.16f));
     else if (snapshot_.cursor.style == TerminalCursor::Style::underline) {
-      cursor_position.y += std::max(0.0f, cell_height - 2.0f);
-      cursor_size.y = 2.0f;
+      cursor_position.y += std::max(0.0f, cell_height - 2.0f * scale);
+      cursor_size.y = 2.0f * scale;
     }
     Rml::MeshUtilities::GenerateQuad(backgrounds, cursor_position, cursor_size,
                                      colour(snapshot_.cursor_color));
@@ -204,7 +217,7 @@ void ElementTerminal::rebuild_geometry(const Rml::Vector2f size) {
   Rml::TextShapingContext shaping{language};
   shaping.text_direction = Rml::Style::Direction::Ltr;
   shaping.font_kerning = Rml::Style::FontKerning::None;
-  const float baseline_offset = std::max(1.0f, cell_height * 0.78f);
+  const float baseline_offset = std::max(scale, cell_height * 0.78f);
   for (std::uint16_t row = 0; row < snapshot_.rows; ++row) {
     std::uint16_t column = 0;
     while (column < snapshot_.columns) {
@@ -235,10 +248,12 @@ void ElementTerminal::rebuild_geometry(const Rml::Vector2f size) {
         Rml::MeshUtilities::GenerateQuad(
             backgrounds,
             {run_start * cell_width,
-             row * cell_height + std::max(1.f, cell_height - 2.f)},
+             row * cell_height + std::max(scale,
+                                           cell_height - 2.f * scale)},
             {std::max(cell_width,
-                      static_cast<float>(column - run_start) * cell_width), 1.f},
-            Rml::Colourb(96, 165, 250).ToPremultiplied());
+                      static_cast<float>(column - run_start) * cell_width),
+             scale},
+            colour(legacy_theme::blue));
       }
     }
   }

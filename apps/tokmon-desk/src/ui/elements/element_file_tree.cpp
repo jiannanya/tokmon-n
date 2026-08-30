@@ -1,7 +1,10 @@
 #include "ui/elements/element_file_tree.hpp"
 
+#include "ui/theme_palette.hpp"
+
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/ElementInstancer.h>
+#include <RmlUi/Core/ElementUtilities.h>
 #include <RmlUi/Core/Factory.h>
 #include <RmlUi/Core/FontEngineInterface.h>
 #include <RmlUi/Core/MeshUtilities.h>
@@ -12,6 +15,20 @@
 #include <cmath>
 
 namespace tokmon::desk {
+
+namespace {
+
+Rml::ColourbPremultiplied colour(const legacy_theme::Color value) {
+  return Rml::Colourb(value.red, value.green, value.blue, value.alpha)
+      .ToPremultiplied();
+}
+
+float density(const Rml::Element* element) {
+  return Rml::ElementUtilities::GetDensityIndependentPixelRatio(
+      const_cast<Rml::Element*>(element));
+}
+
+} // namespace
 
 ElementFileTree::ElementFileTree(const Rml::String& tag) : Rml::Element(tag) {}
 
@@ -27,7 +44,7 @@ void ElementFileTree::set_selected(std::string relative_path) {
 }
 
 std::optional<WorkspaceEntry> ElementFileTree::row_at(const float local_y) const {
-  constexpr float row_height = 27.f;
+  const float row_height = 27.f * density(this);
   const auto index = first_row_ + static_cast<std::size_t>(
       std::max(0.f, local_y) / row_height);
   return index < rows_.size() ? std::optional(rows_[index]) : std::nullopt;
@@ -54,7 +71,7 @@ std::optional<WorkspaceEntry> ElementFileTree::move_selection(const int rows) {
       ? current - std::min(current, static_cast<std::size_t>(-rows))
       : std::min(current + static_cast<std::size_t>(rows), rows_.size() - 1);
   selected_ = rows_[target].relative_path;
-  constexpr float row_height = 27.f;
+  const float row_height = 27.f * density(this);
   const auto visible = std::max<std::size_t>(1u, static_cast<std::size_t>(
       std::floor(std::max(GetClientHeight(), row_height) / row_height)));
   if (target < first_row_)
@@ -70,7 +87,7 @@ std::optional<WorkspaceEntry> ElementFileTree::select_edge(const bool last) {
     return std::nullopt;
   const auto target = last ? rows_.size() - 1 : 0u;
   selected_ = rows_[target].relative_path;
-  constexpr float row_height = 27.f;
+  const float row_height = 27.f * density(this);
   const auto visible = std::max<std::size_t>(1u, static_cast<std::size_t>(
       std::floor(std::max(GetClientHeight(), row_height) / row_height)));
   first_row_ = last && target >= visible ? target - visible + 1 : 0u;
@@ -99,7 +116,8 @@ void ElementFileTree::rebuild_geometry(const Rml::Vector2f size) {
   if (!render_manager || !font_engine || !face)
     return;
 
-  constexpr float row_height = 27.f;
+  const float scale = density(this);
+  const float row_height = 27.f * scale;
   const auto visible = static_cast<std::size_t>(
       std::ceil(std::max(size.y, row_height) / row_height)) + 1u;
   Rml::Mesh decorations;
@@ -116,16 +134,16 @@ void ElementFileTree::rebuild_geometry(const Rml::Vector2f size) {
     const float y = static_cast<float>(offset) * row_height;
     if (row.relative_path == selected_)
       Rml::MeshUtilities::GenerateQuad(
-          decorations, {2.f, y + 1.f}, {std::max(0.f, size.x - 4.f), row_height - 2.f},
-          Rml::Colourb(247, 239, 229).ToPremultiplied());
-    const float x = 10.f + static_cast<float>(row.depth) * 14.f;
+          decorations, {2.f * scale, y + scale},
+          {std::max(0.f, size.x - 4.f * scale), row_height - 2.f * scale},
+          colour(legacy_theme::accent_background));
+    const float x = (10.f + static_cast<float>(row.depth) * 14.f) * scale;
     const std::string label = std::string(row.directory
         ? (row.expanded ? "v  " : ">  ") : "   ") + row.name;
     Rml::TexturedMeshList meshes;
     (void)font_engine->GenerateString(
-        *render_manager, face, {}, label, {x, y + 18.f},
-        Rml::Colourb(row.directory ? 68 : 87, row.directory ? 64 : 83,
-                     row.directory ? 60 : 78).ToPremultiplied(),
+        *render_manager, face, {}, label, {x, y + 18.f * scale},
+        colour(row.directory ? legacy_theme::strong : legacy_theme::mid),
         1.f, shaping, meshes);
     for (auto& mesh : meshes)
       text_geometry_.push_back({render_manager->MakeGeometry(std::move(mesh.mesh)),

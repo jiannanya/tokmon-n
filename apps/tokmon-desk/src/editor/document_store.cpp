@@ -3,6 +3,7 @@
 #include <zep/gap_buffer.h>
 
 #include <algorithm>
+#include <chrono>
 #include <fstream>
 #include <iterator>
 #include <utility>
@@ -12,6 +13,10 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#else
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 namespace tokmon::desk {
@@ -84,6 +89,100 @@ LineEnding line_ending(const std::string_view value) {
   if (lf) return LineEnding::lf;
   if (cr) return LineEnding::cr;
   return LineEnding::none;
+}
+
+bool durable_atomic_replace(const std::filesystem::path& target,
+                            const std::string_view contents,
+                            std::string& error) {
+  auto temporary = target;
+  temporary += ".tokmon-desk.tmp-" + std::to_string(
+      std::chrono::steady_clock::now().time_since_epoch().count());
+  std::error_code filesystem_error;
+#if defined(_WIN32)
+  HANDLE file = CreateFileW(temporary.c_str(), GENERIC_WRITE, 0, nullptr,
+                            CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (file == INVALID_HANDLE_VALUE) {
+    error = "cannot create temporary document";
+    return false;
+  }
+  std::size_t offset = 0;
+  while (offset < contents.size()) {
+    DWORD written = 0;
+    const auto amount = static_cast<DWORD>(std::min<std::size_t>(
+        contents.size() - offset, 1024u * 1024u));
+    if (!WriteFile(file, contents.data() + offset, amount, &written, nullptr) ||
+        written == 0) {
+      error = "cannot write temporary document";
+      CloseHandle(file);
+      DeleteFileW(temporary.c_str());
+      return false;
+    }
+    offset += written;
+  }
+  if (!FlushFileBuffers(file)) {
+    error = "cannot durably flush temporary document";
+    CloseHandle(file);
+    DeleteFileW(temporary.c_str());
+    return false;
+  }
+  CloseHandle(file);
+  if (!ReplaceFileW(target.c_str(), temporary.c_str(), nullptr,
+                    REPLACEFILE_WRITE_THROUGH, nullptr, nullptr) &&
+      !MoveFileExW(temporary.c_str(), target.c_str(),
+                   MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+    error = "cannot atomically replace document: " +
+        std::error_code(static_cast<int>(GetLastError()),
+                        std::system_category()).message();
+    DeleteFileW(temporary.c_str());
+    return false;
+  }
+#else
+  const int descriptor = ::open(temporary.c_str(), O_CREAT | O_EXCL | O_WRONLY,
+                                S_IRUSR | S_IWUSR);
+  if (descriptor < 0) {
+    error = "cannot create temporary document";
+    return false;
+  }
+  std::size_t offset = 0;
+  while (offset < contents.size()) {
+    const auto written = ::write(descriptor, contents.data() + offset,
+                                 contents.size() - offset);
+    if (written <= 0) {
+      error = "cannot write temporary document";
+      ::close(descriptor);
+      std::filesystem::remove(temporary, filesystem_error);
+      return false;
+    }
+    offset += static_cast<std::size_t>(written);
+  }
+  const auto permissions = std::filesystem::status(target, filesystem_error)
+                               .permissions();
+  filesystem_error.clear();
+  if (permissions != std::filesystem::perms::unknown)
+    std::filesystem::permissions(temporary, permissions,
+                                 std::filesystem::perm_options::replace,
+                                 filesystem_error);
+  if (::fsync(descriptor) != 0) {
+    error = "cannot durably flush temporary document";
+    ::close(descriptor);
+    std::filesystem::remove(temporary, filesystem_error);
+    return false;
+  }
+  ::close(descriptor);
+  std::filesystem::rename(temporary, target, filesystem_error);
+  if (filesystem_error) {
+    error = "cannot atomically replace document: " +
+            filesystem_error.message();
+    std::filesystem::remove(temporary, filesystem_error);
+    return false;
+  }
+  const int directory = ::open(target.parent_path().c_str(), O_RDONLY);
+  if (directory >= 0) {
+    (void)::fsync(directory);
+    ::close(directory);
+  }
+#endif
+  return true;
 }
 
 } // namespace
@@ -309,39 +408,9 @@ bool DocumentStore::save(const std::filesystem::path& path,
     error = "document changed on disk";
     return false;
   }
-  auto temporary = document.snapshot.path;
-  temporary += ".tokmon-desk.tmp";
-  {
-    std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-    if (!output || !(output << document.snapshot.text)) {
-      error = "cannot write temporary document";
-      return false;
-    }
-    output.flush();
-    if (!output) {
-      error = "cannot flush temporary document";
-      return false;
-    }
-  }
-  std::error_code replace_error;
-#if defined(_WIN32)
-  const auto target = document.snapshot.path.wstring();
-  const auto source = temporary.wstring();
-  if (!ReplaceFileW(target.c_str(), source.c_str(), nullptr,
-                    REPLACEFILE_WRITE_THROUGH, nullptr, nullptr) &&
-      !MoveFileExW(source.c_str(), target.c_str(),
-                   MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-    replace_error = std::error_code(static_cast<int>(GetLastError()),
-                                    std::system_category());
-  }
-#else
-  std::filesystem::rename(temporary, document.snapshot.path, replace_error);
-#endif
-  if (replace_error) {
-    std::filesystem::remove(temporary);
-    error = "cannot atomically replace document: " + replace_error.message();
+  if (!durable_atomic_replace(document.snapshot.path,
+                              document.snapshot.text, error))
     return false;
-  }
   document.snapshot.disk_hash = content_hash(document.snapshot.text);
   document.snapshot.dirty = false;
   document.snapshot.external_conflict = false;

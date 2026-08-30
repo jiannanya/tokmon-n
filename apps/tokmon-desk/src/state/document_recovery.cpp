@@ -20,6 +20,23 @@ namespace tokmon::desk {
 namespace {
 
 constexpr std::uintmax_t kMaximumRecoveryBytes = 16u * 1024u * 1024u;
+constexpr std::uintmax_t kMaximumRecoveryStoreBytes = 256u * 1024u * 1024u;
+
+std::uintmax_t directory_size(const std::filesystem::path& root) {
+  std::uintmax_t result = 0;
+  std::error_code error;
+  for (std::filesystem::recursive_directory_iterator iterator(
+           root, std::filesystem::directory_options::skip_permission_denied,
+           error), end;
+       !error && iterator != end; iterator.increment(error)) {
+    if (iterator->is_regular_file(error))
+      result += iterator->file_size(error);
+    error.clear();
+    if (result > kMaximumRecoveryStoreBytes)
+      break;
+  }
+  return result;
+}
 
 std::optional<std::filesystem::path> contained_path(
     const std::filesystem::path& path, const std::filesystem::path& workspace) {
@@ -157,8 +174,18 @@ bool DocumentRecoveryStore::save(const DocumentSnapshot& snapshot,
       {"disk_hash", static_cast<std::int64_t>(snapshot.disk_hash)},
       {"version", static_cast<std::int64_t>(snapshot.version)},
       {"text", snapshot.text}});
-  return atomic_write(recovery_path(*canonical),
-                      tokmon::json::stringify(value, false) + "\n", error);
+  const auto encoded = tokmon::json::stringify(value, false) + "\n";
+  const auto destination = recovery_path(*canonical);
+  std::error_code filesystem_error;
+  const auto replaced_bytes = std::filesystem::exists(destination, filesystem_error)
+      ? std::filesystem::file_size(destination, filesystem_error) : 0;
+  const auto current_bytes = directory_size(root_);
+  if (current_bytes - std::min(current_bytes, replaced_bytes) + encoded.size() >
+      kMaximumRecoveryStoreBytes) {
+    error = "document recovery store quota exceeded";
+    return false;
+  }
+  return atomic_write(destination, encoded, error);
 }
 
 std::optional<DocumentRecoveryEntry> DocumentRecoveryStore::load(

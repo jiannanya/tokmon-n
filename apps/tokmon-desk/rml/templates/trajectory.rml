@@ -1,0 +1,73 @@
+<template name="desk-trajectory" content="trajectory-template-content">
+<head></head>
+<body>
+  <div id="trajectory" class="trajectory hidden">
+    <div class="trajectory-toolbar">
+      <div class="trajectory-toolbar-actions">
+        <button id="trajectory-duration-toggle" class="trajectory-tool" data-class-active="view.trajectory_actual_duration" title="切换真实耗时与等宽事件"><span class="trajectory-clock">◷</span><span>{{view.trajectory_duration}}</span></button>
+        <button id="trajectory-turns-toggle" class="trajectory-tool" data-class-active="view.trajectory_turns_collapsed" title="折叠或展开全部 Turn"><span>{{view.trajectory_turns_collapsed ? '⊞' : '⊟'}}</span><span>Turns {{view.trajectory_turns}}</span></button>
+        <button id="trajectory-calls-toggle" class="trajectory-tool" data-class-active="view.trajectory_calls_collapsed" title="折叠或展开工具调用"><span>{{view.trajectory_calls_collapsed ? '⊞' : '⊟'}}</span><span>Calls {{view.trajectory_calls}}</span></button>
+        <span class="trajectory-token-summary">Tokens {{view.trajectory_tokens}}</span>
+      </div>
+      <div class="trajectory-toolbar-right">
+        <button id="trajectory-filter" class="trajectory-tool trajectory-filter" title="循环切换事件筛选"><span>{{view.trajectory_filter}}</span></button>
+        <button id="trajectory-follow" class="trajectory-tool" data-class-active="view.trajectory_follow_tail" title="跟随最新事件"><span>{{view.trajectory_follow_tail ? '跟随中' : '回到最新'}}</span></button>
+        <div class="trajectory-search"><span>⌕</span><input id="trajectory-search" type="text" placeholder="搜索轨迹..."/><small>{{view.trajectory_match_count}}</small></div>
+        <button id="refresh-trajectory" class="trajectory-icon-tool" title="刷新轨迹">↻</button>
+        <button id="export-trajectory" class="trajectory-icon-tool" title="导出完整轨迹"><svg data-attr-src="view.asset_root + '/figma/icon-42.svg'"></svg></button>
+      </div>
+    </div>
+
+    <div class="trajectory-timeline">
+      <div class="trajectory-lane-labels"><span>Input</span><span>Agent</span><span>Tools</span></div>
+      <div id="trajectory-lane-track" class="trajectory-lane-track" title="拖动选择区间；滚轮缩放；右键拖动平移；Esc 清除">
+        <span class="trajectory-no-timing" data-if="view.trajectory_empty">No timing data</span>
+        <div class="trajectory-range" data-if="view.trajectory_selection_visible" data-class-dragging="view.trajectory_timeline_dragging" data-style-left="view.trajectory_selection_left" data-style-width="view.trajectory_selection_width"></div>
+        <button data-for="segment : view.trajectory_segments" data-attr-class="segment.classes" data-style-left="segment.left" data-style-width="segment.width" data-style-top="segment.top" data-attr-data-trace-sequence="segment.sequence" title="选择对应事件"></button>
+        <button id="trajectory-reset-timeline" class="trajectory-zoom-status" data-if="view.trajectory_zoomed || view.trajectory_selection_visible" title="清除区间并恢复完整时间域">{{view.trajectory_zoom}} ×</button>
+      </div>
+    </div>
+
+    <div class="trajectory-empty" data-if="view.trajectory_empty"><strong>尚无执行轨迹</strong><span>提交请求后，Photon 会按 Turn、请求和工具调用组织在这里</span></div>
+
+    <div class="trajectory-ledger" data-if="!view.trajectory_empty">
+      <div class="trajectory-table-pane">
+        <div class="trajectory-table-head"><span>事件</span><span>内容</span><span>耗时</span><span>Tokens</span></div>
+        <div id="trajectory-table-scroll" class="trajectory-table-scroll">
+          <button id="trajectory-load-earlier" class="trajectory-load-earlier" data-if="view.trajectory_has_notice">… {{view.trajectory_window_notice}}</button>
+          <div class="trajectory-filter-empty" data-if="view.trajectory_filtered_empty">当前搜索或筛选没有匹配事件</div>
+          <div data-for="row : view.trajectory" data-attr-class="'trajectory-record ' + row.wrapper_classes">
+            <button class="trajectory-turn-header" data-if="row.turn_start" data-attr-data-trace-turn="row.turn_label"><span>{{row.turn_label}}</span><small>{{row.request_label}}</small><em>Time</em></button>
+            <button data-if="row.row_visible" data-attr-class="'trajectory-cell ' + row.classes" data-attr-data-trace-sequence="row.sequence">
+              <span class="trajectory-cell-event"><i>#{{row.sequence}}</i><b>{{row.tone}}</b></span>
+              <span class="trajectory-cell-content"><strong>{{row.kind}}</strong><small>{{row.detail}}</small></span>
+              <span class="trajectory-cell-duration">{{row.duration}}</span>
+              <span class="trajectory-cell-tokens">{{row.tokens}}</span>
+            </button>
+          </div>
+        </div>
+        <div class="trajectory-table-footer"><span>{{view.trajectory_visible_range}}</span><span>Ray {{view.trajectory_ray}} · Cursor {{view.trajectory_cursor}}</span></div>
+      </div>
+
+      <aside class="trajectory-details" data-if="view.trajectory_detail_visible">
+        <div class="trajectory-details-head"><span class="trajectory-details-dot"></span><strong>{{view.trajectory_detail_title}}</strong><small>{{view.trajectory_detail_location}}</small><button id="trajectory-detail-close" title="关闭详情">×</button></div>
+        <div class="trajectory-detail-tabs">
+          <button trajectory-detail-tab="summary" data-class-active="view.trajectory_detail_tab == 'summary'">Summary</button>
+          <button trajectory-detail-tab="payload" data-class-active="view.trajectory_detail_tab == 'payload'">Payload</button>
+          <button trajectory-detail-tab="result" data-class-active="view.trajectory_detail_tab == 'result'">Result</button>
+          <button trajectory-detail-tab="schema" data-class-active="view.trajectory_detail_tab == 'schema'">Schema</button>
+          <button trajectory-detail-tab="timing" data-class-active="view.trajectory_detail_tab == 'timing'">Timing</button>
+        </div>
+        <div class="trajectory-detail-body">
+          <div class="trajectory-detail-overview" data-if="view.trajectory_detail_tab == 'summary'"><span class="trajectory-status" data-class-failed="view.trajectory_detail_failed">{{view.trajectory_detail_status}}</span><pre>{{view.trajectory_detail_summary}}</pre></div>
+          <pre class="trajectory-detail-payload" data-if="view.trajectory_detail_tab == 'payload'">{{view.trajectory_detail_payload}}</pre>
+          <pre class="trajectory-detail-payload" data-if="view.trajectory_detail_tab == 'result'">{{view.trajectory_detail_result}}</pre>
+          <pre class="trajectory-detail-payload" data-if="view.trajectory_detail_tab == 'schema'">{{view.trajectory_detail_schema}}</pre>
+          <pre class="trajectory-detail-payload" data-if="view.trajectory_detail_tab == 'timing'">{{view.trajectory_detail_timing}}</pre>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <div id="trajectory-template-content"></div>
+</body>
+</template>

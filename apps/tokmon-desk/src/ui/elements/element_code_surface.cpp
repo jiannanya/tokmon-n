@@ -4,6 +4,7 @@
 
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/ElementInstancer.h>
+#include <RmlUi/Core/ElementUtilities.h>
 #include <RmlUi/Core/Factory.h>
 #include <RmlUi/Core/FontEngineInterface.h>
 #include <RmlUi/Core/MeshUtilities.h>
@@ -17,15 +18,20 @@
 namespace tokmon::desk {
 namespace {
 
+float density(const Rml::Element* element) {
+  return Rml::ElementUtilities::GetDensityIndependentPixelRatio(
+      const_cast<Rml::Element*>(element));
+}
+
 Rml::ColourbPremultiplied syntax_colour(const SyntaxKind kind) {
   switch (kind) {
-    case SyntaxKind::comment: return Rml::Colourb(106, 153, 85).ToPremultiplied();
-    case SyntaxKind::keyword: return Rml::Colourb(197, 134, 192).ToPremultiplied();
-    case SyntaxKind::type: return Rml::Colourb(78, 201, 176).ToPremultiplied();
-    case SyntaxKind::string: return Rml::Colourb(206, 145, 120).ToPremultiplied();
-    case SyntaxKind::number: return Rml::Colourb(181, 206, 168).ToPremultiplied();
-    case SyntaxKind::preprocessor: return Rml::Colourb(86, 156, 214).ToPremultiplied();
-    default: return Rml::Colourb(212, 212, 212).ToPremultiplied();
+    case SyntaxKind::comment: return Rml::Colourb(107, 114, 128).ToPremultiplied();
+    case SyntaxKind::keyword: return Rml::Colourb(126, 34, 206).ToPremultiplied();
+    case SyntaxKind::type: return Rml::Colourb(3, 105, 161).ToPremultiplied();
+    case SyntaxKind::string: return Rml::Colourb(159, 58, 56).ToPremultiplied();
+    case SyntaxKind::number: return Rml::Colourb(4, 120, 87).ToPremultiplied();
+    case SyntaxKind::preprocessor: return Rml::Colourb(175, 0, 219).ToPremultiplied();
+    default: return Rml::Colourb(41, 37, 36).ToPremultiplied();
   }
 }
 
@@ -167,7 +173,8 @@ void ElementCodeSurface::move_line_edge(const bool end,
 }
 
 void ElementCodeSurface::page(const int direction, const bool selecting) {
-  const auto rows = std::max(1, static_cast<int>(GetClientHeight() / 17.f) - 1);
+  const auto rows = std::max(
+      1, static_cast<int>(GetClientHeight() / (17.f * density(this))) - 1);
   for (int count = 0; count < rows; ++count)
     move_vertical(direction, selecting);
 }
@@ -276,7 +283,8 @@ std::string ElementCodeSurface::selected_text() const {
 void ElementCodeSurface::click(const float local_x, const float local_y,
                                const bool selecting) {
   const auto line = std::min(first_line_ + static_cast<std::size_t>(
-      std::max(0.f, local_y) / 17.f), line_starts_.size() - 1);
+      std::max(0.f, local_y) / (17.f * density(this))),
+      line_starts_.size() - 1);
   const auto line_start = line_starts_[line];
   const auto line_end = line + 1 < line_starts_.size()
       ? line_starts_[line + 1] - 1 : text_.size();
@@ -286,7 +294,8 @@ void ElementCodeSurface::click(const float local_x, const float local_y,
   Rml::TextShapingContext shaping{language};
   shaping.text_direction = Rml::Style::Direction::Ltr;
   shaping.font_kerning = Rml::Style::FontKerning::None;
-  const float target = std::max(0.f, local_x - 48.f) + horizontal_offset_;
+  const float target = std::max(0.f, local_x - 48.f * density(this)) +
+                       horizontal_offset_;
   auto offset = line_start;
   while (offset < line_end && font_engine && face) {
     const auto next = std::min(next_grapheme_boundary(text_, offset), line_end);
@@ -317,8 +326,10 @@ void ElementCodeSurface::scroll_lines(const int lines) {
 
 void ElementCodeSurface::reveal_caret() {
   const auto line = line_column(caret_).first;
+  const float line_height = 17.f * density(this);
   const auto rows = std::max<std::size_t>(1,
-      static_cast<std::size_t>(std::max(17.f, GetClientHeight()) / 17.f));
+      static_cast<std::size_t>(
+          std::max(line_height, GetClientHeight()) / line_height));
   if (line < first_line_)
     first_line_ = line;
   else if (line >= first_line_ + rows)
@@ -337,13 +348,15 @@ void ElementCodeSurface::rebuild_geometry(const Rml::Vector2f size) {
   if (!render_manager || !font_engine || !face)
     return;
 
-  constexpr float line_height = 17.f;
-  constexpr float gutter = 44.f;
+  const float scale = density(this);
+  const float line_height = 17.f * scale;
+  const float gutter = 44.f * scale;
   Rml::Mesh decorations;
   Rml::MeshUtilities::GenerateQuad(decorations, {0, 0}, {gutter, size.y},
-      Rml::Colourb(37, 34, 32).ToPremultiplied());
-  Rml::MeshUtilities::GenerateQuad(decorations, {gutter - 1.f, 0}, {1.f, size.y},
-      Rml::Colourb(68, 64, 60).ToPremultiplied());
+      Rml::Colourb(247, 247, 245).ToPremultiplied());
+  Rml::MeshUtilities::GenerateQuad(decorations, {gutter - scale, 0},
+      {scale, size.y},
+      Rml::Colourb(231, 229, 228).ToPremultiplied());
 
   const auto visible_rows = static_cast<std::size_t>(std::ceil(size.y / line_height));
   const auto [selection_begin, selection_end] = selection();
@@ -358,7 +371,8 @@ void ElementCodeSurface::rebuild_geometry(const Rml::Vector2f size) {
       return x;
     Rml::TexturedMeshList meshes;
     const auto width = font_engine->GenerateString(
-        *render_manager, face, {}, Rml::String(value), {x, y + 13.f}, color, 1.f,
+        *render_manager, face, {}, Rml::String(value),
+        {x, y + 13.f * scale}, color, 1.f,
         shaping, meshes);
     for (auto& mesh : meshes)
       text_geometry_.push_back(
@@ -388,33 +402,34 @@ void ElementCodeSurface::rebuild_geometry(const Rml::Vector2f size) {
       const float selection_width = width_to(selected_end) - selection_x;
       Rml::MeshUtilities::GenerateQuad(
           decorations,
-          {gutter + 4.f + selection_x - horizontal_offset_, y},
-          {std::max(1.f, selection_width), line_height},
-          Rml::Colourb(38, 79, 120, 210).ToPremultiplied());
+          {gutter + 4.f * scale + selection_x - horizontal_offset_, y},
+          {std::max(scale, selection_width), line_height},
+          Rml::Colourb(247, 239, 229, 230).ToPremultiplied());
     }
     if (caret_ >= line_start && caret_ <= line_end) {
       const float caret_x = width_to(caret_);
       Rml::MeshUtilities::GenerateQuad(
           decorations,
-          {gutter + 4.f + caret_x - horizontal_offset_, y + 1.f},
-          {1.f, line_height - 2.f},
-          Rml::Colourb(248, 250, 252).ToPremultiplied());
+          {gutter + 4.f * scale + caret_x - horizontal_offset_, y + scale},
+          {scale, line_height - 2.f * scale},
+          Rml::Colourb(200, 106, 40).ToPremultiplied());
       if (!composition_text_.empty()) {
         const auto composition_width = static_cast<float>(
             font_engine->GetStringWidth(face, Rml::String(composition_text_),
                                         shaping));
-        const float draw_x = gutter + 4.f + caret_x - horizontal_offset_;
+        const float draw_x = gutter + 4.f * scale + caret_x -
+                             horizontal_offset_;
         Rml::MeshUtilities::GenerateQuad(
-            decorations, {draw_x, y + line_height - 2.f},
-            {std::max(1.f, composition_width), 1.f},
+            decorations, {draw_x, y + line_height - 2.f * scale},
+            {std::max(scale, composition_width), scale},
             Rml::Colourb(200, 106, 40).ToPremultiplied());
         composition_x = draw_x;
       }
     }
-    add_text(std::to_string(line + 1), 7.f, y,
-             Rml::Colourb(120, 113, 108).ToPremultiplied());
+    add_text(std::to_string(line + 1), 7.f * scale, y,
+             Rml::Colourb(168, 162, 158).ToPremultiplied());
 
-    float x = gutter + 4.f - horizontal_offset_;
+    float x = gutter + 4.f * scale - horizontal_offset_;
     std::size_t cursor = line_start;
     for (const auto& span : spans_) {
       if (span.byte_end <= line_start || span.byte_start >= line_end)
@@ -434,7 +449,7 @@ void ElementCodeSurface::rebuild_geometry(const Rml::Vector2f size) {
                      x, y, syntax_colour(SyntaxKind::plain));
     if (composition_x)
       (void)add_text(composition_text_, *composition_x, y,
-                     Rml::Colourb(248, 250, 252).ToPremultiplied());
+                     Rml::Colourb(41, 37, 36).ToPremultiplied());
     ++rendered_lines_;
   }
   decoration_geometry_ = render_manager->MakeGeometry(std::move(decorations));

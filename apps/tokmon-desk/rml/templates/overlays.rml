@@ -7,6 +7,12 @@
     <div class="popover-card title-popover" data-if="view.rename_popover_visible"><strong>重命名会话</strong><input id="rename-title-input" type="text" data-value="view.rename_title"/><button id="confirm-title-rename" class="primary-button">保存</button></div>
     <div class="popover-card choice-popover" data-if="view.choice_popover_visible"><strong>{{view.choice_title}}</strong><button data-for="choice : view.composer_choices" data-attr-choice-kind="choice.kind" data-attr-choice-value="choice.value"><span>{{choice.label}}</span><small data-if="choice.detail != ''">{{choice.detail}}</small></button></div>
   </div>
+  <div id="navigation-context-menu" class="navigation-context-menu hidden" data-class-hidden="!view.navigation_context_visible" data-style-top="view.navigation_context_top">
+    <button id="navigation-context-new">＋ 新建会话</button>
+    <button id="navigation-context-rename">✎ 重命名</button>
+    <span></span>
+    <button id="navigation-context-delete" class="danger">删除会话</button>
+  </div>
   <div id="commit-overlay" class="overlay hidden"><div class="modal"><div class="modal-header"><h2>提交更改</h2><button id="close-commit">×</button></div><label>提交信息</label><input id="commit-message" type="text" value="Update from tokmon-desk"/><div class="modal-footer"><button id="cancel-commit" class="secondary-button">取消</button><button id="confirm-commit" class="primary-button">提交</button><button id="confirm-push" class="primary-button">提交并推送</button></div></div></div>
   <div id="discard-overlay" class="overlay hidden"><div class="modal danger-modal"><div class="modal-header"><h2>确认放弃修改</h2><button id="close-discard">×</button></div><p id="discard-description">此操作会修改工作区文件，且无法从 tokmon-desk 撤销。</p><div class="modal-footer"><button id="cancel-discard" class="secondary-button">取消</button><button id="confirm-discard" class="danger-button">确认放弃</button></div></div></div>
   <div id="terminal-paste-overlay" class="overlay hidden"><div class="modal danger-modal"><div class="modal-header"><h2>确认粘贴多行命令</h2></div><p>剪贴板包含换行或终端控制序列，粘贴后可能立即执行命令。仅在确认内容可信时继续。</p><div class="modal-footer"><button id="cancel-terminal-paste" class="secondary-button">取消</button><button id="confirm-terminal-paste" class="danger-button">仍然粘贴</button></div></div></div>

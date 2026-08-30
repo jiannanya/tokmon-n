@@ -29,6 +29,12 @@ public:
     return search_match_count_;
   }
   [[nodiscard]] bool selecting() const noexcept { return selecting_; }
+  [[nodiscard]] std::uint16_t grid_columns() const noexcept {
+    return snapshot_.columns;
+  }
+  [[nodiscard]] std::uint16_t grid_rows() const noexcept {
+    return snapshot_.rows;
+  }
   void OnRender() override;
 
 private:

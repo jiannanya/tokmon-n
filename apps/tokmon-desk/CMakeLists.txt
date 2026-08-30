@@ -302,6 +302,7 @@ add_executable(tokmon-desk WIN32
   src/ui/modules/browser_controller.cpp
   src/ui/modules/settings_controller.cpp
   src/ui/modules/desk_renderer.cpp
+  src/ui/modules/trajectory_controller.cpp
   src/ui/modules/terminal_controller.cpp
   src/ui/desk_controller.cpp)
 add_dependencies(tokmon-desk tokmon)

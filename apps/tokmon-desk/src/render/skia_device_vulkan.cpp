@@ -315,6 +315,15 @@ class SkiaDeviceVulkan final : public SkiaDevice {
     return setup_swapchain(width, height, error);
   }
 
+  bool recover(std::string& error) override {
+    auto* const window = window_;
+    const int width = width_;
+    const int height = height_;
+    destroy(true);
+    error.clear();
+    return initialize(window, width, height, error);
+  }
+
   SkCanvas* begin_frame() override {
     if (!swapchain_)
       return nullptr;
@@ -490,8 +499,8 @@ class SkiaDeviceVulkan final : public SkiaDevice {
     return true;
   }
 
-  void destroy() {
-    if (device_)
+  void destroy(const bool force = false) {
+    if (device_ && !force)
       vkDeviceWaitIdle(device_);
     surfaces_.clear();
     context_.reset();
@@ -511,6 +520,9 @@ class SkiaDeviceVulkan final : public SkiaDevice {
     device_ = VK_NULL_HANDLE;
     surface_handle_ = VK_NULL_HANDLE;
     instance_ = VK_NULL_HANDLE;
+    physical_device_ = VK_NULL_HANDLE;
+    queue_ = VK_NULL_HANDLE;
+    images_.clear();
   }
 
   SDL_Window* window_{nullptr};

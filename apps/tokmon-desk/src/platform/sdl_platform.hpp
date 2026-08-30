@@ -4,6 +4,7 @@
 #include <SDL3/SDL.h>
 
 #include <chrono>
+#include <filesystem>
 #include <functional>
 #include <string>
 
@@ -32,10 +33,13 @@ public:
                                 float window_scale);
   [[nodiscard]] float ui_scale() const noexcept { return ui_scale_; }
   [[nodiscard]] float input_coordinate_scale() const noexcept;
+  [[nodiscard]] float design_coordinate_scale() const noexcept;
 
   void minimize();
   void toggle_maximize();
   void begin_window_drag();
+  [[nodiscard]] bool open_local_file(const std::filesystem::path& path,
+                                     std::string& error) const;
   void set_raw_event_handler(
       std::function<bool(const SDL_Event&)> handler);
 
@@ -54,6 +58,7 @@ private:
   SDL_Cursor* cursor_move_{nullptr};
   std::chrono::steady_clock::time_point start_;
   float ui_scale_{1.f};
+  float content_scale_{1.f};
   std::function<bool(const SDL_Event&)> raw_event_handler_;
 };
 

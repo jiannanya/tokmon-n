@@ -8,9 +8,13 @@
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace tokmon::desk {
+
+inline constexpr std::size_t conversation_window_turns = 40;
+inline constexpr std::size_t conversation_overscan_turns = 8;
 
 class NavigationModel;
 
@@ -39,9 +43,10 @@ public:
   void close_diff();
   ConversationRenderResult conversation(
       const std::vector<tokmon::Photon>& photons, std::size_t window_start,
-      std::size_t window_turns = 80, std::size_t overscan_turns = 12);
-  void trajectory(const std::vector<tokmon::Photon>& photons,
-                  std::string_view active_ray, std::uint64_t cursor);
+      std::size_t window_turns = conversation_window_turns,
+      std::size_t overscan_turns = conversation_overscan_turns);
+  [[nodiscard]] const std::string* conversation_copy_payload(
+      std::string_view id) const;
   void slash_commands(
       const std::vector<std::pair<std::string_view, std::string_view>>& commands,
       std::size_t selected, bool visible);
@@ -53,6 +58,7 @@ public:
 private:
   DeskViewModel& view_model_;
   MarkdownParser markdown_;
+  std::unordered_map<std::string, std::string> conversation_copy_payloads_;
 };
 
 } // namespace tokmon::desk

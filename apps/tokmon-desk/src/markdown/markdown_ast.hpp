@@ -71,6 +71,16 @@ struct MarkdownDocument {
   std::size_t source_bytes{0};
 };
 
+struct MarkdownCopyBlock {
+  std::string id;
+  std::string text;
+};
+
+struct MarkdownRmlResult {
+  std::string rml;
+  std::vector<MarkdownCopyBlock> code_blocks;
+};
+
 class MarkdownParser final {
  public:
   [[nodiscard]] MarkdownDocument parse(
@@ -101,6 +111,11 @@ class MarkdownStream final {
 };
 
 [[nodiscard]] std::string markdown_to_safe_rml(const MarkdownDocument& document);
+// Produces the same safe markup while adding unobtrusive copy buttons to
+// fenced code/tool blocks. The button payload is an opaque id; source text is
+// kept outside the DOM so large snippets do not get duplicated in attributes.
+[[nodiscard]] MarkdownRmlResult markdown_to_safe_rml_with_copy(
+    const MarkdownDocument& document, std::string_view id_prefix);
 [[nodiscard]] bool markdown_safe_external_url(std::string_view value);
 
 } // namespace tokmon::desk

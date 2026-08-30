@@ -1,15 +1,15 @@
 body { background-color: #f5f5f4; color: #292524; }
-.sidebar { background-color: #fbfbf9; border-color: #e7e5e4; }
+.sidebar { background-color: #f9f9f8; border-color: rgba(231, 229, 228, 153); }
 .workspace { background-color: #fafaf9; }
-.right-panel { background-color: #ffffff; border-color: #e7e5e4; }
+.right-panel { background-color: #fafaf9; border-color: rgba(231, 229, 228, 153); }
 .new-session-button { background-color: #f2ece2; color: #7c431b; }
 .new-session-button:hover { background-color: #eae2d5; }
-.search-box, .panel-search { background-color: #f0eee8; color: #a8a29e; }
+.search-box, .panel-search { background-color: #f0efea; color: #a8a29e; }
 .tree-caption, .timestamp, small { color: #a8a29e; }
 .tree-row { color: #44403c; }
 .tree-row:hover { background-color: rgba(0, 0, 0, 10); }
 .tree-row.selected { background-color: #f7efe5; color: #8b5229; }
-.workspace-titlebar, .window-controls { background-color: #faf9f6; border-color: #e8e6df; }
+.brand-row, .workspace-titlebar, .window-controls { background-color: #fafaf9; border-color: rgba(231, 229, 228, 153); }
 .project-chip, .branch-chip { background-color: #f0eee8; color: #78716c; }
 .environment-panel { background-color: #faf9f6; border-color: #e7e5e4; }
 .user-message { background-color: #fcf8f3; border-color: #ebdcd0; }
@@ -22,9 +22,10 @@ body { background-color: #f5f5f4; color: #292524; }
 .progress div { background-color: #c86a28; }
 .composer-card { background-color: #ffffff; border-color: #e7e5e4; }
 .workspace-context, .branch { color: #8b5229; }
-.tool-pill, .select-pill, .round-button { background-color: #fafaf9; color: #57534e; border-color: #e7e5e4; }
-.tool-pill.access { background-color: #fef8f4; color: #8b5229; border-color: #f5d9c3; }
-.send-button, .primary-button { background-color: #c86a28; color: #ffffff; }
+.tool-pill, .select-pill, .round-button { background-color: transparent; color: #57534e; border-color: transparent; }
+.tool-pill.access { background-color: transparent; color: #d97706; border-color: transparent; }
+.send-button { background-color: #1c1917; color: #ffffff; }
+.primary-button { background-color: #c86a28; color: #ffffff; }
 .review-toolbar, .review-summary, .browser-toolbar { border-color: #f0eee8; }
 .empty-panel, .browser-placeholder { color: #a8a29e; }
 .count-pill { background-color: #f0eee8; color: #57534e; }
@@ -38,4 +39,7 @@ body { background-color: #f5f5f4; color: #292524; }
 .toggle span { background-color: #ffffff; }
 .secondary-button, .select-box { background-color: #fafaf9; color: #57534e; border-color: #e7e5e4; }
 .locked-value { color: #8b5229; }
-.terminal-view, .file-preview { background-color: #1c1917; color: #e7e5e4; }
+.terminal-view { background-color: #faf9f6; color: #292524; }
+.file-preview { background-color: #fafaf9; color: #292524; }
+.review-diff, .diff-surface { background-color: #ffffff; color: #1c1917; }
+#review-view, #files-view { background-color: #ffffff; color: #292524; }

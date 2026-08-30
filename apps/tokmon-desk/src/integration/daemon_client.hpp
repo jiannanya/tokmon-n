@@ -28,7 +28,10 @@ class DaemonClient final {
                             tokmon::cbor::Value& response, std::string& error) const;
   [[nodiscard]] DaemonStreamResult stream_intent(
       std::string action, tokmon::cbor::Value payload, std::uint64_t cursor,
-      const std::function<void(tokmon::Photon)>& on_photon) const;
+      const std::function<void(tokmon::Photon)>& on_photon,
+      std::uint64_t request_id = 0) const;
+  [[nodiscard]] bool cancel(std::uint64_t target_request_id,
+                            std::string& error) const;
 
  private:
   std::filesystem::path endpoint_;

@@ -33,6 +33,11 @@ bool DeskViewModel::bind(Rml::Context& context, std::string asset_root) {
       !navigation.RegisterMember("padding", &NavigationRowView::padding) ||
       !navigation.RegisterMember("chevron", &NavigationRowView::chevron) ||
       !navigation.RegisterMember("icon", &NavigationRowView::icon) ||
+      !navigation.RegisterMember("expandable", &NavigationRowView::expandable) ||
+      !navigation.RegisterMember("expanded", &NavigationRowView::expanded) ||
+      !navigation.RegisterMember("group", &NavigationRowView::group) ||
+      !navigation.RegisterMember("project", &NavigationRowView::project) ||
+      !navigation.RegisterMember("session", &NavigationRowView::session) ||
       !model.RegisterArray<std::vector<NavigationRowView>>())
     return false;
 
@@ -48,6 +53,8 @@ bool DeskViewModel::bind(Rml::Context& context, std::string asset_root) {
       !review.RegisterMember("status", &ReviewFileView::status) ||
       !review.RegisterMember("worktree", &ReviewFileView::worktree) ||
       !review.RegisterMember("staged", &ReviewFileView::staged) ||
+      !review.RegisterMember("worktree_hidden", &ReviewFileView::worktree_hidden) ||
+      !review.RegisterMember("staged_hidden", &ReviewFileView::staged_hidden) ||
       !model.RegisterArray<std::vector<ReviewFileView>>())
     return false;
 
@@ -74,6 +81,9 @@ bool DeskViewModel::bind(Rml::Context& context, std::string asset_root) {
       !turn.RegisterMember("user_rml", &ConversationTurnView::user_rml) ||
       !turn.RegisterMember("reasoning_rml", &ConversationTurnView::reasoning_rml) ||
       !turn.RegisterMember("assistant_rml", &ConversationTurnView::assistant_rml) ||
+      !turn.RegisterMember("user_copy_id", &ConversationTurnView::user_copy_id) ||
+      !turn.RegisterMember("reasoning_copy_id", &ConversationTurnView::reasoning_copy_id) ||
+      !turn.RegisterMember("assistant_copy_id", &ConversationTurnView::assistant_copy_id) ||
       !turn.RegisterMember("workflow", &ConversationTurnView::workflow) ||
       !turn.RegisterMember("has_user", &ConversationTurnView::has_user) ||
       !turn.RegisterMember("has_reasoning", &ConversationTurnView::has_reasoning) ||
@@ -88,7 +98,30 @@ bool DeskViewModel::bind(Rml::Context& context, std::string asset_root) {
       !trajectory.RegisterMember("kind", &TrajectoryRowView::kind) ||
       !trajectory.RegisterMember("metadata", &TrajectoryRowView::metadata) ||
       !trajectory.RegisterMember("detail", &TrajectoryRowView::detail) ||
+      !trajectory.RegisterMember("classes", &TrajectoryRowView::classes) ||
+      !trajectory.RegisterMember("time", &TrajectoryRowView::time) ||
+      !trajectory.RegisterMember("tone", &TrajectoryRowView::tone) ||
+      !trajectory.RegisterMember("role", &TrajectoryRowView::role) ||
+      !trajectory.RegisterMember("duration", &TrajectoryRowView::duration) ||
+      !trajectory.RegisterMember("tokens", &TrajectoryRowView::tokens) ||
+      !trajectory.RegisterMember("turn_label", &TrajectoryRowView::turn_label) ||
+      !trajectory.RegisterMember("request_label", &TrajectoryRowView::request_label) ||
+      !trajectory.RegisterMember("wrapper_classes", &TrajectoryRowView::wrapper_classes) ||
+      !trajectory.RegisterMember("turn_start", &TrajectoryRowView::turn_start) ||
+      !trajectory.RegisterMember("row_visible", &TrajectoryRowView::row_visible) ||
+      !trajectory.RegisterMember("selected", &TrajectoryRowView::selected) ||
+      !trajectory.RegisterMember("failed", &TrajectoryRowView::failed) ||
       !model.RegisterArray<std::vector<TrajectoryRowView>>())
+    return false;
+
+  auto trajectory_segment = model.RegisterStruct<TrajectorySegmentView>();
+  if (!trajectory_segment ||
+      !trajectory_segment.RegisterMember("sequence", &TrajectorySegmentView::sequence) ||
+      !trajectory_segment.RegisterMember("classes", &TrajectorySegmentView::classes) ||
+      !trajectory_segment.RegisterMember("left", &TrajectorySegmentView::left) ||
+      !trajectory_segment.RegisterMember("width", &TrajectorySegmentView::width) ||
+      !trajectory_segment.RegisterMember("top", &TrajectorySegmentView::top) ||
+      !model.RegisterArray<std::vector<TrajectorySegmentView>>())
     return false;
 
   auto slash = model.RegisterStruct<SlashCommandView>();
@@ -147,6 +180,7 @@ bool DeskViewModel::bind(Rml::Context& context, std::string asset_root) {
   TOKMON_BIND_STATE(terminal_tabs); TOKMON_BIND_STATE(review_files);
   TOKMON_BIND_STATE(branches); TOKMON_BIND_STATE(diff_hunks);
   TOKMON_BIND_STATE(conversation); TOKMON_BIND_STATE(trajectory);
+  TOKMON_BIND_STATE(trajectory_segments);
   TOKMON_BIND_STATE(slash_commands); TOKMON_BIND_STATE(composer_choices);
   TOKMON_BIND_STATE(review_title);
   TOKMON_BIND_STATE(review_detail); TOKMON_BIND_STATE(review_count);
@@ -154,8 +188,25 @@ bool DeskViewModel::bind(Rml::Context& context, std::string asset_root) {
   TOKMON_BIND_STATE(slash_empty); TOKMON_BIND_STATE(trajectory_count);
   TOKMON_BIND_STATE(trajectory_ray); TOKMON_BIND_STATE(trajectory_cursor);
   TOKMON_BIND_STATE(trajectory_window_notice);
+  TOKMON_BIND_STATE(trajectory_duration); TOKMON_BIND_STATE(trajectory_turns);
+  TOKMON_BIND_STATE(trajectory_calls); TOKMON_BIND_STATE(trajectory_tokens);
+  TOKMON_BIND_STATE(trajectory_filter); TOKMON_BIND_STATE(trajectory_match_count);
+  TOKMON_BIND_STATE(trajectory_visible_range);
+  TOKMON_BIND_STATE(trajectory_zoom);
+  TOKMON_BIND_STATE(trajectory_selection_left);
+  TOKMON_BIND_STATE(trajectory_selection_width);
+  TOKMON_BIND_STATE(trajectory_detail_title);
+  TOKMON_BIND_STATE(trajectory_detail_location);
+  TOKMON_BIND_STATE(trajectory_detail_status);
+  TOKMON_BIND_STATE(trajectory_detail_tab);
+  TOKMON_BIND_STATE(trajectory_detail_summary);
+  TOKMON_BIND_STATE(trajectory_detail_payload);
+  TOKMON_BIND_STATE(trajectory_detail_result);
+  TOKMON_BIND_STATE(trajectory_detail_schema);
+  TOKMON_BIND_STATE(trajectory_detail_timing);
   TOKMON_BIND_STATE(conversation_top_spacer);
   TOKMON_BIND_STATE(conversation_bottom_spacer);
+  TOKMON_BIND_STATE(file_open);
   TOKMON_BIND_STATE(navigation_empty); TOKMON_BIND_STATE(review_loading);
   TOKMON_BIND_STATE(review_has_files); TOKMON_BIND_STATE(branch_menu_loading);
   TOKMON_BIND_STATE(branch_menu_empty); TOKMON_BIND_STATE(diff_visible);
@@ -164,7 +215,20 @@ bool DeskViewModel::bind(Rml::Context& context, std::string asset_root) {
   TOKMON_BIND_STATE(conversation_has_top_spacer);
   TOKMON_BIND_STATE(conversation_has_bottom_spacer);
   TOKMON_BIND_STATE(trajectory_empty); TOKMON_BIND_STATE(trajectory_has_notice);
+  TOKMON_BIND_STATE(trajectory_filtered_empty);
+  TOKMON_BIND_STATE(trajectory_detail_visible);
+  TOKMON_BIND_STATE(trajectory_detail_failed);
+  TOKMON_BIND_STATE(trajectory_actual_duration);
+  TOKMON_BIND_STATE(trajectory_turns_collapsed);
+  TOKMON_BIND_STATE(trajectory_calls_collapsed);
+  TOKMON_BIND_STATE(trajectory_follow_tail);
+  TOKMON_BIND_STATE(trajectory_zoomed);
+  TOKMON_BIND_STATE(trajectory_selection_visible);
+  TOKMON_BIND_STATE(trajectory_timeline_dragging);
   TOKMON_BIND_STATE(slash_visible); TOKMON_BIND_STATE(slash_has_matches);
+  TOKMON_BIND_STATE(chat_running); TOKMON_BIND_STATE(chat_stopping);
+  TOKMON_BIND_STATE(navigation_context_visible);
+  TOKMON_BIND_STATE(navigation_context_top);
   TOKMON_BIND_STATE(composer_popover_visible);
   TOKMON_BIND_STATE(rename_popover_visible);
   TOKMON_BIND_STATE(choice_popover_visible); TOKMON_BIND_STATE(rename_title);

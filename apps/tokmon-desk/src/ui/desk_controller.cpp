@@ -11,21 +11,25 @@
 #include "tokmon/ids.hpp"
 
 #include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
 #include <RmlUi/Core/Input.h>
 
 #include <chrono>
+#include <charconv>
 #include <array>
 #include <algorithm>
 #include <cctype>
 #include <ranges>
 #include <iostream>
-#include <fstream>
 #include <limits>
 
 namespace tokmon::desk {
 namespace {
+
+constexpr float legacy_frame_inset = 6.4f;
+constexpr int legacy_launcher_width = 219;
 
 constexpr std::array<std::pair<std::string_view, std::string_view>, 4>
     slash_commands{{
@@ -42,33 +46,6 @@ Rml::ElementFormControl* control(Rml::ElementDocument& document, const char* id)
 void text(Rml::ElementDocument& document, const char* id, const std::string& value) {
   if (auto* element = document.GetElementById(id))
     element->SetInnerRML(value);
-}
-
-std::string escape_json(const std::string_view value) {
-  std::string result;
-  result.reserve(value.size() + 16);
-  for (const char raw_character : value) {
-    const auto character = static_cast<unsigned char>(raw_character);
-    switch (character) {
-      case '\\': result += "\\\\"; break;
-      case '"': result += "\\\""; break;
-      case '\b': result += "\\b"; break;
-      case '\f': result += "\\f"; break;
-      case '\n': result += "\\n"; break;
-      case '\r': result += "\\r"; break;
-      case '\t': result += "\\t"; break;
-      default:
-        if (character < 0x20) {
-          constexpr char hex[] = "0123456789abcdef";
-          result += "\\u00";
-          result += hex[(character >> 4) & 0xf];
-          result += hex[character & 0xf];
-        } else {
-          result += static_cast<char>(character);
-        }
-    }
-  }
-  return result;
 }
 
 std::string cbor_string(const tokmon::cbor::Value& values,
@@ -220,6 +197,7 @@ DeskController::DeskController(Rml::ElementDocument& document, SdlPlatform& plat
       state_store_(app_paths),
       settings_(view_model, browser_, platform.default_content_scale_percent()),
       renderer_(view_model),
+      trajectory_(view_model),
       terminal_(platform, view_model, settings_, workspace),
       recovery_store_(app_paths.recovery),
       daemon_(std::move(daemon_endpoint)), navigation_(workspace) {}
@@ -275,9 +253,16 @@ void DeskController::bind(const bool start_background_work) {
                          "confirm-file-operation",
                          "terminal-new-tab", "terminal-close-tab",
                          "terminal-clear-search",
+                         "navigation-context-new", "navigation-context-rename",
+                         "navigation-context-delete",
+                         "open-notices",
                          "close-discard", "cancel-discard", "confirm-discard",
                          "cancel-terminal-paste", "confirm-terminal-paste",
                          "minimize-button", "maximize-button", "close-button"})
+    listen(id);
+  for (const char* id : {"settings-overlay", "new-session-overlay",
+                         "commit-overlay", "discard-overlay",
+                         "terminal-paste-overlay", "file-operation-overlay"})
     listen(id);
   listen("composer", "keydown");
   listen("composer", "input");
@@ -289,6 +274,7 @@ void DeskController::bind(const bool start_background_work) {
   listen("editor-replace");
   listen("editor-line");
   listen("conversation", "mousescroll");
+  listen("conversation", "click");
   listen("file-preview");
   listen("file-preview", "mousescroll");
   listen("file-tree");
@@ -304,6 +290,8 @@ void DeskController::bind(const bool start_background_work) {
   listen("navigation-search", "input");
   listen("navigation-search", "change");
   listen("navigation-search", "keyup");
+  listen("navigation-tree", "keydown");
+  listen("navigation-tree", "mousedown");
   listen("settings-search", "input");
   listen("settings-search", "change");
   listen("settings-search", "keyup");
@@ -311,6 +299,14 @@ void DeskController::bind(const bool start_background_work) {
   listen("terminal-search", "change");
   listen("terminal-search", "keyup");
   listen("terminal-search");
+  listen("trajectory-search", "input");
+  listen("trajectory-search", "change");
+  listen("trajectory-search", "keyup");
+  listen("trajectory-lane-track", "mousedown");
+  listen("trajectory-lane-track", "mousemove");
+  listen("trajectory-lane-track", "mouseup");
+  listen("trajectory-lane-track", "mousescroll");
+  listen("trajectory-lane-track", "keydown");
   for (const char* id : {"navigation-tree", "review-empty", "review-diff",
                          "branch-menu", "terminal-tabs", "settings-body",
                          "composer-popover", "trajectory"})
@@ -327,7 +323,7 @@ void DeskController::bind(const bool start_background_work) {
   const auto stored_settings = state_store_.load_settings(local_warning);
   settings_.load(stored_settings);
   const bool migrate_legacy_shell =
-      cbor_integer(stored_settings, "layout_revision", 0) < 2;
+      cbor_integer(stored_settings, "layout_revision", 0) < 3;
   const bool migrate_legacy_navigation =
       cbor_integer(stored_settings, "navigation_revision", 0) < 2;
   const auto current_workspace = workspace_.root().generic_string();
@@ -341,13 +337,13 @@ void DeskController::bind(const bool start_background_work) {
       settings_.integer("sidebar_width", 240), 196, 420));
   right_panel_width_ = static_cast<int>(std::clamp<std::int64_t>(
       migrate_legacy_shell
-          ? 214
-          : settings_.integer("right_panel_width", 214),
+          ? legacy_launcher_width
+          : settings_.integer("right_panel_width", legacy_launcher_width),
       214, 720));
   if (migrate_legacy_shell || remember_workspace) {
     settings_.set("right_panel_width",
                   static_cast<std::int64_t>(right_panel_width_));
-    settings_.set("layout_revision", static_cast<std::int64_t>(2));
+    settings_.set("layout_revision", static_cast<std::int64_t>(3));
   }
   if (migrate_legacy_navigation)
     settings_.set("navigation_revision", static_cast<std::int64_t>(2));
@@ -437,7 +433,7 @@ void DeskController::backend_connected() {
 void DeskController::prepare_legacy_three_pane_contract(
     const bool expanded_feature_panel) {
   sidebar_width_ = 240;
-  right_panel_width_ = expanded_feature_panel ? 440 : 214;
+  right_panel_width_ = expanded_feature_panel ? 440 : legacy_launcher_width;
   sidebar_visible_ = true;
   right_panel_visible_ = true;
   apply_panel_layout();
@@ -451,33 +447,43 @@ void DeskController::toggle_hidden(const char* id) {
 }
 
 void DeskController::apply_panel_layout() {
-  const auto pixels = [](const int value) { return std::to_string(value) + "px"; };
+  const auto density_units = [](const float value) {
+    return std::to_string(value) + "dp";
+  };
   if (auto* shell = document_.GetElementById("app-shell")) {
     shell->SetClass("sidebar-hidden", !sidebar_visible_);
     shell->SetClass("right-hidden", !right_panel_visible_);
   }
   if (auto* sidebar = document_.GetElementById("sidebar")) {
     sidebar->SetClass("hidden", !sidebar_visible_);
-    sidebar->SetProperty("width", pixels(sidebar_width_));
+    sidebar->SetProperty("width",
+                         density_units(static_cast<float>(sidebar_width_)));
   }
   if (auto* panel = document_.GetElementById("right-panel")) {
     panel->SetClass("hidden", !right_panel_visible_);
     panel->SetClass("compact", right_panel_width_ < 408);
     panel->SetClass("narrow", right_panel_width_ < 300);
-    panel->SetProperty("width", pixels(right_panel_width_));
+    panel->SetProperty("width", density_units(
+        static_cast<float>(right_panel_width_) + 0.5f));
   }
   if (auto* workspace = document_.GetElementById("workspace")) {
-    workspace->SetProperty("left", pixels(sidebar_visible_ ? sidebar_width_ : 0));
-    workspace->SetProperty("right", pixels(right_panel_visible_ ? right_panel_width_ : 0));
+    workspace->SetProperty("left", density_units(sidebar_visible_
+        ? static_cast<float>(sidebar_width_) + 0.5f : 0.f));
+    workspace->SetProperty("right", density_units(right_panel_visible_
+        ? static_cast<float>(right_panel_width_) + 0.5f : 0.f));
   }
   if (auto* toggle = document_.GetElementById("sidebar-toggle"))
-    toggle->SetProperty("left", pixels(sidebar_visible_ ? sidebar_width_ - 8 : 6));
+    toggle->SetProperty("left", density_units(sidebar_visible_
+        ? static_cast<float>(sidebar_width_) - 31.f : 6.f));
   if (auto* toggle = document_.GetElementById("right-toggle"))
-    toggle->SetProperty("right", pixels(right_panel_visible_ ? right_panel_width_ - 8 : 110));
+    toggle->SetProperty("right", density_units(right_panel_visible_
+        ? static_cast<float>(right_panel_width_) + 13.f : 110.f));
   if (auto* divider = document_.GetElementById("sidebar-resizer"))
-    divider->SetProperty("left", pixels(std::max(0, sidebar_width_ - 5)));
+    divider->SetProperty("left", density_units(
+        static_cast<float>(std::max(0, sidebar_width_ - 5))));
   if (auto* divider = document_.GetElementById("right-resizer"))
-    divider->SetProperty("right", pixels(std::max(0, right_panel_width_ - 4)));
+    divider->SetProperty("right", density_units(
+        static_cast<float>(std::max(0, right_panel_width_ - 4))));
 }
 
 void DeskController::set_sidebar_visible(const bool visible) {
@@ -518,8 +524,45 @@ void DeskController::show_toast(std::string message) {
   }
 }
 
+bool DeskController::dismiss_transient_ui() {
+  if (view_model_.state().navigation_context_visible) {
+    close_navigation_context();
+    return true;
+  }
+  for (const char* id : {"settings-overlay", "new-session-overlay",
+                         "commit-overlay", "discard-overlay",
+                         "terminal-paste-overlay", "file-operation-overlay",
+                         "right-tab-menu", "branch-menu"}) {
+    if (auto* element = document_.GetElementById(id);
+        element && !element->IsClassSet("hidden")) {
+      element->SetClass("hidden", true);
+      if (std::string_view(id) == "settings-overlay")
+        if (auto* button = document_.GetElementById("settings-button"))
+          button->Focus();
+      return true;
+    }
+  }
+  if (view_model_.state().composer_popover_visible) {
+    renderer_.close_composer_popover();
+    if (auto* composer = document_.GetElementById("composer"))
+      composer->Focus();
+    return true;
+  }
+  return false;
+}
+
 void DeskController::show_right_launcher() {
   active_right_view_ = "launcher";
+  // Expanded feature surfaces are temporary. Closing their tab restores the
+  // compact utility rail used by the legacy shell.
+  if (right_panel_width_ != legacy_launcher_width) {
+    right_panel_width_ = legacy_launcher_width;
+    settings_.set("right_panel_width",
+                  static_cast<std::int64_t>(legacy_launcher_width));
+    apply_panel_layout();
+    std::string ignored;
+    (void)save_local_settings(ignored);
+  }
   if (auto* launcher = document_.GetElementById("right-launcher"))
     launcher->SetClass("hidden", false);
   for (const char* view : {"review-view", "files-view", "terminal-view", "browser-view"})
@@ -648,9 +691,15 @@ void DeskController::apply_review_task() {
     if (!result.success) {
       auto& view = view_model_.state();
       view.review_has_files = false;
-      view.review_title = "提交失败";
+      view.review_title = result.commit_created
+          ? "提交已创建，但推送失败" : "提交失败";
       view.review_detail = result.error;
       view_model_.dirty();
+      if (result.commit_created && result.push_requested) {
+        if (auto* overlay = document_.GetElementById("commit-overlay"))
+          overlay->SetClass("hidden", true);
+        show_toast("本地提交已保留；推送失败：" + result.error);
+      }
     } else {
       if (auto* overlay = document_.GetElementById("commit-overlay"))
         overlay->SetClass("hidden", true);
@@ -958,6 +1007,8 @@ void DeskController::confirm_file_operation() {
           current_relative.generic_string().starts_with(
               selected.generic_string() + "/"))) {
         current_file_.clear();
+        view_model_.state().file_open = false;
+        view_model_.dirty();
         if (auto* surface = dynamic_cast<ElementCodeSurface*>(
                 document_.GetElementById("file-preview")))
           surface->set_document({}, {}, 0, false);
@@ -983,10 +1034,14 @@ void DeskController::confirm_file_operation() {
 }
 
 void DeskController::send_message() {
+  if (chat_future_.valid()) {
+    stop_message();
+    return;
+  }
   auto* composer = control(document_, "composer");
   auto* conversation = document_.GetElementById("conversation");
   if (!composer || !conversation || composer->GetValue().empty() ||
-      chat_future_.valid() || change_set_future_.valid()) return;
+      change_set_future_.valid()) return;
   const std::string prompt = composer->GetValue();
   if (auto* selected = navigation_.selected(); selected &&
       selected->kind == "session" && !selected->title_manual) {
@@ -1014,8 +1069,15 @@ void DeskController::send_message() {
   const auto effort = settings_.effort();
   const auto access = settings_.access();
   const auto change_run = tokmon::make_id("desk-agent-run");
+  active_chat_request_id_ = tokmon::next_snow_request_id();
+  const auto request_id = active_chat_request_id_;
+  view_model_.state().chat_running = true;
+  view_model_.state().chat_stopping = false;
+  view_model_.dirty();
+  update_composer_placeholder();
   chat_future_ = std::async(std::launch::async,
-      [this, prompt, ray, provider, model, effort, access, change_run] {
+      [this, prompt, ray, provider, model, effort, access, change_run,
+       request_id] {
         ChatTaskResult task;
         const bool tracking = change_tracker_.begin(change_run,
                                                      task.tracker_error);
@@ -1027,10 +1089,25 @@ void DeskController::send_message() {
             [this](tokmon::Photon photon) {
               std::scoped_lock lock(photon_mutex_);
               pending_photons_.push_back(std::move(photon));
-            });
+            }, request_id);
         if (tracking)
           task.changes = change_tracker_.finish(task.tracker_error);
         return task;
+      });
+}
+
+void DeskController::stop_message() {
+  if (!chat_future_.valid() || active_chat_request_id_ == 0 ||
+      chat_cancel_future_.valid())
+    return;
+  const auto request_id = active_chat_request_id_;
+  view_model_.state().chat_stopping = true;
+  view_model_.dirty();
+  chat_cancel_future_ = std::async(std::launch::async,
+      [this, request_id] {
+        ChatCancelResult result;
+        result.success = daemon_.cancel(request_id, result.error);
+        return result;
       });
 }
 
@@ -1096,54 +1173,24 @@ void DeskController::render_conversation() {
       : conversation_window_start_;
   const auto result = renderer_.conversation(photons_, requested_start);
   conversation_total_turns_ = result.total_turns;
-  const auto maximum_start = result.total_turns > 80
-      ? result.total_turns - 80 : 0;
+  const auto maximum_start = result.total_turns > conversation_window_turns
+      ? result.total_turns - conversation_window_turns : 0;
   conversation_window_start_ = followed_tail
       ? maximum_start : std::min(conversation_window_start_, maximum_start);
+  conversation_follow_tail_pending_ = followed_tail;
   render_trajectory();
 }
 
 void DeskController::render_trajectory() {
-  renderer_.trajectory(photons_, active_ray_, snow_cursor_);
+  trajectory_.render(photons_, active_ray_, snow_cursor_);
 }
 
 void DeskController::export_trajectory() {
-  if (photons_.empty()) {
-    show_toast("当前没有可导出的轨迹");
-    return;
-  }
-  std::error_code error;
-  const auto directory = workspace_.root() / "exports";
-  std::filesystem::create_directories(directory, error);
-  if (error) {
-    show_toast("导出失败：" + error.message());
-    return;
-  }
-  const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
-      std::chrono::system_clock::now().time_since_epoch()).count();
-  const auto path = directory /
-      ("tokmon-trace-" + std::to_string(milliseconds) + ".json");
-  std::ofstream output(path, std::ios::binary | std::ios::trunc);
-  if (!output) {
-    show_toast("导出失败：无法创建文件");
-    return;
-  }
-  output << "{\n  \"ray\": \"" << escape_json(active_ray_)
-         << "\",\n  \"snowCursor\": " << snow_cursor_
-         << ",\n  \"events\": [\n";
-  for (std::size_t index = 0; index < photons_.size(); ++index) {
-    const auto& photon = photons_[index];
-    output << "    {\"sequence\": " << photon.sequence
-           << ", \"kind\": \"" << escape_json(photon.kind)
-           << "\", \"schema\": \"" << escape_json(photon.schema)
-           << "\", \"committedAtMs\": " << photon.committed_at_ms
-           << ", \"payload\": \""
-           << escape_json(tokmon::cbor::diagnostic(photon.payload)) << "\"}"
-           << (index + 1 == photons_.size() ? "\n" : ",\n");
-  }
-  output << "  ]\n}\n";
-  if (!output) {
-    show_toast("导出失败：写入未完成");
+  std::filesystem::path path;
+  std::string error;
+  if (!trajectory_.export_json(workspace_.root() / "exports", photons_,
+                               active_ray_, snow_cursor_, path, error)) {
+    show_toast("导出失败：" + error);
     return;
   }
   show_toast("轨迹已导出到 " + path.generic_string());
@@ -1151,28 +1198,185 @@ void DeskController::export_trajectory() {
 
 void DeskController::seed_acceptance_conversation(const std::size_t turns) {
   photons_.clear();
-  photons_.reserve(turns);
+  photons_.reserve(turns * 2);
   for (std::size_t index = 0; index < turns; ++index) {
     photons_.push_back(tokmon::Photon{
-        .sequence = index + 1,
+        .sequence = index * 2 + 1,
         .id = "acceptance-photon-" + std::to_string(index),
         .ray = "acceptance-ray",
         .kind = "user.message",
         .schema = "tokmon.user.message.v1",
         .payload = tokmon::cbor::object(
-            {{"text", "验收会话消息 " + std::to_string(index)}})});
+            {{"text", "验收会话消息 " + std::to_string(index)}}),
+        .committed_at_ms = static_cast<std::int64_t>(index * 1800)});
+    const auto answer = index == 0
+        ? std::string("已完成验收样例。\n\n```cpp\nint answer = 42;\n```\n\n代码块和整条消息都可以复制。")
+        : "验收回复 " + std::to_string(index) +
+              "：Markdown **粗体**、列表与滚动语义保持稳定。";
+    photons_.push_back(tokmon::Photon{
+        .sequence = index * 2 + 2,
+        .id = "acceptance-assistant-" + std::to_string(index),
+        .ray = "acceptance-ray",
+        .kind = "assistant.message",
+        .schema = "tokmon.assistant.message.v1",
+        .payload = tokmon::cbor::object({{"text", answer}}),
+        .committed_at_ms = static_cast<std::int64_t>(index * 1800 + 1200)});
   }
-  snow_cursor_ = turns;
+  snow_cursor_ = turns * 2;
   active_ray_ = "acceptance-ray";
   conversation_window_start_ = 0;
   conversation_dirty_ = true;
   render_conversation();
 }
 
+void DeskController::seed_acceptance_trajectory(const bool include_error) {
+  photons_.clear();
+  const auto add = [this](const std::uint64_t sequence, std::string kind,
+                          std::string schema, tokmon::cbor::Value payload,
+                          const std::int64_t time) {
+    photons_.push_back(tokmon::Photon{
+        .sequence = sequence,
+        .id = "acceptance-trace-" + std::to_string(sequence),
+        .ray = "acceptance-ray",
+        .kind = std::move(kind),
+        .schema = std::move(schema),
+        .payload = std::move(payload),
+        .committed_at_ms = time});
+  };
+  add(1, "user.message", "tokmon.user.message.v1",
+      tokmon::cbor::object({{"text", "检查工作区并完成目标"}}), 1000);
+  add(2, "runtime.context", "tokmon.runtime.context.v1",
+      tokmon::cbor::object({{"workspace", workspace_.root().generic_string()}}),
+      1120);
+  add(3, "model.started", "tokmon.model.started.v1",
+      tokmon::cbor::object({{"model", "local-deterministic"}}), 1280);
+  add(4, "model.tool-call", "tokmon.model.tool-call.v1",
+      tokmon::cbor::object({{"kind", "process.exec"},
+                            {"command", "git status --short"}}), 1660);
+  add(5, "tool.result", "tokmon.tool.result.v1",
+      tokmon::cbor::object({{"result", "工作区状态已读取"},
+                            {"duration_ms", std::int64_t{312}}}), 1972);
+  add(6, "assistant.message", "tokmon.assistant.message.v1",
+      tokmon::cbor::object({{"text", "检查完成，工作区状态正常。"}}), 2310);
+  add(7, "model.usage", "tokmon.model.usage.v1",
+      tokmon::cbor::object({{"input_tokens", std::int64_t{1324}},
+                            {"output_tokens", std::int64_t{7132}}}), 2460);
+  if (include_error)
+    add(8, "act.failed", "tokmon.act.failed.v1",
+        tokmon::cbor::object({{"detail", "命令退出码为 1；工作区内容未被覆盖"},
+                              {"duration_ms", std::int64_t{84}}}), 2600);
+  snow_cursor_ = photons_.back().sequence;
+  active_ray_ = "acceptance-ray";
+  trajectory_.select(include_error ? 8 : 5);
+  conversation_window_start_ = 0;
+  conversation_dirty_ = true;
+  render_conversation();
+}
+
+void DeskController::seed_acceptance_chat_state(const bool running,
+                                                const bool stopping) {
+  view_model_.state().chat_running = running;
+  view_model_.state().chat_stopping = running && stopping;
+  view_model_.dirty();
+  update_composer_placeholder();
+}
+
+void DeskController::seed_acceptance_navigation_context() {
+  view_model_.state().navigation_context_top = "270dp";
+  view_model_.state().navigation_context_visible = true;
+  view_model_.dirty();
+}
+
 void DeskController::render_navigation() {
   const auto* query = control(document_, "navigation-search");
   renderer_.navigation(navigation_, query ? query->GetValue() : "",
                        navigation_.selected_workspace());
+}
+
+void DeskController::open_navigation_context(Rml::Element& item,
+                                             const float mouse_y) {
+  const auto id = item.GetAttribute<Rml::String>("nav-id", "");
+  const auto found = std::ranges::find(navigation_.items(), id,
+                                      &DeskNavigationItem::id);
+  if (found == navigation_.items().end() || found->kind != "session")
+    return;
+  (void)navigation_.select(id);
+  active_ray_ = found->ray;
+  view_model_.state().session_title = found->title;
+  const auto ratio = document_.GetContext()
+      ? std::max(document_.GetContext()->GetDensityIndependentPixelRatio(),
+                 0.01f)
+      : 1.f;
+  const auto logical_y = std::clamp(mouse_y / ratio, 80.f, 760.f);
+  view_model_.state().navigation_context_top =
+      std::to_string(logical_y) + "dp";
+  view_model_.state().navigation_context_visible = true;
+  view_model_.dirty();
+  render_navigation();
+}
+
+void DeskController::close_navigation_context() {
+  view_model_.state().navigation_context_visible = false;
+  view_model_.dirty();
+}
+
+void DeskController::delete_navigation_session() {
+  if (!navigation_.remove_selected_session()) {
+    show_toast("只能删除会话");
+    close_navigation_context();
+    return;
+  }
+  auto* selected = navigation_.selected();
+  if (!selected || selected->kind != "session")
+    selected = &navigation_.create_session("新会话");
+  active_ray_ = selected->ray;
+  photons_.clear();
+  conversation_dirty_ = true;
+  view_model_.state().session_title = selected->title;
+  close_navigation_context();
+  render_navigation();
+  save_navigation();
+  show_toast("会话已删除");
+}
+
+bool DeskController::update_navigation_scrollbar() {
+  auto* tree = document_.GetElementById("navigation-tree");
+  auto* thumb = document_.GetElementById("navigation-scrollbar-thumb");
+  if (!tree || !thumb)
+    return false;
+
+  const float viewport_height = tree->GetClientHeight();
+  const float content_height = tree->GetScrollHeight();
+  const bool visible = viewport_height > 0.f &&
+      content_height > viewport_height + 0.5f;
+  if (!visible) {
+    const bool changed = navigation_thumb_visible_;
+    navigation_thumb_visible_ = false;
+    navigation_thumb_height_ = -1.f;
+    navigation_thumb_top_ = -1.f;
+    thumb->SetClass("hidden", true);
+    return changed;
+  }
+
+  const float thumb_height = std::max(
+      36.f, viewport_height * viewport_height / content_height);
+  const float travel = std::max(0.f, viewport_height - thumb_height);
+  const float scroll_range = std::max(1.f, content_height - viewport_height);
+  const float thumb_top = tree->GetOffsetTop() +
+      std::clamp(tree->GetScrollTop() / scroll_range, 0.f, 1.f) * travel;
+
+  const bool changed = !navigation_thumb_visible_ ||
+      std::abs(navigation_thumb_height_ - thumb_height) > 0.25f ||
+      std::abs(navigation_thumb_top_ - thumb_top) > 0.25f;
+  if (changed) {
+    navigation_thumb_visible_ = true;
+    navigation_thumb_height_ = thumb_height;
+    navigation_thumb_top_ = thumb_top;
+    thumb->SetClass("hidden", false);
+    thumb->SetProperty("height", std::to_string(thumb_height) + "px");
+    thumb->SetProperty("top", std::to_string(thumb_top) + "px");
+  }
+  return changed;
 }
 
 void DeskController::apply_settings(const tokmon::cbor::Value& payload) {
@@ -1347,6 +1551,8 @@ void DeskController::finish_workspace_switch() {
   selected_tree_path_.clear();
   selected_tree_directory_ = false;
   current_file_.clear();
+  view_model_.state().file_open = false;
+  view_model_.dirty();
   current_diff_path_.clear();
   photons_.clear();
   active_ray_.clear();
@@ -1421,8 +1627,13 @@ void DeskController::update_composer_placeholder() {
   const auto* composer = control(document_, "composer");
   if (auto* placeholder = document_.GetElementById("composer-placeholder"))
     placeholder->SetClass("hidden", composer && !composer->GetValue().empty());
-  if (auto* send = document_.GetElementById("send-button"))
-    send->SetClass("disabled", !composer || composer->GetValue().empty());
+  if (auto* send = document_.GetElementById("send-button")) {
+    const bool running = view_model_.state().chat_running;
+    send->SetClass("running", running);
+    send->SetClass("stopping", view_model_.state().chat_stopping);
+    send->SetClass("disabled", !running &&
+        (!composer || composer->GetValue().empty()));
+  }
 }
 
 void DeskController::render_slash_commands() {
@@ -1523,6 +1734,8 @@ void DeskController::preview_file(Rml::Element& row) {
     (void)save_local_settings(ignored);
   }
   current_file_.clear();
+  view_model_.state().file_open = false;
+  view_model_.dirty();
   heavy_focus_ = HeavyFocus::none;
   ++syntax_generation_;
   pending_syntax_.reset();
@@ -1573,6 +1786,8 @@ void DeskController::apply_file_load() {
         text(document_, "file-path", escape(adopt_error));
       } else {
         current_file_ = result.snapshot->path;
+        view_model_.state().file_open = true;
+        view_model_.dirty();
         last_recovery_version_ = 0;
         last_recovery_dirty_ = false;
         if (result.recovery) {
@@ -1612,6 +1827,7 @@ void DeskController::save_file() {
     text(document_, "file-path", escape("保存失败：" + error));
     return;
   }
+  watcher_.acknowledge_self_write(current_file_);
   text(document_, "file-path", escape(current_file_.filename().string() + " · 已保存"));
   update_editor_status();
   refresh_review();
@@ -1959,8 +2175,13 @@ void DeskController::confirm_discard() {
 
 void DeskController::commit_changes(bool push_after_commit) {
   auto* message = control(document_, "commit-message");
-  const std::string commit_message = message && !message->GetValue().empty()
-      ? message->GetValue() : Rml::String("Update from tokmon-desk");
+  if (!message || message->GetValue().empty()) {
+    show_toast("请输入提交信息");
+    if (message)
+      message->Focus();
+    return;
+  }
+  const std::string commit_message = message->GetValue();
   if (review_future_.valid()) {
     show_toast("另一个 Git 操作仍在执行");
     return;
@@ -1972,7 +2193,8 @@ void DeskController::commit_changes(bool push_after_commit) {
         result.kind = ReviewTaskResult::Kind::commit;
         result.push_requested = push_after_commit;
         GitService service(root);
-        result.success = service.commit(commit_message, result.error) &&
+        result.commit_created = service.commit(commit_message, result.error);
+        result.success = result.commit_created &&
             (!push_after_commit || service.push(result.error));
         result.snapshot = service.status();
         return result;
@@ -2067,23 +2289,38 @@ bool DeskController::handle_raw_event(const SDL_Event& event) {
   const auto event_x = [this, &event]() {
     const float coordinate = event.type == SDL_EVENT_MOUSE_MOTION
         ? event.motion.x : event.button.x;
-    return coordinate * platform_.input_coordinate_scale();
+    return coordinate * platform_.design_coordinate_scale();
   };
+  if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE) {
+    if (dismiss_transient_ui()) return true;
+    const auto& view = view_model_.state();
+    const auto* trajectory = document_.GetElementById("trajectory");
+    if (trajectory && !trajectory->IsClassSet("hidden") &&
+        (view.trajectory_zoomed || view.trajectory_selection_visible)) {
+      trajectory_.clear_timeline_focus();
+      render_trajectory();
+      return true;
+    }
+  }
   if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
       event.button.button == SDL_BUTTON_LEFT) {
     const float x = event_x();
-    const float y = event.button.y * platform_.input_coordinate_scale();
-    const float viewport_width = document_.GetClientWidth();
-    if (y >= 46.f && sidebar_visible_ &&
-        std::abs(x - static_cast<float>(sidebar_width_)) <= 6.f) {
+    const float y = event.button.y * platform_.design_coordinate_scale();
+    const float layout_scale = std::max(
+        document_.GetContext()->GetDensityIndependentPixelRatio(), 0.01f);
+    const float viewport_width = document_.GetClientWidth() / layout_scale;
+    if (y >= 46.f + legacy_frame_inset && sidebar_visible_ &&
+        std::abs(x - (static_cast<float>(sidebar_width_) +
+                      legacy_frame_inset)) <= 6.f) {
       panel_resize_ = PanelResize::sidebar;
       panel_resize_anchor_x_ = x;
       panel_resize_start_width_ = sidebar_width_;
       SDL_CaptureMouse(true);
       return true;
     }
-    if (y >= 46.f && right_panel_visible_ &&
-        std::abs(x - (viewport_width - static_cast<float>(right_panel_width_))) <= 6.f) {
+    if (y >= 46.f + legacy_frame_inset && right_panel_visible_ &&
+        std::abs(x - (viewport_width - legacy_frame_inset -
+                      static_cast<float>(right_panel_width_))) <= 6.f) {
       panel_resize_ = PanelResize::right;
       panel_resize_anchor_x_ = x;
       panel_resize_start_width_ = right_panel_width_;
@@ -2094,8 +2331,10 @@ bool DeskController::handle_raw_event(const SDL_Event& event) {
   if (event.type == SDL_EVENT_MOUSE_MOTION &&
       panel_resize_ != PanelResize::none) {
     const float x = event_x();
+    const float layout_scale = std::max(
+        document_.GetContext()->GetDensityIndependentPixelRatio(), 0.01f);
     const int viewport_width = static_cast<int>(std::lround(
-        document_.GetClientWidth()));
+        document_.GetClientWidth() / layout_scale - legacy_frame_inset * 2.f));
     if (panel_resize_ == PanelResize::sidebar) {
       const int next = panel_resize_start_width_ +
           static_cast<int>(std::lround(x - panel_resize_anchor_x_));
@@ -2289,10 +2528,28 @@ bool DeskController::handle_raw_event(const SDL_Event& event) {
 void DeskController::ProcessEvent(Rml::Event& event) {
   auto* listener = event.GetCurrentElement();
   if (!listener) return;
+  const auto& listener_id = listener->GetId();
+  const bool overlay_listener =
+      listener_id == "settings-overlay" || listener_id == "new-session-overlay" ||
+      listener_id == "commit-overlay" || listener_id == "discard-overlay" ||
+      listener_id == "terminal-paste-overlay" ||
+      listener_id == "file-operation-overlay";
+  // Overlay children have their own listeners. Let the event reach those
+  // listeners exactly once, while retaining a direct backdrop click as the
+  // dismiss gesture. Without this guard a child button bubbles back to this
+  // controller through the overlay and toggle actions execute twice.
+  if (event.GetType() == "click" && overlay_listener &&
+      event.GetTargetElement() != listener)
+    return;
   auto* element = listener;
-  if (event.GetType() == "click") {
+  if (event.GetType() == "click" || event.GetType() == "keydown" ||
+      event.GetType() == "mousedown") {
     for (auto* candidate = event.GetTargetElement(); candidate &&
          candidate != listener; candidate = candidate->GetParentNode()) {
+      if (!candidate->GetAttribute<Rml::String>("nav-id", "").empty()) {
+        element = candidate;
+        break;
+      }
       if (candidate->GetTagName() == "button") {
         element = candidate;
         break;
@@ -2300,15 +2557,74 @@ void DeskController::ProcessEvent(Rml::Event& event) {
     }
   }
   const auto& id = element->GetId();
+  if (event.GetType() == "mousedown" &&
+      !element->GetAttribute<Rml::String>("nav-id", "").empty() &&
+      event.GetParameter<int>("button", 0) == 1) {
+    open_navigation_context(
+        *element, static_cast<float>(event.GetParameter<int>("mouse_y", 0)));
+    event.StopPropagation();
+    return;
+  }
+  if (event.GetType() == "click" && event.GetTargetElement() == listener &&
+      (id == "settings-overlay" || id == "new-session-overlay" ||
+       id == "commit-overlay" || id == "discard-overlay" ||
+       id == "terminal-paste-overlay" || id == "file-operation-overlay" ||
+       id == "composer-popover")) {
+    (void)dismiss_transient_ui();
+    return;
+  }
+  if (listener_id == "trajectory-lane-track") {
+    const auto absolute = listener->GetAbsoluteOffset(Rml::BoxArea::Content);
+    const auto width = std::max(1.f, listener->GetClientWidth());
+    const auto mouse_x = static_cast<float>(
+        event.GetParameter<int>("mouse_x", static_cast<int>(absolute.x)));
+    const auto fraction = std::clamp(
+        static_cast<double>((mouse_x - absolute.x) / width), 0.0, 1.0);
+    if (event.GetType() == "mousescroll") {
+      trajectory_.zoom_timeline(
+          fraction, event.GetParameter<float>("wheel_delta_y", 0.f));
+      render_trajectory();
+      event.StopPropagation();
+      return;
+    }
+    if (event.GetType() == "keydown" &&
+        event.GetParameter<int>("key_identifier", 0) == Rml::Input::KI_ESCAPE) {
+      trajectory_.clear_timeline_focus();
+      render_trajectory();
+      event.StopPropagation();
+      return;
+    }
+    if (event.GetType() == "mousedown") {
+      const auto button = event.GetParameter<int>("button", 0);
+      if (button == 0 || button == 1) {
+        listener->Focus();
+        trajectory_.begin_timeline_gesture(fraction, button == 1);
+        render_trajectory();
+      }
+      return;
+    }
+    if (event.GetType() == "mousemove" &&
+        trajectory_.timeline_gesture_active()) {
+      trajectory_.update_timeline_gesture(fraction);
+      render_trajectory();
+      return;
+    }
+    if (event.GetType() == "mouseup" &&
+        trajectory_.timeline_gesture_active()) {
+      trajectory_.end_timeline_gesture(fraction);
+      render_trajectory();
+      return;
+    }
+  }
   if (id == "conversation" && event.GetType() == "mousescroll") {
     constexpr float kEstimatedTurnHeight = 210.f;
-    constexpr std::size_t kLeadTurns = 12;
+    constexpr std::size_t kLeadTurns = conversation_overscan_turns;
     const auto visible_turn = static_cast<std::size_t>(std::max(
         0.f, element->GetScrollTop()) / kEstimatedTurnHeight);
     const auto desired = visible_turn > kLeadTurns
         ? visible_turn - kLeadTurns : 0;
-    const auto maximum = conversation_total_turns_ > 80
-        ? conversation_total_turns_ - 80 : 0;
+    const auto maximum = conversation_total_turns_ > conversation_window_turns
+        ? conversation_total_turns_ - conversation_window_turns : 0;
     const auto clamped = std::min(desired, maximum);
     if (clamped != conversation_window_start_) {
       conversation_window_start_ = clamped;
@@ -2388,8 +2704,63 @@ void DeskController::ProcessEvent(Rml::Event& event) {
     (void)terminal_.handle_pointer(event);
     return;
   }
+  if (event.GetType() == "click") {
+    const auto copy_id = element->GetAttribute<Rml::String>(
+        "data-copy-markdown", "");
+    if (!copy_id.empty()) {
+      if (const auto* payload = renderer_.conversation_copy_payload(copy_id)) {
+        platform_.SetClipboardText(*payload);
+        show_toast(element->IsClassSet("code-copy")
+                       ? "代码已复制" : "消息已按纯文本复制");
+      } else {
+        show_toast("复制内容已离开当前虚拟窗口");
+      }
+      return;
+    }
+    if (const auto sequence = element->GetAttribute<Rml::String>(
+            "data-trace-sequence", "");
+        !sequence.empty()) {
+      std::uint64_t value = 0;
+      const auto [end, parse_error] = std::from_chars(
+          sequence.data(), sequence.data() + sequence.size(), value);
+      if (parse_error == std::errc{} && end == sequence.data() + sequence.size()) {
+        trajectory_.select(value);
+        render_trajectory();
+      }
+      return;
+    }
+    if (const auto tab = element->GetAttribute<Rml::String>(
+            "trajectory-detail-tab", "");
+        !tab.empty()) {
+      trajectory_.select_detail_tab(tab);
+      render_trajectory();
+      return;
+    }
+    if (const auto label = element->GetAttribute<Rml::String>(
+            "data-trace-turn", "");
+        !label.empty()) {
+      const auto separator = label.find_last_of(' ');
+      const auto digits = separator == Rml::String::npos
+          ? std::string_view(label) : std::string_view(label).substr(separator + 1);
+      int turn = 0;
+      const auto [end, parse_error] = std::from_chars(
+          digits.data(), digits.data() + digits.size(), turn);
+      if (parse_error == std::errc{} && end == digits.data() + digits.size()) {
+        trajectory_.toggle_turn(turn);
+        render_trajectory();
+      }
+      return;
+    }
+  }
   if (event.GetType() == "keydown") {
     const auto key = event.GetParameter<int>("key_identifier", 0);
+    if (!element->GetAttribute<Rml::String>("nav-id", "").empty()) {
+      if (key == Rml::Input::KI_RETURN || key == Rml::Input::KI_SPACE) {
+        handle_navigation(*element);
+        event.StopPropagation();
+      }
+      return;
+    }
     if (id == "composer") {
       const bool slash_open = view_model_.state().slash_visible &&
           slash_command_count_ > 0;
@@ -2489,12 +2860,21 @@ void DeskController::ProcessEvent(Rml::Event& event) {
     terminal_.search();
     return;
   }
+  if ((event.GetType() == "input" || event.GetType() == "change" ||
+       event.GetType() == "keyup") && id == "trajectory-search") {
+    if (const auto* search = control(document_, "trajectory-search")) {
+      trajectory_.set_search(search->GetValue());
+      render_trajectory();
+    }
+    return;
+  }
   if (event.GetType() == "click" && id == "terminal-search") {
     heavy_focus_ = HeavyFocus::none;
     terminal_.release_focus();
     return;
   }
-  if (element->GetAttribute<Rml::String>("nav-id", "").size()) {
+  if (event.GetType() == "click" &&
+      element->GetAttribute<Rml::String>("nav-id", "").size()) {
     handle_navigation(*element);
     return;
   }
@@ -2565,6 +2945,23 @@ void DeskController::ProcessEvent(Rml::Event& event) {
     render_navigation();
     toggle_hidden("new-session-overlay");
   }
+  else if (id == "navigation-context-new") {
+    close_navigation_context();
+    auto& created = navigation_.create_session("新会话");
+    active_ray_.clear();
+    photons_.clear();
+    conversation_dirty_ = true;
+    view_model_.state().session_title = created.title;
+    view_model_.dirty();
+    render_navigation();
+    save_navigation();
+  }
+  else if (id == "navigation-context-rename") {
+    const auto* selected = navigation_.selected();
+    close_navigation_context();
+    renderer_.rename_popover(selected ? selected->title : "新会话");
+  }
+  else if (id == "navigation-context-delete") delete_navigation_session();
   else if (id == "settings-button") {
     render_settings_page(settings_.page());
     toggle_hidden("settings-overlay");
@@ -2614,6 +3011,42 @@ void DeskController::ProcessEvent(Rml::Event& event) {
     render_trajectory();
   }
   else if (id == "export-trajectory") export_trajectory();
+  else if (id == "refresh-trajectory") {
+    render_trajectory();
+    show_toast("轨迹已刷新");
+  }
+  else if (id == "trajectory-duration-toggle") {
+    trajectory_.toggle_actual_duration();
+    render_trajectory();
+  }
+  else if (id == "trajectory-turns-toggle") {
+    trajectory_.toggle_all_turns();
+    render_trajectory();
+  }
+  else if (id == "trajectory-calls-toggle") {
+    trajectory_.toggle_all_calls();
+    render_trajectory();
+  }
+  else if (id == "trajectory-filter") {
+    trajectory_.cycle_filter();
+    render_trajectory();
+  }
+  else if (id == "trajectory-load-earlier") {
+    trajectory_.load_earlier();
+    render_trajectory();
+  }
+  else if (id == "trajectory-follow") {
+    trajectory_.follow_latest();
+    render_trajectory();
+  }
+  else if (id == "trajectory-detail-close") {
+    trajectory_.close_details();
+    render_trajectory();
+  }
+  else if (id == "trajectory-reset-timeline") {
+    trajectory_.clear_timeline_focus();
+    render_trajectory();
+  }
   else if (id == "title-edit") {
     const auto* selected = navigation_.selected();
     renderer_.rename_popover(selected ? selected->title : "新会话");
@@ -2672,8 +3105,25 @@ void DeskController::ProcessEvent(Rml::Event& event) {
     set_right_panel_visible(false);
   }
   else if (id == "right-fullscreen") {
-    if (auto* body = document_.GetElementById("app-shell"))
-      body->SetClass("right-fullscreen", !body->IsClassSet("right-fullscreen"));
+    if (auto* body = document_.GetElementById("app-shell")) {
+      const bool fullscreen = !body->IsClassSet("right-fullscreen");
+      body->SetClass("right-fullscreen", fullscreen);
+      if (auto* panel = document_.GetElementById("right-panel")) {
+        if (fullscreen) {
+          // apply_panel_layout() intentionally writes a persisted dp width as
+          // an inline property. A stylesheet-only fullscreen rule cannot
+          // override that inline value, and the stale narrow class would keep
+          // the editor pane hidden even if the panel happened to grow.
+          panel->SetProperty("left", "0dp");
+          panel->SetProperty("width", "100%");
+          panel->SetClass("compact", false);
+          panel->SetClass("narrow", false);
+        } else {
+          panel->RemoveProperty("left");
+          apply_panel_layout();
+        }
+      }
+    }
   }
   else if (id == "right-tab-close") show_right_launcher();
   else if (id == "launcher-review" || id == "review-tab") {
@@ -2685,12 +3135,23 @@ void DeskController::ProcessEvent(Rml::Event& event) {
     refresh_files();
   }
   else if (id == "terminal-tab") {
+    // A terminal is a full working surface rather than a compact launcher.
+    // Keep the legacy 214dp rail for Review/Files launch actions, but expand
+    // before creating the PTY so its toolbar and 80x24 cell grid are usable.
+    if (right_panel_width_ < 520) {
+      right_panel_width_ = 620;
+      settings_.set("right_panel_width",
+                    static_cast<std::int64_t>(right_panel_width_));
+      apply_panel_layout();
+      std::string ignored;
+      (void)save_local_settings(ignored);
+    }
     show_right_view("terminal-view");
     terminal_.start();
     if (auto* surface = document_.GetElementById("terminal-surface")) {
       heavy_focus_ = HeavyFocus::terminal;
       surface->Focus();
-      terminal_.resize();
+      (void)terminal_.resize();
       platform_.ActivateKeyboard(
           surface->GetAbsoluteOffset(Rml::BoxArea::Content), 17.f);
       if (terminal_.running()) {
@@ -2779,6 +3240,17 @@ void DeskController::ProcessEvent(Rml::Event& event) {
     enqueue_intent("model.provider.test", settings_.provider_test());
     settings_.set_status("正在通过真实模型光路测试…");
   }
+  else if (id == "open-notices") {
+    const auto base = std::filesystem::path(SDL_GetBasePath());
+    auto notices = base / "THIRD_PARTY_NOTICES.txt";
+    if (!std::filesystem::exists(notices))
+      notices = base / "THIRD_PARTY_NOTICES.md";
+    std::string open_error;
+    if (platform_.open_local_file(notices, open_error))
+      settings_.set_status("已使用系统默认应用打开许可声明");
+    else
+      settings_.set_status("无法打开许可声明：" + open_error);
+  }
   else if (id == "save-file") save_file();
   else if (id == "undo-file") undo_file();
   else if (id == "redo-file") redo_file();
@@ -2806,7 +3278,6 @@ void DeskController::ProcessEvent(Rml::Event& event) {
   else if (id == "confirm-discard") confirm_discard();
   else if (id == "cancel-terminal-paste") {
     terminal_.cancel_paste();
-    toggle_hidden("terminal-paste-overlay");
   }
   else if (id == "confirm-terminal-paste") terminal_.paste(true);
   else if (id == "terminal-clear-search") {
@@ -2845,6 +3316,14 @@ void DeskController::apply_change_set_task() {
 
 bool DeskController::update() {
   bool changed = false;
+  changed = update_navigation_scrollbar() || changed;
+  if (conversation_follow_tail_pending_) {
+    conversation_follow_tail_pending_ = false;
+    if (auto* conversation = document_.GetElementById("conversation")) {
+      conversation->SetScrollTop(conversation->GetScrollHeight());
+      changed = true;
+    }
+  }
   if (change_set_future_.valid() &&
       change_set_future_.wait_for(std::chrono::seconds(0)) ==
           std::future_status::ready)
@@ -2952,7 +3431,8 @@ bool DeskController::update() {
   if (!changes.empty()) {
     changed = true;
     for (const auto& change : changes)
-      if (!current_file_.empty() && change.path == current_file_)
+      if (!current_file_.empty() && change.path == current_file_ &&
+          change.origin == WorkspaceChangeOrigin::external)
         documents_.observe_external_change(current_file_);
     update_editor_status();
     refresh_review();
@@ -3043,6 +3523,11 @@ bool DeskController::update() {
       chat_future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
     changed = true;
     auto chat_task = chat_future_.get();
+    active_chat_request_id_ = 0;
+    view_model_.state().chat_running = false;
+    view_model_.state().chat_stopping = false;
+    view_model_.dirty();
+    update_composer_placeholder();
     auto result = std::move(chat_task.stream);
     if (chat_task.changes && !chat_task.changes->changes.empty()) {
         current_change_set_ = std::move(*chat_task.changes);
@@ -3089,13 +3574,27 @@ bool DeskController::update() {
           std::make_move_iterator(incoming.end()));
     }
   }
+  if (chat_cancel_future_.valid() &&
+      chat_cancel_future_.wait_for(std::chrono::seconds(0)) ==
+          std::future_status::ready) {
+    changed = true;
+    const auto result = chat_cancel_future_.get();
+    if (result.success)
+      show_toast("已请求停止当前任务");
+    else {
+      view_model_.state().chat_stopping = false;
+      view_model_.dirty();
+      show_toast("停止失败：" + result.error);
+    }
+  }
   changed = browser_.update() || changed;
   changed = terminal_.update() || changed;
   return changed;
 }
 
 int DeskController::update_poll_interval_ms() const noexcept {
-  if (chat_future_.valid() || startup_future_.valid() ||
+  if (chat_future_.valid() || chat_cancel_future_.valid() ||
+      startup_future_.valid() ||
       browser_.busy() || intent_future_.valid() ||
       file_search_future_.valid() || file_tree_future_.valid() ||
       file_load_future_.valid() || workspace_switch_future_.valid() ||

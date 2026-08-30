@@ -53,6 +53,14 @@ class ElementCodeSurface final : public Rml::Element {
   void scroll_lines(int lines);
   void scroll_columns(float pixels);
   [[nodiscard]] std::uint64_t version() const noexcept { return version_; }
+  [[nodiscard]] const std::string& text() const noexcept { return text_; }
+  [[nodiscard]] std::size_t caret_offset() const noexcept { return caret_; }
+  [[nodiscard]] std::size_t first_visible_line() const noexcept {
+    return first_line_;
+  }
+  [[nodiscard]] float horizontal_offset() const noexcept {
+    return horizontal_offset_;
+  }
   [[nodiscard]] std::size_t line_count() const noexcept {
     return line_starts_.size();
   }

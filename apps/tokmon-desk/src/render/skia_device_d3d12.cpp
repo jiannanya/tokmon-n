@@ -194,6 +194,42 @@ public:
     return setup_surfaces(error);
   }
 
+  bool recover(std::string& error) override {
+    auto* const window = window_;
+    const int width = width_;
+    const int height = height_;
+    destroy(true);
+    next_fence_value_ = 1;
+    frame_index_ = 0;
+    error.clear();
+    return initialize(window, width, height, error);
+  }
+
+  bool force_device_loss_for_test(std::string& error) override {
+    if (!device_) {
+      error = "D3D12 device is unavailable";
+      return false;
+    }
+    ComPtr<ID3D12Device5> removable;
+    const auto query = device_.As(&removable);
+    if (FAILED(query) || !removable) {
+      error = hr_message("ID3D12Device5 query", query);
+      return false;
+    }
+    removable->RemoveDevice();
+    const auto reason = device_->GetDeviceRemovedReason();
+    if (SUCCEEDED(reason)) {
+      error = "ID3D12Device5::RemoveDevice did not remove the device";
+      return false;
+    }
+    char detail[96]{};
+    std::snprintf(detail, sizeof(detail),
+                  "intentional D3D12 removal confirmed (HRESULT 0x%08lx)",
+                  static_cast<unsigned long>(reason));
+    error = detail;
+    return true;
+  }
+
   SkCanvas* begin_frame() override {
     if (!swapchain_)
       return nullptr;
@@ -309,10 +345,12 @@ private:
       wait_for_frame(index);
   }
 
-  void destroy() {
-    if (context_)
+  void destroy(const bool force = false) {
+    const bool device_healthy = device_ &&
+        SUCCEEDED(device_->GetDeviceRemovedReason());
+    if (context_ && !force && device_healthy)
       context_->flushAndSubmit(GrSyncCpu::kYes);
-    if (fence_ && fence_event_)
+    if (fence_ && fence_event_ && !force && device_healthy)
       wait_for_all_frames();
     for (auto& surface : surfaces_)
       surface.reset();

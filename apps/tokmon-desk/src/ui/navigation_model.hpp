@@ -38,6 +38,7 @@ class NavigationModel final {
   [[nodiscard]] DeskNavigationItem& create_session(std::string title);
   [[nodiscard]] bool bind_selected_ray(std::string ray);
   [[nodiscard]] bool rename_selected(std::string title, bool manual);
+  [[nodiscard]] bool remove_selected_session();
   [[nodiscard]] std::filesystem::path selected_workspace() const;
   [[nodiscard]] const std::vector<DeskNavigationItem>& items() const noexcept;
   [[nodiscard]] std::vector<DeskNavigationItem>& items() noexcept;

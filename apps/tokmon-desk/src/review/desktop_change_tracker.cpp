@@ -17,13 +17,13 @@ namespace tokmon::desk {
 namespace {
 
 constexpr std::uintmax_t kMaximumPreimageBytes = 16u * 1024u * 1024u;
-constexpr std::uintmax_t kMaximumSnapshotStoreBytes = 512u * 1024u * 1024u;
 
 bool untracked(const GitFileStatus& status) {
   return status.index_status == '?' && status.worktree_status == '?';
 }
 
-std::uintmax_t store_size(const std::filesystem::path& root) {
+std::uintmax_t store_size(const std::filesystem::path& root,
+                          const std::uintmax_t limit) {
   std::uintmax_t result = 0;
   std::error_code error;
   for (std::filesystem::recursive_directory_iterator iterator(
@@ -33,7 +33,7 @@ std::uintmax_t store_size(const std::filesystem::path& root) {
     if (iterator->is_regular_file(error))
       result += iterator->file_size(error);
     error.clear();
-    if (result > kMaximumSnapshotStoreBytes)
+    if (result > limit)
       break;
   }
   return result;
@@ -82,9 +82,10 @@ bool atomic_write(const std::filesystem::path& path, const std::string_view text
 } // namespace
 
 DesktopChangeTracker::DesktopChangeTracker(std::filesystem::path workspace,
-                                           std::filesystem::path snapshot_root)
+                                           std::filesystem::path snapshot_root,
+                                           const std::uintmax_t snapshot_quota_bytes)
     : workspace_(std::move(workspace)), snapshot_root_(std::move(snapshot_root)),
-      git_(workspace_) {}
+      git_(workspace_), snapshot_quota_bytes_(snapshot_quota_bytes) {}
 
 void DesktopChangeTracker::set_workspace(std::filesystem::path workspace) {
   workspace_ = std::move(workspace);
@@ -136,7 +137,8 @@ std::string DesktopChangeTracker::store_blob(const std::string_view content,
   std::error_code filesystem_error;
   if (std::filesystem::exists(path, filesystem_error))
     return digest;
-  if (store_size(snapshot_root_) + content.size() > kMaximumSnapshotStoreBytes) {
+  if (store_size(snapshot_root_, snapshot_quota_bytes_) + content.size() >
+      snapshot_quota_bytes_) {
     error = "change snapshot store quota exceeded";
     return {};
   }
@@ -355,6 +357,19 @@ bool DesktopChangeTracker::reject(DesktopChangeSet& changes,
       return false;
     }
   }
+  // Validate every content-addressed preimage before mutating any workspace
+  // path.  A missing/corrupt blob must leave the whole ChangeSet untouched;
+  // otherwise an earlier Agent-created file could be deleted before a later
+  // tracked file discovers that rollback is impossible.
+  std::unordered_map<std::string, std::string> preimages;
+  for (const auto& change : changes.changes) {
+    if (!change.existed_before)
+      continue;
+    auto before = load_blob(change.preimage_blob, error);
+    if (!before)
+      return false;
+    preimages.insert_or_assign(change.path, std::move(*before));
+  }
   for (const auto& change : changes.changes) {
     if (!change.existed_before) {
       std::error_code filesystem_error;
@@ -367,8 +382,9 @@ bool DesktopChangeTracker::reject(DesktopChangeSet& changes,
       }
       continue;
     }
-    auto before = load_blob(change.preimage_blob, error);
-    if (!before || !write_workspace_file(change.path, *before, error))
+    const auto before = preimages.find(change.path);
+    if (before == preimages.end() ||
+        !write_workspace_file(change.path, before->second, error))
       return false;
   }
   changes.rejected = true;

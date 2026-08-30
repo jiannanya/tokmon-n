@@ -261,6 +261,34 @@ bool NavigationModel::rename_selected(std::string title, const bool manual) {
   return changed;
 }
 
+bool NavigationModel::remove_selected_session() {
+  const auto found = std::ranges::find(items_, true,
+                                       &DeskNavigationItem::selected);
+  if (found == items_.end() || found->kind != "session")
+    return false;
+  const auto index = static_cast<std::size_t>(found - items_.begin());
+  const auto project = project_ancestor(index);
+  items_.erase(found);
+  if (items_.empty())
+    return true;
+  for (auto& item : items_)
+    item.selected = false;
+  auto replacement = project < items_.size()
+      ? project : std::min(index, items_.size() - 1);
+  if (project < items_.size()) {
+    for (auto child = project + 1;
+         child < items_.size() &&
+         items_[child].indent > items_[project].indent; ++child) {
+      if (items_[child].kind == "session") {
+        replacement = child;
+        break;
+      }
+    }
+  }
+  items_[replacement].selected = true;
+  return true;
+}
+
 std::filesystem::path NavigationModel::selected_workspace() const {
   const auto* item = selected();
   return item ? inherited_workspace(

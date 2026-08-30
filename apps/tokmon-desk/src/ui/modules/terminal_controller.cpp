@@ -5,6 +5,7 @@
 #include "ui/elements/element_terminal.hpp"
 #include "ui/modules/settings_controller.hpp"
 
+#include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
@@ -146,6 +147,24 @@ TerminalController::Tab& TerminalController::active_tab() {
 TerminalSession& TerminalController::session() { return *active_tab().session; }
 GhosttyVt& TerminalController::vt() { return *active_tab().vt; }
 
+int TerminalController::cell_width_pixels(const Tab& tab) const {
+  const float density = document_ && document_->GetContext()
+      ? std::max(document_->GetContext()->GetDensityIndependentPixelRatio(),
+                 0.5f)
+      : 1.f;
+  return std::max(1, static_cast<int>(std::lround(
+      static_cast<float>(tab.cell_width) * density)));
+}
+
+int TerminalController::cell_height_pixels(const Tab& tab) const {
+  const float density = document_ && document_->GetContext()
+      ? std::max(document_->GetContext()->GetDensityIndependentPixelRatio(),
+                 0.5f)
+      : 1.f;
+  return std::max(1, static_cast<int>(std::lround(
+      static_cast<float>(tab.cell_height) * density)));
+}
+
 void TerminalController::set_status(std::string value) {
   if (document_)
     if (auto* element = document_->GetElementById("terminal-status"))
@@ -173,35 +192,48 @@ void TerminalController::start() {
     std::string ignored;
     (void)terminal_session->write(response, ignored);
   });
-  (void)tab.vt->resize(tab.columns, tab.rows, tab.cell_width, tab.cell_height);
+  (void)tab.vt->resize(tab.columns, tab.rows, cell_width_pixels(tab),
+                       cell_height_pixels(tab));
   tab.started = tab.session->start_profile(tab.launch, workspace_, tab.columns,
                                            tab.rows, error);
   set_status(tab.started ? "正在运行" : "不可用：" + error);
   if (tab.started)
-    resize();
+    (void)resize();
 }
 
-void TerminalController::resize() {
+bool TerminalController::resize() {
   if (!document_)
-    return;
+    return false;
   auto* surface = dynamic_cast<ElementTerminal*>(
       document_->GetElementById("terminal-surface"));
   if (!surface)
-    return;
+    return false;
   auto& tab = active_tab();
+  const int cell_width = cell_width_pixels(tab);
+  const int cell_height = cell_height_pixels(tab);
+  const auto client_width = surface->GetClientWidth();
+  const auto client_height = surface->GetClientHeight();
+  // RmlUi retains the previous box until the visibility/layout pass after a
+  // right-panel tab switch. Never collapse a newly opened PTY to the 20x5
+  // clamps from a hidden (zero-sized) terminal surface; the following update
+  // pass will resize it from the actual visible box.
+  if (client_width < static_cast<float>(cell_width) ||
+      client_height < static_cast<float>(cell_height))
+    return false;
   const auto columns = std::clamp(static_cast<int>(
-      surface->GetClientWidth() / static_cast<float>(tab.cell_width)), 20, 400);
+      client_width / static_cast<float>(cell_width)), 20, 400);
   const auto rows = std::clamp(static_cast<int>(
-      surface->GetClientHeight() / static_cast<float>(tab.cell_height)), 5, 200);
+      client_height / static_cast<float>(cell_height)), 5, 200);
   if (columns == tab.columns && rows == tab.rows)
-    return;
+    return false;
   tab.columns = columns;
   tab.rows = rows;
   std::string error;
   if (tab.started && !tab.session->resize(columns, rows, error))
     tab.vt->append("\r\n" + error + "\r\n");
-  (void)tab.vt->resize(columns, rows, tab.cell_width, tab.cell_height);
+  (void)tab.vt->resize(columns, rows, cell_width, cell_height);
   surface->set_snapshot(tab.vt->render_snapshot());
+  return true;
 }
 
 void TerminalController::paste(const bool allow_unsafe) {
@@ -296,7 +328,7 @@ void TerminalController::create_tab() {
   if (document_)
     if (auto* surface = document_->GetElementById("terminal-surface"))
       surface->SetProperty("font-size",
-                           std::to_string(active_tab().font_size) + "px");
+                           std::to_string(active_tab().font_size) + "dp");
 }
 
 void TerminalController::close_tab() {
@@ -324,7 +356,7 @@ void TerminalController::select_tab(const std::string_view id) {
   if (document_)
     if (auto* surface = dynamic_cast<ElementTerminal*>(
             document_->GetElementById("terminal-surface"))) {
-      surface->SetProperty("font-size", std::to_string(tab.font_size) + "px");
+      surface->SetProperty("font-size", std::to_string(tab.font_size) + "dp");
       surface->set_snapshot(tab.vt->render_snapshot());
     }
   set_status(tab.started ? "正在运行" : "未启动");
@@ -363,8 +395,9 @@ bool TerminalController::handle_pointer(Rml::Event& event) {
     return false;
   const auto absolute = element->GetAbsoluteOffset(Rml::BoxArea::Content);
   if (event.GetType() == "click") {
-    element->Focus(); start(); resize();
-    platform_.ActivateKeyboard(absolute, 17.f);
+    element->Focus(); start(); (void)resize();
+    platform_.ActivateKeyboard(
+        absolute, static_cast<float>(cell_height_pixels(active_tab())));
     if ((SDL_GetModState() & SDL_KMOD_CTRL) != 0) {
       const auto link = surface->hyperlink_at(
           static_cast<float>(event.GetParameter<int>("mouse_x", 0)) - absolute.x,
@@ -378,8 +411,9 @@ bool TerminalController::handle_pointer(Rml::Event& event) {
       event.GetType() != "mouseup")
     return false;
   if (event.GetType() == "mousedown") {
-    element->Focus(); start(); resize();
-    platform_.ActivateKeyboard(absolute, 17.f);
+    element->Focus(); start(); (void)resize();
+    platform_.ActivateKeyboard(
+        absolute, static_cast<float>(cell_height_pixels(active_tab())));
     set_status("正在运行 · 已聚焦");
     set_hint("终端已聚焦 · 直接输入 · Ctrl+Shift+C/V 复制/粘贴 · Esc 释放焦点");
   }
@@ -387,6 +421,8 @@ bool TerminalController::handle_pointer(Rml::Event& event) {
   const float y = static_cast<float>(event.GetParameter<int>("mouse_y", 0)) - absolute.y;
   const bool force_selection = (SDL_GetModState() & SDL_KMOD_SHIFT) != 0;
   auto& tab = active_tab();
+  const int cell_width = cell_width_pixels(tab);
+  const int cell_height = cell_height_pixels(tab);
   if (tab.vt->mouse_tracking() && !force_selection) {
     TerminalMouseAction action = TerminalMouseAction::motion;
     if (event.GetType() == "mousedown") { action = TerminalMouseAction::press; mouse_down_ = true; }
@@ -394,8 +430,8 @@ bool TerminalController::handle_pointer(Rml::Event& event) {
     const auto bytes = tab.vt->encode_mouse(action,
         event.GetType() == "mousemove" ? TerminalMouseButton::none : TerminalMouseButton::left,
         x, y, static_cast<int>(element->GetClientWidth()),
-        static_cast<int>(element->GetClientHeight()), tab.cell_width,
-        tab.cell_height, modifiers(SDL_GetModState()), mouse_down_);
+        static_cast<int>(element->GetClientHeight()), cell_width,
+        cell_height, modifiers(SDL_GetModState()), mouse_down_);
     std::string error;
     if (!bytes.empty() && !tab.session->write(bytes, error))
       tab.vt->append("\r\n" + error + "\r\n");
@@ -407,13 +443,15 @@ bool TerminalController::handle_pointer(Rml::Event& event) {
 
 bool TerminalController::handle_wheel(const SDL_Event& event) {
   auto& tab = active_tab();
+  const int cell_width = cell_width_pixels(tab);
+  const int cell_height = cell_height_pixels(tab);
   if (tab.vt->mouse_tracking()) {
     const auto button = event.wheel.y > 0 ? TerminalMouseButton::wheel_up
                                          : TerminalMouseButton::wheel_down;
     const auto bytes = tab.vt->encode_mouse(TerminalMouseAction::press, button,
         event.wheel.mouse_x, event.wheel.mouse_y,
-        tab.columns * tab.cell_width, tab.rows * tab.cell_height,
-        tab.cell_width, tab.cell_height, modifiers(SDL_GetModState()));
+        tab.columns * cell_width, tab.rows * cell_height,
+        cell_width, cell_height, modifiers(SDL_GetModState()));
     std::string error;
     if (!bytes.empty() && !tab.session->write(bytes, error))
       tab.vt->append("\r\n" + error + "\r\n");
@@ -471,7 +509,10 @@ bool TerminalController::handle_key(const SDL_Event& event) {
 }
 
 bool TerminalController::update() {
-  bool changed = false;
+  // The panel can become visible or change width after event dispatch. Keep
+  // the Ghostty grid synchronized with the settled RmlUi content box even
+  // when the shell has not emitted output yet.
+  bool changed = resize();
   if (!pending_keydown_text_.empty()) {
     const auto pending = std::move(pending_keydown_text_);
     pending_keydown_text_.clear();

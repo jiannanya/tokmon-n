@@ -1,7 +1,10 @@
 #include "platform/desk_app_paths.hpp"
 
 #include <cstdlib>
+#include <algorithm>
+#include <chrono>
 #include <stdexcept>
+#include <vector>
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -30,6 +33,65 @@ bool is_within(const std::filesystem::path& child, const std::filesystem::path& 
        ++parent_it, ++child_it) {
     if (child_it == normalized_child.end() || *child_it != *parent_it)
       return false;
+  }
+  return true;
+}
+
+struct RetainedFile {
+  std::filesystem::path path;
+  std::uintmax_t bytes{0};
+  std::filesystem::file_time_type modified;
+};
+
+bool prune_directory(const std::filesystem::path& root,
+                     const std::uintmax_t maximum_bytes,
+                     const std::chrono::hours maximum_age,
+                     DeskRetentionReport& report, std::string& error) {
+  std::error_code filesystem_error;
+  std::vector<RetainedFile> files;
+  std::uintmax_t total = 0;
+  for (std::filesystem::recursive_directory_iterator iterator(
+           root, std::filesystem::directory_options::skip_permission_denied,
+           filesystem_error), end;
+       !filesystem_error && iterator != end; iterator.increment(filesystem_error)) {
+    if (!iterator->is_regular_file(filesystem_error)) {
+      filesystem_error.clear();
+      continue;
+    }
+    const auto bytes = iterator->file_size(filesystem_error);
+    if (filesystem_error) {
+      filesystem_error.clear();
+      continue;
+    }
+    files.push_back({iterator->path(), bytes,
+                     iterator->last_write_time(filesystem_error)});
+    filesystem_error.clear();
+    total += bytes;
+  }
+  if (filesystem_error) {
+    error = "cannot enumerate retention directory: " +
+            filesystem_error.message();
+    return false;
+  }
+  std::ranges::sort(files, {}, &RetainedFile::modified);
+  const bool enforce_age = maximum_age != std::chrono::hours::max();
+  const auto cutoff = enforce_age
+      ? std::filesystem::file_time_type::clock::now() - maximum_age
+      : std::filesystem::file_time_type::min();
+  for (const auto& file : files) {
+    if ((!enforce_age || file.modified >= cutoff) && total <= maximum_bytes)
+      continue;
+    if (!std::filesystem::remove(file.path, filesystem_error)) {
+      if (filesystem_error) {
+        error = "cannot prune Desktop private state: " +
+                filesystem_error.message();
+        return false;
+      }
+      continue;
+    }
+    ++report.removed_files;
+    report.removed_bytes += file.bytes;
+    total = file.bytes > total ? 0 : total - file.bytes;
   }
   return true;
 }
@@ -104,6 +166,18 @@ bool DeskAppPaths::ensure(std::string& error) const {
     }
   }
   return true;
+}
+
+bool DeskAppPaths::enforce_retention(const DeskRetentionPolicy& policy,
+                                     DeskRetentionReport& report,
+                                     std::string& error) const {
+  report = {};
+  error.clear();
+  return prune_directory(cache, policy.cache_bytes, std::chrono::hours::max(),
+                         report, error) &&
+      prune_directory(logs, policy.log_bytes, policy.log_age, report, error) &&
+      prune_directory(recovery, policy.recovery_bytes, policy.recovery_age,
+                      report, error);
 }
 
 bool DeskAppPaths::isolated_from(const std::filesystem::path& workspace) const {

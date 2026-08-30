@@ -1,6 +1,18 @@
+/* RmlUi exposes keyboard order through the RCSS tab-index property rather
+   than the HTML tabindex attribute. Keep every interactive template control
+   in tree order, including data-bound rows and native-rendered surfaces. */
+button, input, select, textarea,
+.tree-row,
+#trajectory-lane-track,
+#diff-surface,
+#file-preview,
+#file-tree,
+#terminal-surface {
+  tab-index: auto;
+}
 button { cursor: pointer; }
 button:hover { filter: brightness(0.985); }
-button:active { transform: translate(0px, 1px); }
+button:active { transform: translate(0dp, 1dp); }
 input:focus, textarea:focus { outline-width: 0; }
 code { font-family: "MiSans VF"; }
 h1, h2, h3, p { color: inherit; }

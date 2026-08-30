@@ -65,7 +65,7 @@
             <div class="setting-card"><div class="setting-copy"><strong>tokmon-desk</strong><p>SDL3 + RmlUi + Skia 原生桌面技术重写</p></div><span class="locked-value">开发版</span></div>
             <div class="setting-card"><div class="setting-copy"><strong>开源组件</strong><p>RmlUi · SDL3 · Skia · HarfBuzz · FreeType · MD4C · Zep · libgit2 · tree-sitter · libghostty-vt</p></div></div>
             <div class="setting-card"><div class="setting-copy"><strong>Browser</strong><p>基础安装包不包含浏览器运行时</p></div></div>
-            <div class="setting-card"><div class="setting-copy"><strong>许可声明</strong><p>完整版权与许可文本随发行包的 THIRD_PARTY_NOTICES.md 提供。</p></div></div>
+            <div class="setting-card"><div class="setting-copy"><strong>许可声明</strong><p>完整版权与许可文本随发行包的 THIRD_PARTY_NOTICES.txt 和 licenses/ 提供。</p></div><button id="open-notices" class="secondary-button setting-action">打开许可声明</button></div>
           </div>
           <div id="settings-dialog-extension"></div>
         </div>

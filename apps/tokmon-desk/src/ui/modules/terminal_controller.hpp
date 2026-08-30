@@ -29,7 +29,7 @@ public:
   void attach(Rml::ElementDocument& document);
   void set_workspace(std::filesystem::path workspace);
   void start();
-  void resize();
+  [[nodiscard]] bool resize();
   void paste(bool allow_unsafe);
   void cancel_paste();
   void search();
@@ -65,6 +65,8 @@ private:
   [[nodiscard]] Tab& active_tab();
   [[nodiscard]] TerminalSession& session();
   [[nodiscard]] GhosttyVt& vt();
+  [[nodiscard]] int cell_width_pixels(const Tab& tab) const;
+  [[nodiscard]] int cell_height_pixels(const Tab& tab) const;
   void render_tabs();
   void set_status(std::string value);
   void set_hint(std::string value);

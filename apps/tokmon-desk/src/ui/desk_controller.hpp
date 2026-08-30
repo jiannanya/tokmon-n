@@ -17,6 +17,7 @@
 #include "ui/modules/browser_controller.hpp"
 #include "ui/modules/settings_controller.hpp"
 #include "ui/modules/desk_renderer.hpp"
+#include "ui/modules/trajectory_controller.hpp"
 #include "ui/modules/terminal_controller.hpp"
 #include "workspace/workspace_service.hpp"
 #include "tokmon/daemon_lifecycle.hpp"
@@ -57,6 +58,12 @@ public:
   void prepare_legacy_three_pane_contract(bool expanded_feature_panel = false);
   [[nodiscard]] bool quit_requested() const noexcept { return quit_requested_; }
   void seed_acceptance_conversation(std::size_t turns);
+  void seed_acceptance_trajectory(bool include_error = false);
+  void seed_acceptance_chat_state(bool running, bool stopping = false);
+  void seed_acceptance_navigation_context();
+  // Raw SDL input is public so the deterministic desktop harness exercises
+  // the same path used by the live platform callback.
+  [[nodiscard]] bool handle_raw_event(const SDL_Event& event);
   [[nodiscard]] std::size_t conversation_turn_count() const noexcept {
     return conversation_total_turns_;
   }
@@ -65,6 +72,7 @@ private:
   void listen(const char* id, const char* event = "click");
   void show_toast(std::string message);
   void toggle_hidden(const char* id);
+  [[nodiscard]] bool dismiss_transient_ui();
   void show_right_launcher();
   void show_right_view(const char* id);
   void apply_panel_layout();
@@ -86,6 +94,7 @@ private:
   void open_file_operation(std::string operation);
   void confirm_file_operation();
   void send_message();
+  void stop_message();
   void choose_attachment();
   void apply_pending_photons();
   void render_conversation();
@@ -93,6 +102,10 @@ private:
   void export_trajectory();
   void apply_settings(const tokmon::cbor::Value& payload);
   void render_navigation();
+  void open_navigation_context(Rml::Element& item, float mouse_y);
+  void close_navigation_context();
+  void delete_navigation_session();
+  bool update_navigation_scrollbar();
   void save_navigation();
   void handle_navigation(Rml::Element& item);
   void begin_workspace_switch(std::filesystem::path workspace,
@@ -124,7 +137,6 @@ private:
   void replace_editor_selection();
   void go_to_editor_line();
   void match_editor_bracket();
-  [[nodiscard]] bool handle_raw_event(const SDL_Event& event);
   void preview_diff(Rml::Element& row);
   void handle_git_action(Rml::Element& element);
   void confirm_discard();
@@ -162,6 +174,7 @@ private:
     std::uint64_t content_hash{0};
     bool staged{false};
     bool success{false};
+    bool commit_created{false};
     bool push_requested{false};
     std::string error;
   };
@@ -171,6 +184,7 @@ private:
   DeskStateStore state_store_;
   SettingsController settings_;
   DeskRenderer renderer_;
+  TrajectoryController trajectory_;
   TerminalController terminal_;
   DocumentRecoveryStore recovery_store_;
   DaemonClient daemon_;
@@ -187,6 +201,12 @@ private:
     std::string tracker_error;
   };
   std::future<ChatTaskResult> chat_future_;
+  struct ChatCancelResult {
+    bool success{false};
+    std::string error;
+  };
+  std::future<ChatCancelResult> chat_cancel_future_;
+  std::uint64_t active_chat_request_id_{0};
   std::future<DaemonStreamResult> startup_future_;
   std::string startup_action_;
   struct WorkspaceSwitchResult {
@@ -229,6 +249,9 @@ private:
   std::uint64_t syntax_generation_{0};
   NavigationModel navigation_;
   bool navigation_loaded_{false};
+  bool navigation_thumb_visible_{false};
+  float navigation_thumb_height_{-1.f};
+  float navigation_thumb_top_{-1.f};
   bool pending_automatic_title_{false};
   struct FileSearchTaskResult {
     std::uint64_t generation{0};
@@ -283,6 +306,7 @@ private:
   std::atomic_bool backend_ready_{false};
   std::chrono::steady_clock::time_point startup_retry_at_{};
   bool conversation_dirty_{false};
+  bool conversation_follow_tail_pending_{false};
   std::size_t conversation_window_start_{0};
   std::size_t conversation_total_turns_{0};
   std::size_t slash_command_index_{0};
@@ -292,7 +316,7 @@ private:
   float panel_resize_anchor_x_{0.f};
   int panel_resize_start_width_{0};
   int sidebar_width_{240};
-  int right_panel_width_{214};
+  int right_panel_width_{219};
   bool sidebar_visible_{true};
   bool right_panel_visible_{true};
   std::string active_right_view_{"launcher"};

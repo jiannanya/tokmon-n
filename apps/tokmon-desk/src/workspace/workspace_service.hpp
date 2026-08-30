@@ -27,10 +27,12 @@ struct WorkspaceSearchResult {
 };
 
 enum class WorkspaceChangeKind { created, modified, removed };
+enum class WorkspaceChangeOrigin { external, self };
 
 struct WorkspaceChange {
   WorkspaceChangeKind kind{WorkspaceChangeKind::modified};
   std::filesystem::path path;
+  WorkspaceChangeOrigin origin{WorkspaceChangeOrigin::external};
 };
 
 class WorkspaceWatcher final {
@@ -41,6 +43,7 @@ public:
   WorkspaceWatcher& operator=(const WorkspaceWatcher&) = delete;
 
   void reset(std::filesystem::path root);
+  void acknowledge_self_write(const std::filesystem::path& path);
   [[nodiscard]] std::vector<WorkspaceChange> take_changes();
 
 private:

@@ -1,5 +1,7 @@
 #include "terminal/terminal_service.hpp"
 
+#include "ui/theme_palette.hpp"
+
 #include <ghostty/vt.h>
 
 #include <algorithm>
@@ -119,9 +121,22 @@ struct GhosttyVt::Impl {
                         GHOSTTY_SUCCESS)
       mouse_encoder = nullptr;
     if (terminal) {
-      const GhosttyColorRgb foreground{231, 229, 228};
-      const GhosttyColorRgb background{28, 25, 23};
-      const GhosttyColorRgb cursor{248, 250, 252};
+      // Terminal is a first-class pane in the light legacy shell, not an
+      // unrelated black embed. Ghostty still owns ANSI semantics; its palette
+      // is generated against the same warm surface and foreground used by the
+      // old Slint UI so explicit ANSI colours retain readable contrast.
+      const GhosttyColorRgb foreground{
+          legacy_theme::body.red,
+          legacy_theme::body.green,
+          legacy_theme::body.blue};
+      const GhosttyColorRgb background{
+          legacy_theme::surface_warm.red,
+          legacy_theme::surface_warm.green,
+          legacy_theme::surface_warm.blue};
+      const GhosttyColorRgb cursor{
+          legacy_theme::accent.red,
+          legacy_theme::accent.green,
+          legacy_theme::accent.blue};
       std::array<GhosttyColorRgb, 256> palette{};
       ghostty_color_palette_default(palette.data());
       ghostty_color_palette_generate(palette.data(), nullptr, &background,

@@ -158,6 +158,8 @@ struct WorkspaceWatcher::Impl {
   std::filesystem::path ready_root;
   StampMap stamps;
   std::vector<WorkspaceChange> pending;
+  std::unordered_map<std::string, std::chrono::steady_clock::time_point>
+      self_writes;
   std::jthread worker;
 
   Impl() : worker([this](std::stop_token stop) { run(stop); }) {}
@@ -168,9 +170,18 @@ struct WorkspaceWatcher::Impl {
     if (watched_root != root)
       return;
     for (auto& change : changes) {
+      const auto key = utf8(change.path.lexically_normal());
+      if (const auto own = self_writes.find(key);
+          own != self_writes.end() &&
+          std::chrono::steady_clock::now() - own->second <
+              std::chrono::seconds(5)) {
+        change.origin = WorkspaceChangeOrigin::self;
+        self_writes.erase(own);
+      }
       const auto duplicate = std::find_if(
           pending.begin(), pending.end(), [&](const WorkspaceChange& item) {
-            return item.path == change.path && item.kind == change.kind;
+            return item.path == change.path && item.kind == change.kind &&
+                   item.origin == change.origin;
           });
       if (duplicate == pending.end())
         pending.push_back(std::move(change));
@@ -503,6 +514,7 @@ void WorkspaceWatcher::reset(std::filesystem::path root) {
   impl_->ready_root.clear();
   impl_->stamps = collect_stamps(impl_->root);
   impl_->pending.clear();
+  impl_->self_writes.clear();
   impl_->wake.notify_all();
   if (!impl_->root.empty()) {
     const auto expected = impl_->root;
@@ -510,6 +522,17 @@ void WorkspaceWatcher::reset(std::filesystem::path root) {
       return impl_->ready_root == expected;
     });
   }
+}
+
+void WorkspaceWatcher::acknowledge_self_write(
+    const std::filesystem::path& path) {
+  const auto normalized = path.lexically_normal();
+  const auto key = utf8(normalized);
+  std::scoped_lock lock(impl_->mutex);
+  impl_->self_writes.insert_or_assign(key, std::chrono::steady_clock::now());
+  for (auto& change : impl_->pending)
+    if (change.path.lexically_normal() == normalized)
+      change.origin = WorkspaceChangeOrigin::self;
 }
 
 std::vector<WorkspaceChange> WorkspaceWatcher::take_changes() {

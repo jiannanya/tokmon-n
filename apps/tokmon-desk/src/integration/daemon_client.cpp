@@ -69,12 +69,14 @@ bool DaemonClient::intent(std::string action, tokmon::cbor::Value payload,
 
 DaemonStreamResult DaemonClient::stream_intent(
     std::string action, tokmon::cbor::Value payload, const std::uint64_t cursor,
-    const std::function<void(tokmon::Photon)>& on_photon) const {
+    const std::function<void(tokmon::Photon)>& on_photon,
+    const std::uint64_t request_id) const {
   DaemonStreamResult output;
   tokmon::SnowClient client(endpoint_);
   tokmon::SnowMessage request;
   request.kind = tokmon::SnowMessageKind::intent;
-  request.request_id = tokmon::next_snow_request_id();
+  request.request_id = request_id == 0 ? tokmon::next_snow_request_id()
+                                       : request_id;
   request.cursor = cursor;
   if (auto* values = payload.as_map()) {
     (*values)["action"] = std::move(action);
@@ -112,6 +114,39 @@ DaemonStreamResult DaemonClient::stream_intent(
   }
   output.success = true;
   return output;
+}
+
+bool DaemonClient::cancel(const std::uint64_t target_request_id,
+                          std::string& error) const {
+  if (target_request_id == 0) {
+    error = "missing target request id";
+    return false;
+  }
+  tokmon::SnowClient client(endpoint_);
+  tokmon::SnowMessage request;
+  request.kind = tokmon::SnowMessageKind::cancel;
+  request.request_id = tokmon::next_snow_request_id();
+  request.payload = tokmon::cbor::object(
+      {{"request_id", static_cast<std::int64_t>(target_request_id)}});
+  const auto result = client.request(request);
+  if (!result) {
+    error = result.error().describe();
+    return false;
+  }
+  if (result->kind == tokmon::SnowMessageKind::error) {
+    const auto* message = tokmon::cbor::find(result->payload, "message");
+    error = message && !message->as_string().empty()
+                ? std::string(message->as_string())
+                : std::string("tokmon-daemon rejected cancellation");
+    return false;
+  }
+  const auto* accepted = tokmon::cbor::find(result->payload,
+                                             "cancel_requested");
+  if (!accepted || !accepted->as_bool()) {
+    error = "tokmon-daemon did not acknowledge cancellation";
+    return false;
+  }
+  return true;
 }
 
 } // namespace tokmon::desk

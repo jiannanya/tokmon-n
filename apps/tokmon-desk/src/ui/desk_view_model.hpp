@@ -30,6 +30,11 @@ struct NavigationRowView {
   Rml::String padding;
   Rml::String chevron;
   Rml::String icon;
+  bool expandable{false};
+  bool expanded{false};
+  bool group{false};
+  bool project{false};
+  bool session{false};
 };
 
 struct TerminalTabView {
@@ -43,6 +48,8 @@ struct ReviewFileView {
   Rml::String status;
   bool worktree{false};
   bool staged{false};
+  bool worktree_hidden{true};
+  bool staged_hidden{true};
 };
 
 struct DiffHunkView {
@@ -64,6 +71,9 @@ struct ConversationTurnView {
   Rml::String user_rml;
   Rml::String reasoning_rml;
   Rml::String assistant_rml;
+  Rml::String user_copy_id;
+  Rml::String reasoning_copy_id;
+  Rml::String assistant_copy_id;
   std::vector<WorkflowStepView> workflow;
   bool has_user{false};
   bool has_reasoning{false};
@@ -76,6 +86,27 @@ struct TrajectoryRowView {
   Rml::String kind;
   Rml::String metadata;
   Rml::String detail;
+  Rml::String classes;
+  Rml::String time;
+  Rml::String tone;
+  Rml::String role;
+  Rml::String duration{"-"};
+  Rml::String tokens{"-"};
+  Rml::String turn_label;
+  Rml::String request_label;
+  Rml::String wrapper_classes;
+  bool turn_start{false};
+  bool row_visible{true};
+  bool selected{false};
+  bool failed{false};
+};
+
+struct TrajectorySegmentView {
+  Rml::String sequence;
+  Rml::String classes;
+  Rml::String left;
+  Rml::String width;
+  Rml::String top;
 };
 
 struct SlashCommandView {
@@ -157,6 +188,7 @@ struct DeskViewState {
   std::vector<DiffHunkView> diff_hunks;
   std::vector<ConversationTurnView> conversation;
   std::vector<TrajectoryRowView> trajectory;
+  std::vector<TrajectorySegmentView> trajectory_segments;
   std::vector<SlashCommandView> slash_commands;
   std::vector<ComposerChoiceView> composer_choices;
 
@@ -170,8 +202,28 @@ struct DeskViewState {
   Rml::String trajectory_ray{"未绑定"};
   Rml::String trajectory_cursor{"0"};
   Rml::String trajectory_window_notice;
-  Rml::String conversation_top_spacer{"0px"};
-  Rml::String conversation_bottom_spacer{"0px"};
+  Rml::String trajectory_duration{"0ms"};
+  Rml::String trajectory_turns{"0"};
+  Rml::String trajectory_calls{"0"};
+  Rml::String trajectory_tokens{"0"};
+  Rml::String trajectory_filter{"全部"};
+  Rml::String trajectory_match_count{"0"};
+  Rml::String trajectory_visible_range{"显示 0 条，共 0 条"};
+  Rml::String trajectory_zoom{"1×"};
+  Rml::String trajectory_selection_left{"0%"};
+  Rml::String trajectory_selection_width{"0%"};
+  Rml::String trajectory_detail_title;
+  Rml::String trajectory_detail_location;
+  Rml::String trajectory_detail_status;
+  Rml::String trajectory_detail_tab{"summary"};
+  Rml::String trajectory_detail_summary;
+  Rml::String trajectory_detail_payload;
+  Rml::String trajectory_detail_result;
+  Rml::String trajectory_detail_schema;
+  Rml::String trajectory_detail_timing;
+  Rml::String conversation_top_spacer{"0dp"};
+  Rml::String conversation_bottom_spacer{"0dp"};
+  bool file_open{false};
 
   bool navigation_empty{false};
   bool review_loading{false};
@@ -186,8 +238,22 @@ struct DeskViewState {
   bool conversation_has_bottom_spacer{false};
   bool trajectory_empty{true};
   bool trajectory_has_notice{false};
+  bool trajectory_filtered_empty{false};
+  bool trajectory_detail_visible{false};
+  bool trajectory_detail_failed{false};
+  bool trajectory_actual_duration{true};
+  bool trajectory_turns_collapsed{false};
+  bool trajectory_calls_collapsed{false};
+  bool trajectory_follow_tail{true};
+  bool trajectory_zoomed{false};
+  bool trajectory_selection_visible{false};
+  bool trajectory_timeline_dragging{false};
   bool slash_visible{false};
   bool slash_has_matches{false};
+  bool chat_running{false};
+  bool chat_stopping{false};
+  bool navigation_context_visible{false};
+  Rml::String navigation_context_top{"220dp"};
   bool composer_popover_visible{false};
   bool rename_popover_visible{false};
   bool choice_popover_visible{false};

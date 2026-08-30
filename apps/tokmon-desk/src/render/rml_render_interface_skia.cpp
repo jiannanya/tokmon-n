@@ -10,6 +10,7 @@
 #include <core/SkCanvas.h>
 #include <core/SkColor.h>
 #include <core/SkColorFilter.h>
+#include <core/SkColorSpace.h>
 #include <core/SkData.h>
 #include <core/SkImage.h>
 #include <core/SkImageInfo.h>
@@ -133,9 +134,18 @@ struct RmlRenderInterfaceSkia::Shader {
 };
 
 RmlRenderInterfaceSkia::RmlRenderInterfaceSkia(SkiaDevice& device)
-    : device_(device) {}
+    : device_(device), base_layer_(std::make_unique<Layer>()) {}
 
 RmlRenderInterfaceSkia::~RmlRenderInterfaceSkia() = default;
+
+void RmlRenderInterfaceSkia::reset_after_device_recovery() {
+  layers_.clear();
+  layer_stack_.clear();
+  base_layer_ = std::make_unique<Layer>();
+  scissor_enabled_ = false;
+  clip_mask_enabled_ = false;
+  transform_.reset();
+}
 
 SkCanvas* RmlRenderInterfaceSkia::current_canvas() const {
   if (!layer_stack_.empty() && layer_stack_.back()->surface)
@@ -153,11 +163,8 @@ void RmlRenderInterfaceSkia::configure_canvas(
     const Rml::Vector2f translation) const {
   if (scissor_enabled_)
     canvas.clipRect(to_sk_rect(scissor_), SkClipOp::kIntersect, false);
-  const Layer* layer = layer_stack_.empty()
-                           ? (!layers_.empty() && !layers_.front()->surface
-                                  ? layers_.front().get()
-                                  : nullptr)
-                           : layer_stack_.back();
+  const Layer* layer = layer_stack_.empty() ? base_layer_.get()
+                                             : layer_stack_.back();
   if (clip_mask_enabled_ && layer && layer->has_clip_mask)
     canvas.clipPath(layer->clip_mask, SkClipOp::kIntersect, true);
   if (include_transform && transform_)
@@ -292,16 +299,11 @@ void RmlRenderInterfaceSkia::RenderToClipMask(
   Layer* layer = layer_stack_.empty() ? nullptr : layer_stack_.back();
   if (!geometry)
     return;
-  // Keep base-target clip state in a record with no render surface.
-  if (!layer) {
-    if (layers_.empty() || layers_.front()->surface) {
-      auto base_state = std::make_unique<Layer>();
-      layer = base_state.get();
-      layers_.insert(layers_.begin(), std::move(base_state));
-    } else {
-      layer = layers_.front().get();
-    }
-  }
+  // Keep base-target clip state independently from transient render layers.
+  // The old sentinel-in-layers_ approach prevented PopLayer from releasing
+  // GPU surfaces and steadily grew VRAM while scrolling filtered content.
+  if (!layer)
+    layer = base_layer_.get();
 
   SkPathBuilder path_builder;
   for (std::size_t index = 0; index + 2 < geometry->indices.size(); index += 3) {
@@ -352,8 +354,16 @@ Rml::LayerHandle RmlRenderInterfaceSkia::PushLayer() {
   if (!base)
     return {};
   auto layer = std::make_unique<Layer>();
-  layer->surface = base->makeSurface(device_.logical_width(),
-                                     device_.logical_height());
+  // Swap-chain surfaces are commonly reported as opaque. The convenience
+  // makeSurface(width, height) overload inherits that alpha type, which turns
+  // the transparent area around RmlUi filters and box shadows into a solid
+  // rectangle. Every RmlUi layer is an intermediate RGBA image and must keep
+  // premultiplied alpha independently of the final presentation surface.
+  const auto layer_info = SkImageInfo::Make(
+      device_.logical_width(), device_.logical_height(),
+      kRGBA_8888_SkColorType, kPremul_SkAlphaType,
+      SkColorSpace::MakeSRGB());
+  layer->surface = base->makeSurface(layer_info);
   if (!layer->surface)
     return {};
   layer->surface->getCanvas()->clear(SK_ColorTRANSPARENT);
@@ -379,8 +389,11 @@ void RmlRenderInterfaceSkia::CompositeLayers(
     auto* filter = reinterpret_cast<Filter*>(filter_handle);
     if (!filter)
       continue;
-    auto filtered_surface = source->surface->makeSurface(
-        device_.logical_width(), device_.logical_height());
+    const auto filter_info = SkImageInfo::Make(
+        device_.logical_width(), device_.logical_height(),
+        kRGBA_8888_SkColorType, kPremul_SkAlphaType,
+        SkColorSpace::MakeSRGB());
+    auto filtered_surface = source->surface->makeSurface(filter_info);
     if (!filtered_surface)
       continue;
     auto* canvas = filtered_surface->getCanvas();
@@ -438,23 +451,34 @@ void RmlRenderInterfaceSkia::CompositeLayers(
 }
 
 void RmlRenderInterfaceSkia::PopLayer() {
-  if (!layer_stack_.empty())
-    layer_stack_.pop_back();
+  if (layer_stack_.empty())
+    return;
+  Layer* released = layer_stack_.back();
+  layer_stack_.pop_back();
+  const auto found = std::find_if(
+      layers_.begin(), layers_.end(),
+      [released](const std::unique_ptr<Layer>& layer) {
+        return layer.get() == released;
+      });
+  if (found != layers_.end())
+    layers_.erase(found);
 }
 
 Rml::TextureHandle RmlRenderInterfaceSkia::SaveLayerAsTexture() {
   auto* canvas = current_canvas();
   if (!canvas)
     return {};
-  auto image = canvas->getSurface()->makeImageSnapshot();
-  if (!image)
-    return {};
   const auto bounds = scissor_enabled_
                           ? SkIRect::MakeLTRB(scissor_.Left(), scissor_.Top(),
                                              scissor_.Right(), scissor_.Bottom())
                           : SkIRect::MakeWH(device_.logical_width(),
                                            device_.logical_height());
-  image = image->makeSubset(nullptr, bounds, {});
+  // Snapshot the requested region directly from the surface. Calling
+  // SkImage::makeSubset with a null recorder on a Ganesh texture can fail;
+  // RmlUi then receives an empty callback texture and renders its white
+  // fallback quad, which was the source of the large square blocks around
+  // every rounded box-shadow.
+  auto image = canvas->getSurface()->makeImageSnapshot(bounds);
   if (!image)
     return {};
   auto texture = std::make_unique<Texture>();

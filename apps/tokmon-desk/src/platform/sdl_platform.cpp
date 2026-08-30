@@ -4,6 +4,7 @@
 #include <RmlUi/Core/Input.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 
 namespace tokmon::desk {
@@ -66,6 +67,26 @@ int mouse_button(Uint8 value) {
   return 3;
 }
 
+std::string file_url(const std::filesystem::path& path) {
+  const auto generic = std::filesystem::absolute(path).lexically_normal()
+                           .generic_u8string();
+  std::string result = "file:///";
+  constexpr char hex[] = "0123456789ABCDEF";
+  for (const auto raw : generic) {
+    const auto character = static_cast<unsigned char>(raw);
+    if (std::isalnum(character) || character == '-' || character == '_' ||
+        character == '.' || character == '~' || character == '/' ||
+        character == ':') {
+      result.push_back(static_cast<char>(character));
+    } else {
+      result.push_back('%');
+      result.push_back(hex[(character >> 4u) & 0x0fu]);
+      result.push_back(hex[character & 0x0fu]);
+    }
+  }
+  return result;
+}
+
 } // namespace
 
 SdlPlatform::SdlPlatform() : start_(std::chrono::steady_clock::now()) {}
@@ -106,6 +127,21 @@ void SdlPlatform::shutdown() {
   SDL_Quit();
 }
 
+bool SdlPlatform::open_local_file(const std::filesystem::path& path,
+                                  std::string& error) const {
+  std::error_code filesystem_error;
+  if (!std::filesystem::is_regular_file(path, filesystem_error)) {
+    error = "local file does not exist";
+    return false;
+  }
+  const auto url = file_url(path);
+  if (!SDL_OpenURL(url.c_str())) {
+    error = SDL_GetError();
+    return false;
+  }
+  return true;
+}
+
 bool SdlPlatform::wait_for_event(const int timeout_ms) {
   SDL_Event event{};
   if (!SDL_WaitEventTimeout(&event, std::max(timeout_ms, 0)))
@@ -141,7 +177,8 @@ bool SdlPlatform::pump_event(Rml::Context& context, bool& quit, bool& resized) {
       resized = true;
       break;
     case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
-      context.SetDensityIndependentPixelRatio(display_scale());
+      ui_scale_ = std::clamp(display_scale() * content_scale_, 0.7f, 4.f);
+      context.SetDensityIndependentPixelRatio(ui_scale_);
       resized = true;
       break;
     case SDL_EVENT_WINDOW_MOUSE_LEAVE:
@@ -223,7 +260,9 @@ int SdlPlatform::default_content_scale_percent() const noexcept {
 }
 
 void SdlPlatform::set_ui_scale(const float scale) noexcept {
-  ui_scale_ = std::clamp(scale, 0.7f, 2.f);
+  ui_scale_ = std::clamp(scale, 0.7f, 4.f);
+  content_scale_ = std::clamp(ui_scale_ / std::max(display_scale(), 0.01f),
+                              0.7f, 2.f);
 }
 
 void SdlPlatform::size_window_for_ui_scale(const int logical_width,
@@ -245,7 +284,15 @@ void SdlPlatform::size_window_for_ui_scale(const int logical_width,
 
 float SdlPlatform::input_coordinate_scale() const noexcept {
   const float density = window_ ? SDL_GetWindowPixelDensity(window_) : 1.f;
-  return density / std::max(ui_scale_, 0.01f);
+  // RmlUi now lays out directly in physical pixels. SDL may expose pointer
+  // coordinates in window units on some platforms, so only the SDL pixel
+  // density belongs in the event-to-context conversion. The application zoom
+  // is expressed through RmlUi's dp ratio and must not shrink the input again.
+  return density;
+}
+
+float SdlPlatform::design_coordinate_scale() const noexcept {
+  return input_coordinate_scale() / std::max(ui_scale_, 0.01f);
 }
 
 void SdlPlatform::minimize() { if (window_) SDL_MinimizeWindow(window_); }

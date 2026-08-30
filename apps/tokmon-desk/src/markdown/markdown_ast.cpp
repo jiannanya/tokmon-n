@@ -286,6 +286,8 @@ std::string lower_scheme(std::string_view value) {
 
 struct RmlWriter {
   std::string output;
+  std::string copy_prefix;
+  std::vector<MarkdownCopyBlock>* copy_blocks{nullptr};
   std::size_t text_bytes{0};
   std::size_t nodes{0};
   bool truncated{false};
@@ -306,6 +308,25 @@ struct RmlWriter {
     }
   }
 };
+
+void append_plain_text(const MarkdownDocument& document,
+                       const std::size_t index, std::string& output) {
+  if (index >= document.nodes.size())
+    return;
+  const auto& node = document.nodes[index];
+  if (node.kind == MarkdownNodeKind::text ||
+      node.kind == MarkdownNodeKind::raw_html) {
+    output += node.text;
+    return;
+  }
+  if (node.kind == MarkdownNodeKind::soft_break ||
+      node.kind == MarkdownNodeKind::hard_break) {
+    output.push_back('\n');
+    return;
+  }
+  for (const auto child : node.children)
+    append_plain_text(document, child, output);
+}
 
 void render_node(const MarkdownDocument& document, const std::size_t index,
                  RmlWriter& out) {
@@ -345,12 +366,27 @@ void render_node(const MarkdownDocument& document, const std::size_t index,
     case MarkdownNodeKind::diff_block:
     case MarkdownNodeKind::tool_call:
     case MarkdownNodeKind::tool_result:
+      if (out.copy_blocks) {
+        MarkdownCopyBlock block;
+        block.id = out.copy_prefix + "-code-" +
+            std::to_string(out.copy_blocks->size());
+        append_plain_text(document, index, block.text);
+        out.copy_blocks->push_back(block);
+        out.markup("<div class=\"code-block-wrap\"><button class=\"markdown-copy code-copy\" data-copy-markdown=\"" +
+                   escape(block.id) + "\">复制代码</button>");
+      }
       out.markup(std::string("<pre class=\"code-block") +
                  (node.kind == MarkdownNodeKind::diff_block ? " diff-block" : "") +
                  (node.kind == MarkdownNodeKind::tool_call ? " tool-call" : "") +
                  (node.kind == MarkdownNodeKind::tool_result ? " tool-result" : "") +
-                 "\"><code data-language=\"" + escape(node.metadata) + "\">");
-      close = "</code></pre>";
+                 "\" data-language=\"" + escape(node.metadata) + "\">");
+      // RmlUi's HTML element factory gives nested <code> an independent inline
+      // text box.  Inside a scrollable <pre> this can retain the default dark
+      // foreground and disappear against the dark code-block background.  The
+      // preformatted element already provides every semantic/layout guarantee
+      // we need, so keep source text directly in <pre> and put the language on
+      // that element.
+      close = out.copy_blocks ? "</pre></div>" : "</pre>";
       break;
     case MarkdownNodeKind::table: open = "<table>"; close = "</table>"; break;
     case MarkdownNodeKind::table_head: open = "<thead>"; close = "</thead>"; break;
@@ -542,6 +578,23 @@ std::string markdown_to_safe_rml(const MarkdownDocument& document) {
   if (out.truncated)
     out.markup("<p class=\"markdown-truncated\">内容过长，已限制渲染范围</p>");
   return std::move(out.output);
+}
+
+MarkdownRmlResult markdown_to_safe_rml_with_copy(
+    const MarkdownDocument& document, const std::string_view id_prefix) {
+  MarkdownRmlResult result;
+  if (document.nodes.empty() || document.root >= document.nodes.size())
+    return result;
+  RmlWriter out;
+  out.output.reserve(std::min(document.source_bytes,
+                              markdown_rml_text_limit) + 4096);
+  out.copy_prefix = std::string(id_prefix);
+  out.copy_blocks = &result.code_blocks;
+  render_node(document, document.root, out);
+  if (out.truncated)
+    out.markup("<p class=\"markdown-truncated\">内容过长，已限制渲染范围</p>");
+  result.rml = std::move(out.output);
+  return result;
 }
 
 } // namespace tokmon::desk

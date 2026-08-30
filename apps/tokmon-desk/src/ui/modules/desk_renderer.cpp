@@ -40,9 +40,11 @@ void DeskRenderer::navigation(const NavigationModel& model,
         item.id,
         item.title,
         item.kind + (item.selected ? " selected" : ""),
-        std::to_string(10 + item.indent * 18) + "px",
+        std::to_string(10.5 + item.indent * 16) + "dp",
         item.kind == "session" ? "" : item.expanded ? "⌄" : "›",
         view.asset_root + "/figma/" + icon_name,
+        item.kind != "session", item.expanded,
+        item.kind == "group", item.kind == "project", item.kind == "session",
     });
   }
   view.navigation_empty = view.navigation.empty();
@@ -82,7 +84,9 @@ void DeskRenderer::review(const GitSnapshot& snapshot) {
           file.path,
           std::string{file.index_status, file.worktree_status},
           file.worktree_status != ' ',
-          file.index_status != ' ',
+          file.index_status != ' ' && file.index_status != '?',
+          file.worktree_status == ' ',
+          file.index_status == ' ' || file.index_status == '?',
       });
   }
   view.review_has_files = !view.review_files.empty();
@@ -204,6 +208,7 @@ ConversationRenderResult DeskRenderer::conversation(
 
   auto& view = view_model_.state();
   view.conversation.clear();
+  conversation_copy_payloads_.clear();
   for (std::size_t index = result.first_turn; index < result.last_turn; ++index) {
     auto& turn = turns[index];
     ConversationTurnView item;
@@ -211,12 +216,27 @@ ConversationRenderResult DeskRenderer::conversation(
     item.has_reasoning = !turn.reasoning.empty();
     item.has_assistant = !turn.assistant.empty();
     item.has_workflow = !turn.workflow.empty();
+    const auto add_markup = [this, index](const std::string& source,
+                                         const char* kind,
+                                         Rml::String& markup,
+                                         Rml::String& copy_id) {
+      copy_id = "turn-" + std::to_string(index) + "-" + kind;
+      conversation_copy_payloads_.insert_or_assign(copy_id, source);
+      auto rendered = markdown_to_safe_rml_with_copy(
+          markdown_.parse(source), copy_id);
+      markup = std::move(rendered.rml);
+      for (auto& block : rendered.code_blocks)
+        conversation_copy_payloads_.insert_or_assign(
+            std::move(block.id), std::move(block.text));
+    };
     if (item.has_user)
-      item.user_rml = markdown_to_safe_rml(markdown_.parse(turn.user));
+      add_markup(turn.user, "user", item.user_rml, item.user_copy_id);
     if (item.has_reasoning)
-      item.reasoning_rml = markdown_to_safe_rml(markdown_.parse(turn.reasoning));
+      add_markup(turn.reasoning, "reasoning", item.reasoning_rml,
+                 item.reasoning_copy_id);
     if (item.has_assistant)
-      item.assistant_rml = markdown_to_safe_rml(markdown_.parse(turn.assistant));
+      add_markup(turn.assistant, "assistant", item.assistant_rml,
+                 item.assistant_copy_id);
     item.workflow = std::move(turn.workflow);
     view.conversation.push_back(std::move(item));
   }
@@ -228,37 +248,18 @@ ConversationRenderResult DeskRenderer::conversation(
   view.conversation_has_top_spacer = result.first_turn > 0;
   view.conversation_has_bottom_spacer = result.last_turn < turns.size();
   view.conversation_top_spacer =
-      std::to_string(result.first_turn * 210) + "px";
+      std::to_string(result.first_turn * 210) + "dp";
   view.conversation_bottom_spacer =
-      std::to_string((turns.size() - result.last_turn) * 210) + "px";
+      std::to_string((turns.size() - result.last_turn) * 210) + "dp";
   view_model_.dirty();
   return result;
 }
 
-void DeskRenderer::trajectory(const std::vector<tokmon::Photon>& photons,
-                              const std::string_view active_ray,
-                              const std::uint64_t cursor) {
-  auto& view = view_model_.state();
-  view.trajectory.clear();
-  view.trajectory_empty = photons.empty();
-  view.trajectory_count = std::to_string(photons.size());
-  view.trajectory_ray = active_ray.empty() ? "未绑定" : std::string(active_ray);
-  view.trajectory_cursor = std::to_string(cursor);
-  constexpr std::size_t maximum = 200;
-  const auto first = photons.size() > maximum ? photons.size() - maximum : 0;
-  view.trajectory_has_notice = first > 0;
-  view.trajectory_window_notice = "较早的 " + std::to_string(first) +
-      " 个 Photon 已虚拟化；滚动会话或导出轨迹可查看完整历史";
-  for (auto iterator = photons.begin() + static_cast<std::ptrdiff_t>(first);
-       iterator != photons.end(); ++iterator) {
-    auto detail = tokmon::cbor::diagnostic(iterator->payload);
-    if (detail.size() > 700)
-      detail.resize(700);
-    view.trajectory.push_back({std::to_string(iterator->sequence), iterator->kind,
-        iterator->schema + " · " + std::to_string(iterator->committed_at_ms),
-        std::move(detail)});
-  }
-  view_model_.dirty();
+const std::string* DeskRenderer::conversation_copy_payload(
+    const std::string_view id) const {
+  const auto iterator = conversation_copy_payloads_.find(std::string(id));
+  return iterator == conversation_copy_payloads_.end()
+      ? nullptr : &iterator->second;
 }
 
 void DeskRenderer::slash_commands(

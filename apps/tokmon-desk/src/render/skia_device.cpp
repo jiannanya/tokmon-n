@@ -1,10 +1,14 @@
 #include "render/skia_device.hpp"
 
 #include <core/SkCanvas.h>
+#include <core/SkBlurTypes.h>
 #include <core/SkColor.h>
 #include <core/SkImage.h>
 #include <core/SkImageInfo.h>
+#include <core/SkMaskFilter.h>
+#include <core/SkPaint.h>
 #include <core/SkPixmap.h>
+#include <core/SkRect.h>
 #include <core/SkStream.h>
 #include <core/SkSurface.h>
 #include <encode/SkPngEncoder.h>
@@ -71,7 +75,9 @@ public:
     }
     width_ = width;
     height_ = height;
-    pixels_.assign(static_cast<std::size_t>(width_) * height_, 0u);
+    pixels_.assign(static_cast<std::size_t>(width_) *
+                       static_cast<std::size_t>(height_),
+                   0u);
     const auto info = SkImageInfo::Make(width_, height_, kRGBA_8888_SkColorType,
                                         kPremul_SkAlphaType);
     surface_ = SkSurfaces::WrapPixels(
@@ -87,6 +93,19 @@ public:
       return false;
     }
     return true;
+  }
+
+  bool recover(std::string& error) override {
+    const int width = width_;
+    const int height = height_;
+    surface_.reset();
+    if (texture_) {
+      SDL_DestroyTexture(texture_);
+      texture_ = nullptr;
+    }
+    width_ = 0;
+    height_ = 0;
+    return resize(width, height, error);
   }
 
   SkCanvas* begin_frame() override {
@@ -147,12 +166,18 @@ void SkiaDevice::set_ui_scale(const float scale) noexcept {
   ui_scale_ = std::clamp(scale, 0.7f, 2.f);
 }
 
+void SkiaDevice::set_frame_density(const float density) noexcept {
+  frame_density_ = std::clamp(density, 0.7f, 4.f);
+}
+
 int SkiaDevice::logical_width() const noexcept {
-  return std::max(1, static_cast<int>(std::lround(physical_width() / ui_scale_)));
+  return std::max(1, static_cast<int>(std::lround(
+      static_cast<float>(physical_width()) / ui_scale_)));
 }
 
 int SkiaDevice::logical_height() const noexcept {
-  return std::max(1, static_cast<int>(std::lround(physical_height() / ui_scale_)));
+  return std::max(1, static_cast<int>(std::lround(
+      static_cast<float>(physical_height()) / ui_scale_)));
 }
 
 void SkiaDevice::prepare_canvas(SkCanvas* canvas) const {
@@ -160,7 +185,44 @@ void SkiaDevice::prepare_canvas(SkCanvas* canvas) const {
     return;
   canvas->restoreToCount(1);
   canvas->resetMatrix();
-  canvas->clear(SkColorSetRGB(245, 245, 244));
+  // The old frameless Slint window leaves its inset transparent.  The native
+  // compositor in the frozen Windows golden resolves that gutter against a
+  // white desktop before the inner app surface casts its shadow.
+  canvas->clear(SK_ColorWHITE);
+  // RmlUi clips decorators to the document viewport, while the old Slint shell
+  // paints its native-window shadow outside the scaled application surface.
+  // Draw that one compositor-level primitive before the Rml document.  The
+  // opaque body covers the shadow's interior during normal rendering.
+  const float inset = 6.4f * frame_density_;
+  const float radius = 4.f * frame_density_;
+  SkPaint frame_shadow;
+  frame_shadow.setAntiAlias(true);
+  frame_shadow.setColor(SkColorSetARGB(56, 28, 25, 23));
+  frame_shadow.setMaskFilter(SkMaskFilter::MakeBlur(
+      kOuter_SkBlurStyle, 3.2f * frame_density_, false));
+  canvas->drawRoundRect(
+      SkRect::MakeLTRB(inset, inset,
+                       static_cast<float>(physical_width()) - inset,
+                       static_cast<float>(physical_height()) - inset),
+      radius, radius, frame_shadow);
+  // Windows adds a crisp inner edge to the native shadow backing before the
+  // scaled application layer begins.  It is separate from the RCSS body's
+  // hairline and is visible in the frozen capture at the outer edge only.
+  const float backing_inset = 4.8f * frame_density_;
+  SkPaint backing_edge;
+  backing_edge.setAntiAlias(true);
+  backing_edge.setStyle(SkPaint::kStroke_Style);
+  backing_edge.setStrokeWidth(2.f);
+  backing_edge.setColor(SkColorSetARGB(52, 28, 25, 23));
+  canvas->drawRoundRect(
+      SkRect::MakeLTRB(backing_inset, backing_inset,
+                       static_cast<float>(physical_width()) - backing_inset,
+                       static_cast<float>(physical_height()) - backing_inset),
+      radius + 2.f, radius + 2.f, backing_edge);
+  // RmlUi is given the physical framebuffer dimensions and resolves all
+  // legacy design units through its dp ratio. Keep the final Skia canvas at a
+  // one-to-one device-pixel transform so glyph/SVG atlases are never enlarged
+  // after rasterization.
   canvas->scale(ui_scale_, ui_scale_);
 }
 

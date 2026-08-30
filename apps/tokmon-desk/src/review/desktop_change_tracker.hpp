@@ -33,7 +33,9 @@ struct DesktopChangeSet {
 class DesktopChangeTracker final {
  public:
   DesktopChangeTracker(std::filesystem::path workspace = {},
-                       std::filesystem::path snapshot_root = {});
+                       std::filesystem::path snapshot_root = {},
+                       std::uintmax_t snapshot_quota_bytes =
+                           512u * 1024u * 1024u);
 
   void set_workspace(std::filesystem::path workspace);
   [[nodiscard]] bool begin(std::string run_id, std::string& error);
@@ -62,6 +64,7 @@ class DesktopChangeTracker final {
   std::filesystem::path workspace_;
   std::filesystem::path snapshot_root_;
   GitService git_;
+  std::uintmax_t snapshot_quota_bytes_{512u * 1024u * 1024u};
   bool active_{false};
   std::string run_id_;
   std::string baseline_head_;

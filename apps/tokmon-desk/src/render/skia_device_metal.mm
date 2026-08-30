@@ -37,7 +37,9 @@ std::string path_utf8(const std::filesystem::path& path) {
 
 class SkiaDeviceMetal final : public SkiaDevice {
  public:
-  ~SkiaDeviceMetal() override {
+  ~SkiaDeviceMetal() override { destroy(); }
+
+  void destroy() {
     surface_.reset();
     if (context_) {
       context_->flushAndSubmit(GrSyncCpu::kYes);
@@ -52,6 +54,7 @@ class SkiaDeviceMetal final : public SkiaDevice {
 
   bool initialize(SDL_Window* window, int width, int height,
                   std::string& error) {
+    window_ = window;
     auto* cocoa_window = (__bridge NSWindow*)SDL_GetPointerProperty(
         SDL_GetWindowProperties(window), SDL_PROP_WINDOW_COCOA_WINDOW_POINTER,
         nullptr);
@@ -91,6 +94,15 @@ class SkiaDeviceMetal final : public SkiaDevice {
     surface_.reset();
     drawable_ = nullptr;
     return true;
+  }
+
+  bool recover(std::string& error) override {
+    auto* const window = window_;
+    const int width = width_;
+    const int height = height_;
+    destroy();
+    error.clear();
+    return initialize(window, width, height, error);
   }
 
   SkCanvas* begin_frame() override {
@@ -152,6 +164,7 @@ class SkiaDeviceMetal final : public SkiaDevice {
   bool hardware_accelerated() const noexcept override { return true; }
 
  private:
+  SDL_Window* window_{nullptr};
   int width_{0};
   int height_{0};
   id<MTLDevice> device_{nil};

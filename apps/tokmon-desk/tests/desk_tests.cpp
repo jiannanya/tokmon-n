@@ -3,6 +3,7 @@
 #include "editor/document_store.hpp"
 #include "editor/grapheme.hpp"
 #include "editor/syntax_service.hpp"
+#include "fonts/font_manager.hpp"
 #include "integration/daemon_client.hpp"
 #include "lenses/common/process_runner.hpp"
 #include "markdown/markdown_ast.hpp"
@@ -13,14 +14,20 @@
 #include "state/document_recovery.hpp"
 #include "terminal/terminal_service.hpp"
 #include "ui/navigation_model.hpp"
+#include "ui/theme_palette.hpp"
 #include "workspace/workspace_service.hpp"
 
 #include "tokmon/hash.hpp"
 #include "tokmon/json.hpp"
+#include "tokmon/snow_transport.hpp"
 
 #include <chrono>
+#include <atomic>
+#include <array>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -56,6 +63,20 @@ std::string read_file(const std::filesystem::path& path) {
   std::ifstream input(path, std::ios::binary);
   return {std::istreambuf_iterator<char>(input),
           std::istreambuf_iterator<char>()};
+}
+
+std::uintmax_t directory_bytes(const std::filesystem::path& root) {
+  std::uintmax_t bytes = 0;
+  std::error_code error;
+  for (std::filesystem::recursive_directory_iterator iterator(
+           root, std::filesystem::directory_options::skip_permission_denied,
+           error), end;
+       !error && iterator != end; iterator.increment(error)) {
+    if (iterator->is_regular_file(error))
+      bytes += iterator->file_size(error);
+    error.clear();
+  }
+  return bytes;
 }
 
 void write_file(const std::filesystem::path& path, std::string_view contents) {
@@ -156,6 +177,64 @@ int main(int argc, char** argv) {
       ("tokmon-desk-tests-" + std::to_string(
           std::chrono::steady_clock::now().time_since_epoch().count()));
   std::filesystem::create_directories(root / "src");
+
+  {
+    const auto endpoint = tokmon::default_snow_endpoint(root / "cancel-snow");
+    std::atomic<std::uint64_t> active_request{0};
+    std::atomic<std::uint64_t> cancelled_request{0};
+    tokmon::SnowServer server;
+    check(static_cast<bool>(server.start(endpoint,
+        [&active_request, &cancelled_request](
+            const tokmon::SnowMessage& request) {
+          if (request.kind == tokmon::SnowMessageKind::cancel) {
+            const auto* target = tokmon::cbor::find(request.payload,
+                                                    "request_id");
+            if (target)
+              cancelled_request.store(
+                  static_cast<std::uint64_t>(target->as_integer()),
+                  std::memory_order_release);
+            return tokmon::SnowMessage{
+                .kind = tokmon::SnowMessageKind::intent_result,
+                .request_id = request.request_id,
+                .payload = tokmon::cbor::object({{"cancel_requested", true}})};
+          }
+          active_request.store(request.request_id, std::memory_order_release);
+          const auto deadline = std::chrono::steady_clock::now() +
+                                std::chrono::seconds(2);
+          while (cancelled_request.load(std::memory_order_acquire) !=
+                     request.request_id &&
+                 std::chrono::steady_clock::now() < deadline)
+            std::this_thread::yield();
+          return tokmon::SnowMessage{
+              .kind = tokmon::SnowMessageKind::intent_result,
+              .request_id = request.request_id,
+              .payload = tokmon::cbor::object({
+                  {"cancelled", cancelled_request.load(
+                      std::memory_order_acquire) == request.request_id}})};
+        })), "desk cancellation fixture starts");
+    DaemonClient client(endpoint);
+    const auto request_id = tokmon::next_snow_request_id();
+    auto running = std::async(std::launch::async, [&client, request_id] {
+      return client.stream_intent("chat", tokmon::cbor::object({}), 0,
+                                  [](tokmon::Photon) {}, request_id);
+    });
+    const auto active_deadline = std::chrono::steady_clock::now() +
+                                 std::chrono::seconds(2);
+    while (active_request.load(std::memory_order_acquire) != request_id &&
+           std::chrono::steady_clock::now() < active_deadline)
+      std::this_thread::yield();
+    std::string cancel_error;
+    check(client.cancel(request_id, cancel_error),
+          "desk sends a real Snow cancel for the active request id");
+    const auto cancelled = running.get();
+    check(cancelled.success &&
+              field(cancelled.payload, "cancelled") &&
+              field(cancelled.payload, "cancelled")->as_bool() &&
+              cancelled_request.load(std::memory_order_acquire) == request_id,
+          "desk cancellation targets and releases the running stream");
+    server.stop();
+  }
+
   const auto file = root / "src" / "sample.md";
   {
     std::ofstream output(file, std::ios::binary);
@@ -167,9 +246,16 @@ int main(int argc, char** argv) {
     for (int line = 1; line <= 14; ++line)
       output << "int value_" << line << " = " << line << ";\n";
   }
-  write_file(root / ".gitignore", "ignored/\n*.cache\n");
+  write_file(root / ".gitignore",
+             "ignored/\n*.cache\nnested/*.secret\n"
+             "!nested/keep.secret\ndirectory-rule/\n");
   write_file(root / "ignored" / "secret.txt", "must stay hidden\n");
   write_file(root / "src" / "scratch.cache", "must stay hidden\n");
+  write_file(root / "nested" / "drop.secret", "must stay hidden\n");
+  write_file(root / "nested" / "keep.secret", "negation keeps this visible\n");
+  write_file(root / "directory-rule" / "inside.txt", "must stay hidden\n");
+  write_file(root / "src" / "duplicate-a.txt", "deduplicated preimage\n");
+  write_file(root / "src" / "duplicate-b.txt", "deduplicated preimage\n");
 
   check(run(root, {"git", "init", "-b", "main"}), "Git fixture initializes");
   check(run(root, {"git", "config", "user.name", "Tokmon Desk Tests"}),
@@ -196,20 +282,44 @@ int main(int argc, char** argv) {
   check(async_entries.size() >= 2, "workspace enumeration runs asynchronously");
   const auto ignored_hidden = std::ranges::none_of(async_entries, [](const auto& entry) {
           return entry.relative_path.starts_with("ignored") ||
-                 entry.relative_path.ends_with(".cache");
+                 entry.relative_path.ends_with(".cache") ||
+                 entry.relative_path == "nested/drop.secret" ||
+                 entry.relative_path.starts_with("directory-rule");
         });
+  const auto negated_visible = std::ranges::any_of(async_entries, [](const auto& entry) {
+    return entry.relative_path == "nested/keep.secret";
+  });
   if (!ignored_hidden) {
     for (const auto& entry : async_entries)
       if (entry.relative_path.starts_with("ignored") ||
           entry.relative_path.ends_with(".cache"))
         std::cerr << "Ignore detail: " << entry.relative_path << '\n';
   }
-  check(ignored_hidden,
-        "workspace tree applies repository .gitignore rules");
+  check(ignored_hidden && negated_visible,
+        "workspace tree applies nested, negated, wildcard, and directory .gitignore rules");
+  std::atomic_bool cancelled_search{true};
+  check(workspace.search("Hello", 100, &cancelled_search).empty(),
+        "workspace search observes cancellation without publishing stale results");
+  const auto outside_directory = std::filesystem::path(root.string() + "-outside");
+  std::filesystem::create_directories(outside_directory);
+  write_file(outside_directory / "outside.txt", "outside\n");
+  std::error_code symlink_error;
+  std::filesystem::create_directory_symlink(outside_directory,
+                                             root / "escape-link",
+                                             symlink_error);
+  if (!symlink_error)
+    check(!workspace.contains(root / "escape-link" / "outside.txt") &&
+              !workspace.create_file("escape-link/created.txt", "bad", error),
+          "workspace rejects symlink/junction escape from the canonical root");
   check(workspace.create_directory("generated", error),
         "workspace creates a contained directory");
   check(workspace.create_file("generated/new.txt", "new\n", error),
         "workspace creates a contained file");
+  check(!workspace.create_file("generated/new.txt", "collision\n", error),
+        "workspace create reports an existing-path conflict");
+  check(!workspace.create_file(root.parent_path() / "absolute-escape.txt",
+                               "bad", error),
+        "workspace mutation rejects absolute path escape");
   check(workspace.rename_entry("generated/new.txt", "renamed.txt", error) &&
             std::filesystem::is_regular_file(root / "generated/renamed.txt"),
         "workspace safely renames an entry");
@@ -236,6 +346,58 @@ int main(int argc, char** argv) {
            change.kind == WorkspaceChangeKind::created);
   }
   check(watcher_created, "workspace watcher reports created file");
+  (void)watcher.take_changes();
+  watcher.acknowledge_self_write(watched_file);
+  write_file(watched_file, "self save\n");
+  bool watcher_self = false;
+  for (int attempt = 0; attempt < 30 && !watcher_self; ++attempt) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    for (const auto& change : watcher.take_changes())
+      watcher_self = watcher_self ||
+          (change.path.filename() == watched_file.filename() &&
+           change.origin == WorkspaceChangeOrigin::self);
+  }
+  check(watcher_self, "workspace watcher distinguishes a Desktop self-save");
+  write_file(watched_file, "external edit\n");
+  bool watcher_external = false;
+  for (int attempt = 0; attempt < 30 && !watcher_external; ++attempt) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    for (const auto& change : watcher.take_changes())
+      watcher_external = watcher_external ||
+          (change.path.filename() == watched_file.filename() &&
+           change.origin == WorkspaceChangeOrigin::external);
+  }
+  check(watcher_external, "workspace watcher classifies later external edits");
+  const auto renamed_watch_file = root / "src" / "watch-renamed.txt";
+  std::filesystem::rename(watched_file, renamed_watch_file);
+  for (int index = 0; index < 8; ++index)
+    write_file(root / "src" / ("watch-burst-" + std::to_string(index) + ".txt"),
+               "burst\n");
+  std::filesystem::remove(renamed_watch_file);
+  bool watcher_rename_old = false;
+  bool watcher_rename_new = false;
+  bool watcher_delete = false;
+  std::size_t watcher_burst_files = 0;
+  for (int attempt = 0; attempt < 60 &&
+       (!watcher_rename_old || !watcher_rename_new || !watcher_delete ||
+        watcher_burst_files < 8); ++attempt) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    for (const auto& change : watcher.take_changes()) {
+      const auto name = change.path.filename().string();
+      watcher_rename_old = watcher_rename_old ||
+          (name == "watch-me.txt" && change.kind == WorkspaceChangeKind::removed);
+      watcher_rename_new = watcher_rename_new ||
+          (name == "watch-renamed.txt" && change.kind == WorkspaceChangeKind::created);
+      watcher_delete = watcher_delete ||
+          (name == "watch-renamed.txt" && change.kind == WorkspaceChangeKind::removed);
+      if (name.starts_with("watch-burst-") &&
+          change.kind == WorkspaceChangeKind::created)
+        ++watcher_burst_files;
+    }
+  }
+  check(watcher_rename_old && watcher_rename_new && watcher_delete &&
+            watcher_burst_files >= 8,
+        "workspace watcher coalesces burst and reports rename/delete semantics");
 
   DocumentStore documents;
   auto opened = documents.open(file, error);
@@ -256,6 +418,13 @@ int main(int argc, char** argv) {
   check(edited && edited->dirty && edited->can_undo,
         "document redo restores dirty state");
   check(edited && documents.save(file, edited->version, error), "document atomic save");
+  check(std::ranges::none_of(std::filesystem::directory_iterator(file.parent_path()),
+                            [](const auto& entry) {
+                              return entry.path().filename().string().find(
+                                         ".tokmon-desk.tmp-") !=
+                                     std::string::npos;
+                            }),
+        "durable document save leaves no same-directory temporary artifact");
 
   auto conflict = documents.snapshot(file);
   check(conflict && documents.edit(file, 0, 0, "local\n", conflict->version, error),
@@ -316,6 +485,66 @@ int main(int argc, char** argv) {
   check(crlf && crlf->encoding == TextEncoding::utf8_bom &&
             crlf->line_ending == LineEnding::crlf,
         "document reports BOM encoding and CRLF metadata");
+  check(crlf && documents.edit(crlf_file, crlf->text.size(), 0,
+                               "tail\r\n", crlf->version, error),
+        "BOM/CRLF document accepts a preserving edit");
+  crlf = documents.snapshot(crlf_file);
+  check(crlf && documents.save(crlf_file, crlf->version, error) &&
+            read_file(crlf_file).starts_with("\xef\xbb\xbf") &&
+            read_file(crlf_file).find("tail\r\n") != std::string::npos,
+        "durable atomic save preserves UTF-8 BOM and CRLF bytes");
+  const auto readonly_file = root / "src" / "readonly.txt";
+  write_file(readonly_file, "read only\n");
+  const auto original_permissions =
+      std::filesystem::status(readonly_file).permissions();
+  std::filesystem::permissions(
+      readonly_file,
+      std::filesystem::perms::owner_write |
+          std::filesystem::perms::group_write |
+          std::filesystem::perms::others_write,
+      std::filesystem::perm_options::remove);
+  DocumentStore readonly_documents;
+  const auto readonly = readonly_documents.open(readonly_file, error);
+  check(readonly && readonly->read_only &&
+            !readonly_documents.edit(readonly_file, 0, 0, "bad",
+                                     readonly->version, error),
+        "document detects read-only files and rejects mutation");
+  std::filesystem::permissions(readonly_file, original_permissions,
+                               std::filesystem::perm_options::replace);
+
+  const auto random_file = root / "src" / "random-edits.txt";
+  write_file(random_file, "seed\n");
+  DocumentStore random_documents;
+  auto random_snapshot = random_documents.open(random_file, error);
+  std::string random_expected = "seed\n";
+  constexpr int random_edit_count = 128;
+  bool random_edits_ok = random_snapshot.has_value();
+  for (int index = 0; index < random_edit_count && random_edits_ok; ++index) {
+    const auto insertion = "edit-" + std::to_string(index) + "\n";
+    random_edits_ok = random_documents.edit(
+        random_file, random_snapshot->text.size(), 0, insertion,
+        random_snapshot->version, error);
+    random_expected += insertion;
+    random_snapshot = random_documents.snapshot(random_file);
+    random_edits_ok = random_edits_ok && random_snapshot.has_value();
+  }
+  for (int index = 0; index < random_edit_count && random_edits_ok; ++index) {
+    random_edits_ok = random_documents.undo(random_file,
+                                             random_snapshot->version, error);
+    random_snapshot = random_documents.snapshot(random_file);
+    random_edits_ok = random_edits_ok && random_snapshot.has_value();
+  }
+  const bool random_undo_exact = random_edits_ok &&
+      random_snapshot->text == "seed\n" && !random_snapshot->dirty;
+  for (int index = 0; index < random_edit_count && random_edits_ok; ++index) {
+    random_edits_ok = random_documents.redo(random_file,
+                                             random_snapshot->version, error);
+    random_snapshot = random_documents.snapshot(random_file);
+    random_edits_ok = random_edits_ok && random_snapshot.has_value();
+  }
+  check(random_undo_exact && random_edits_ok &&
+            random_snapshot->text == random_expected && random_snapshot->dirty,
+        "document random edit sequence has exact undo/redo and save-point state");
   const auto large_metadata_file = root / "src" / "large-metadata.txt";
   write_file(large_metadata_file, std::string(9u * 1024u * 1024u, 'x'));
   const auto large_metadata = documents.open(large_metadata_file, error);
@@ -359,6 +588,40 @@ int main(int argc, char** argv) {
   check(grapheme_count("\r\n") == 1 &&
             previous_grapheme_boundary(family, family.size()) == 0,
         "grapheme navigation handles CRLF and reverse movement");
+
+#ifdef TOKMON_DESK_FONT_FILE
+  FontManager font_manager;
+  std::string font_error;
+  const bool font_loaded = font_manager.load_ui_font(TOKMON_DESK_FONT_FILE,
+                                                      font_error);
+  const std::array<std::string, 5> shaping_samples{
+      "Tokmon English 中文", "مرحبا بالعالم", "e\xcc\x81",
+      family, flag + toned};
+  bool shaping_valid = font_loaded && font_manager.ready();
+  for (const auto& sample : shaping_samples) {
+    const auto shaped = font_manager.shape_utf8(sample, 13.f);
+    shaping_valid = shaping_valid && !shaped.empty() &&
+        std::ranges::all_of(shaped, [](const auto& glyph) {
+          return std::isfinite(glyph.x_advance) &&
+                 std::isfinite(glyph.y_advance) &&
+                 std::isfinite(glyph.x_offset) &&
+                 std::isfinite(glyph.y_offset);
+        });
+  }
+  const auto shaped_first = font_manager.shape_utf8("缓存与 DPI", 13.f);
+  const auto shaped_repeat = font_manager.shape_utf8("缓存与 DPI", 13.f);
+  const auto shaped_larger = font_manager.shape_utf8("缓存与 DPI", 26.f);
+  const auto advance = [](const auto& glyphs) {
+    float result = 0.f;
+    for (const auto& glyph : glyphs)
+      result += glyph.x_advance;
+    return result;
+  };
+  check(shaping_valid && shaped_first.size() == shaped_repeat.size() &&
+            std::abs(advance(shaped_first) - advance(shaped_repeat)) < 0.01f &&
+            advance(shaped_larger) > advance(shaped_first),
+        "HarfBuzz/FreeType shapes Latin, CJK, Arabic, combining and emoji runs deterministically across sizes");
+#endif
 
   SyntaxService syntax;
   std::string syntax_error;
@@ -408,6 +671,17 @@ int main(int argc, char** argv) {
   check(!markdown.nodes.empty(), "markdown produces owned AST");
   check(rml.find("javascript:") == std::string::npos, "markdown removes unsafe link");
   check(rml.find("&lt;b&gt;") != std::string::npos, "markdown escapes raw HTML");
+  const auto copy_rml = markdown_to_safe_rml_with_copy(
+      parser.parse("before\n\n```cpp\nint answer = 42;\n```\n"), "copy-test");
+  check(copy_rml.code_blocks.size() == 1 &&
+            copy_rml.code_blocks.front().id == "copy-test-code-0" &&
+            copy_rml.code_blocks.front().text == "int answer = 42;\n" &&
+            copy_rml.rml.find("int answer = 42;") != std::string::npos &&
+            copy_rml.rml.find("<pre class=\"code-block\" data-language=\"cpp\">") !=
+                std::string::npos &&
+            copy_rml.rml.find("data-copy-markdown=\"copy-test-code-0\"") !=
+                std::string::npos,
+        "Markdown code renders visibly and keeps exact copy text outside DOM attributes");
   const auto rich_markdown = parser.parse(
       "# Heading\n\n- [x] done\n\n> [!NOTE] safe\n\n"
       "[file](tokmon-file:src/sample.cpp) ![remote](https://example.com/x.png)\n\n"
@@ -486,10 +760,35 @@ int main(int argc, char** argv) {
             terminal_snapshot.default_foreground.blue !=
                 terminal_snapshot.default_background.blue,
         "libghostty-vt terminal theme has readable foreground contrast");
+  check(terminal_snapshot.default_background.red ==
+                legacy_theme::surface_warm.red &&
+            terminal_snapshot.default_background.green ==
+                legacy_theme::surface_warm.green &&
+            terminal_snapshot.default_background.blue ==
+                legacy_theme::surface_warm.blue &&
+            terminal_snapshot.default_foreground.red == legacy_theme::body.red &&
+            terminal_snapshot.default_foreground.green ==
+                legacy_theme::body.green &&
+            terminal_snapshot.default_foreground.blue ==
+                legacy_theme::body.blue &&
+            terminal_snapshot.cursor_color.red == legacy_theme::accent.red &&
+            terminal_snapshot.cursor_color.green == legacy_theme::accent.green &&
+            terminal_snapshot.cursor_color.blue == legacy_theme::accent.blue,
+        "libghostty-vt uses the legacy warm-light pane palette");
   check(vt.encode_key(TerminalKey::unidentified, "x", 0) == "x",
         "libghostty-vt encodes raw UTF-8 terminal text input");
   check(vt.encode_key(TerminalKey::enter, {}, 0) == "\r",
         "libghostty-vt encodes terminal Enter key");
+  check(!vt.encode_key(TerminalKey::left, {}, terminal_ctrl).empty() &&
+            !vt.encode_key(TerminalKey::f5, {}, terminal_shift | terminal_alt)
+                 .empty(),
+        "libghostty-vt encodes modified navigation and function keys");
+  vt.append("\x1b[?1000h\x1b[?1006h");
+  check(vt.mouse_tracking() &&
+            !vt.encode_mouse(TerminalMouseAction::press,
+                             TerminalMouseButton::left, 16.f, 16.f,
+                             320, 80, 8, 16, terminal_ctrl).empty(),
+        "libghostty-vt encodes SGR mouse tracking with modifiers");
   std::string encoded_paste;
   vt.set_response_sink([&encoded_paste](const std::string_view bytes) {
     encoded_paste.append(bytes);
@@ -535,6 +834,23 @@ int main(int argc, char** argv) {
         "terminal discovers at least one native shell profile");
   check(resolve_terminal_profile("auto").has_value(),
         "terminal resolves the portable automatic profile");
+#if defined(_WIN32)
+  const auto has_profile = [&](const std::string_view id) {
+    return std::ranges::find(profiles, id, &TerminalProfile::id) !=
+        profiles.end();
+  };
+  check(has_profile("pwsh") && has_profile("windows-powershell") &&
+            has_profile("cmd") && has_profile("wsl"),
+        "Windows terminal profile catalog covers PowerShell, cmd, and WSL with availability flags");
+#else
+  const auto has_profile = [&](const std::string_view id) {
+    return std::ranges::find(profiles, id, &TerminalProfile::id) !=
+        profiles.end();
+  };
+  check(has_profile("zsh") && has_profile("bash") && has_profile("fish") &&
+            has_profile("sh"),
+        "Unix terminal profile catalog covers zsh, bash, fish, and sh with availability flags");
+#endif
   std::string terminal_argument_error;
   const auto terminal_arguments = parse_terminal_arguments(
       R"(-NoLogo --name "Tokmon Desk" 'C:\work tree' escaped\ value)",
@@ -580,8 +896,12 @@ int main(int argc, char** argv) {
       terminal_output += terminal.take_output();
       terminal_echo = terminal_output.find("TOKMON_TERMINAL_OK") != std::string::npos;
     }
+    check(terminal.resize(100, 30, terminal_error),
+          "platform PTY accepts live resize");
     terminal.stop();
-    check(terminal_echo, "platform PTY returns shell output");
+    check(terminal_echo && !terminal.running() &&
+              !terminal.write("after stop", terminal_error),
+          "platform PTY returns shell output and cleans up EOF/exit state");
   }
 
   const auto state = AppState::make_initial(root);
@@ -620,6 +940,13 @@ int main(int argc, char** argv) {
             std::filesystem::weakly_canonical(second_workspace) &&
             second_session.indent == second_project_indent + 1,
         "navigation session stays under its matching workspace project");
+  const auto before_navigation_remove = navigation.items().size();
+  check(navigation.remove_selected_session() &&
+            navigation.items().size() + 1 == before_navigation_remove &&
+            navigation.selected() &&
+            navigation.selected()->kind == "project",
+        "navigation context deletion removes only the selected session and "
+        "returns selection to its project");
 
   const auto app_paths = DeskAppPaths::resolve();
   check(app_paths.isolated_from(root),
@@ -633,6 +960,23 @@ int main(int argc, char** argv) {
                 desk_root / "data" / "change-snapshots",
         "Desktop accepts an explicit isolated app-data root");
   check(isolated_paths.ensure(error), "Desktop creates all isolated state roots");
+  write_file(isolated_paths.cache / "old.cache", std::string(48, 'c'));
+  write_file(isolated_paths.logs / "old.log", std::string(48, 'l'));
+  write_file(isolated_paths.recovery / "old.recovery", std::string(48, 'r'));
+  DeskRetentionPolicy tiny_retention;
+  tiny_retention.cache_bytes = 16;
+  tiny_retention.log_bytes = 16;
+  tiny_retention.recovery_bytes = 16;
+  tiny_retention.log_age = std::chrono::hours::max();
+  tiny_retention.recovery_age = std::chrono::hours::max();
+  DeskRetentionReport retention_report;
+  check(isolated_paths.enforce_retention(tiny_retention, retention_report,
+                                         error) &&
+            retention_report.removed_files == 3 &&
+            directory_bytes(isolated_paths.cache) <= 16 &&
+            directory_bytes(isolated_paths.logs) <= 16 &&
+            directory_bytes(isolated_paths.recovery) <= 16,
+        "Desktop cache/log/recovery retention enforces independent quotas");
   write_file(root / ".tokmon" / "config.yaml", "model: fixture\n");
   const auto daemon_config_hash =
       tokmon::sha256_hex(read_file(root / ".tokmon" / "config.yaml"));
@@ -786,6 +1130,35 @@ int main(int argc, char** argv) {
         "libgit2 safely switches a clean worktree branch");
   check(git.checkout_branch("main", error) && git.status().branch == "main",
         "libgit2 switches back to the original branch");
+  const auto branch_before_dirty_test = git.status().branch;
+  const auto dirty_branch_text = read_file(cpp_file) + "// dirty checkout guard\n";
+  write_file(cpp_file, dirty_branch_text);
+  error.clear();
+  const bool dirty_checkout = git.checkout_branch("desk-branch", error);
+  const bool dirty_preserved = read_file(cpp_file) == dirty_branch_text;
+  const bool safely_refused = !dirty_checkout && !error.empty() &&
+      git.status().branch == branch_before_dirty_test;
+  bool returned_from_dirty_checkout = true;
+  if (dirty_checkout) {
+    error.clear();
+    returned_from_dirty_checkout = git.checkout_branch("main", error) &&
+        read_file(cpp_file) == dirty_branch_text;
+  }
+  check(dirty_preserved && (safely_refused || returned_from_dirty_checkout),
+        "libgit2 dirty checkout either preserves compatible changes or safely refuses without loss");
+  check(git.discard_file("src/sample.cpp",
+                         DocumentStore::content_hash(dirty_branch_text), false,
+                         error),
+        "dirty branch checkout fixture restores the tracked file safely");
+  const auto revision_before_commit = git.head_revision(error);
+  write_file(root / "src" / "commit-fixture.txt", "commit through libgit2\n");
+  check(git.stage_file("src/commit-fixture.txt", error) &&
+            git.commit("tokmon-desk commit fixture", error) &&
+            git.head_revision(error) != revision_before_commit,
+        "libgit2 stages and commits with a diagnostic revision change");
+  std::string push_error;
+  check(!git.push(push_error) && !push_error.empty(),
+        "libgit2 push without a remote reports a diagnostic failure");
   check(git.diff_model("../outside.txt", false, error) == std::nullopt,
         "Git operations reject workspace path escape");
 
@@ -805,6 +1178,36 @@ int main(int argc, char** argv) {
             }),
         "Desktop ChangeTracker precisely attributes tracked and created files");
   if (changes) {
+    const auto duplicate_digest = tokmon::sha256_hex("deduplicated preimage\n");
+    const auto duplicate_blob = isolated_paths.change_snapshots /
+        duplicate_digest.substr(0, 2) / (duplicate_digest + ".blob");
+    std::size_t duplicate_blob_count = 0;
+    for (std::filesystem::recursive_directory_iterator iterator(
+             isolated_paths.change_snapshots), end;
+         iterator != end; ++iterator)
+      if (iterator->is_regular_file() &&
+          iterator->path().filename() == duplicate_blob.filename())
+        ++duplicate_blob_count;
+    check(duplicate_blob_count == 1 &&
+              read_file(duplicate_blob) == "deduplicated preimage\n",
+          "Desktop ChangeTracker content-addresses identical preimages once");
+    const auto tracked_change = std::ranges::find_if(
+        changes->changes, [](const auto& change) {
+          return change.path == "src/sample.cpp";
+        });
+    if (tracked_change != changes->changes.end()) {
+      const auto blob = isolated_paths.change_snapshots /
+          tracked_change->preimage_blob.substr(0, 2) /
+          (tracked_change->preimage_blob + ".blob");
+      const auto exact_blob = read_file(blob);
+      write_file(blob, "corrupted snapshot\n");
+      auto corrupt_attempt = *changes;
+      check(!tracker.reject(corrupt_attempt, error) &&
+                error.find("integrity") != std::string::npos &&
+                read_file(cpp_file) == tracked_before + "// agent edit\n",
+            "Desktop ChangeTracker verifies content-addressed preimage integrity before restore");
+      write_file(blob, exact_blob);
+    }
     write_file(cpp_file, read_file(cpp_file) + "// user edit after run\n");
     check(!tracker.reject(*changes, error) &&
               read_file(cpp_file).find("user edit after run") != std::string::npos,
@@ -842,12 +1245,18 @@ int main(int argc, char** argv) {
             accepted_file->index_status == ' ' &&
             accepted_file->worktree_status != ' ',
         "accepting a ChangeSet preserves edits without implicitly staging them");
+  const auto tiny_snapshot_root = isolated_paths.data / "tiny-snapshot-quota";
+  DesktopChangeTracker quota_tracker(root, tiny_snapshot_root, 4);
+  check(!quota_tracker.begin("quota-run", error) &&
+            error.find("quota") != std::string::npos,
+        "Desktop ChangeTracker enforces its content-addressed snapshot quota");
 #endif
 
   std::error_code cleanup_error;
   std::filesystem::remove_all(root, cleanup_error);
   std::filesystem::remove_all(desk_root, cleanup_error);
   std::filesystem::remove_all(recovery_root, cleanup_error);
+  std::filesystem::remove_all(outside_directory, cleanup_error);
   if (failures == 0)
     std::cout << "tokmon-desk core tests passed\n";
   return failures == 0 ? 0 : 1;

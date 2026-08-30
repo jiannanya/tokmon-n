@@ -2,6 +2,11 @@
 
 #include <stdexcept>
 
+#if defined(_WIN32)
+#define NOMINMAX
+#include <Windows.h>
+#endif
+
 namespace tokmon::desk {
 namespace {
 
@@ -44,10 +49,17 @@ DeskResourcePaths DeskResourcePaths::resolve(
 std::vector<std::filesystem::path>
 DeskResourcePaths::platform_font_candidates() {
 #if defined(_WIN32)
+  std::wstring buffer(32768, L'\0');
+  const auto length = GetWindowsDirectoryW(
+      buffer.data(), static_cast<UINT>(buffer.size()));
+  if (length == 0 || length >= buffer.size())
+    return {};
+  buffer.resize(length);
+  const auto fonts = std::filesystem::path(buffer) / L"Fonts";
   return {
-      "C:/Windows/Fonts/consola.ttf",
-      "C:/Windows/Fonts/seguisym.ttf",
-      "C:/Windows/Fonts/seguiemj.ttf",
+      fonts / L"consola.ttf",
+      fonts / L"seguisym.ttf",
+      fonts / L"seguiemj.ttf",
   };
 #elif defined(__APPLE__)
   return {

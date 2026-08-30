@@ -60,6 +60,10 @@ public:
                     Rml::TextureHandle texture) override;
   void ReleaseShader(Rml::CompiledShaderHandle shader) override;
 
+  // Drop only swapchain-sized render targets after the platform device was
+  // recreated. Geometry and decoded textures are CPU-owned and remain valid.
+  void reset_after_device_recovery();
+
 private:
   struct Geometry;
   struct Texture;
@@ -79,6 +83,7 @@ private:
   Rml::Rectanglei scissor_{};
   bool clip_mask_enabled_{false};
   std::unique_ptr<Rml::Matrix4f> transform_;
+  std::unique_ptr<Layer> base_layer_;
   std::vector<std::unique_ptr<Layer>> layers_;
   std::vector<Layer*> layer_stack_;
 };
