@@ -3,74 +3,153 @@
 <body>
   <div id="settings-overlay" class="overlay hidden">
     <div class="settings-dialog">
-      <div class="settings-sidebar"><h2>设置</h2><input id="settings-search" class="settings-search" type="text" placeholder="搜索设置..."/><button class="settings-nav" data-class-active="view.settings.page == 'general'" setting-page="general">通用</button><button class="settings-nav" data-class-active="view.settings.page == 'model'" setting-page="model">智能体与模型</button><button class="settings-nav" data-class-active="view.settings.page == 'access'" setting-page="access">权限与安全</button><button class="settings-nav" data-class-active="view.settings.page == 'workspace'" setting-page="workspace">工作区</button><button class="settings-nav" data-class-active="view.settings.page == 'notifications'" setting-page="notifications">通知</button><button class="settings-nav" data-class-active="view.settings.page == 'appearance'" setting-page="appearance">外观</button><button class="settings-nav" data-class-active="view.settings.page == 'shortcuts'" setting-page="shortcuts">快捷键</button><button class="settings-nav" data-class-active="view.settings.page == 'account'" setting-page="account">账户</button><button class="settings-nav" data-class-active="view.settings.page == 'terminal'" setting-page="terminal">终端</button><button class="settings-nav" data-class-active="view.settings.page == 'browser'" setting-page="browser">浏览器</button><button class="settings-nav" data-class-active="view.settings.page == 'about'" setting-page="about">关于</button></div>
-      <div class="settings-content"><div class="settings-header"><div><h2 id="settings-title">{{view.settings.title}}</h2><p id="settings-description">{{view.settings.description}}</p></div><button id="close-settings">×</button></div>
-        <div id="settings-body">
-          <div data-if="view.settings.page == 'general'">
-            <div class="setting-card"><div class="setting-copy"><strong>界面语言</strong><p>设置 tokmon-desk 使用的语言</p></div><select id="setting-language" class="setting-select" data-value="view.settings.language"><option value="简体中文">简体中文</option><option value="English">English</option></select></div>
-            <div class="setting-card"><div class="setting-copy"><strong>启动页面</strong><p>启动后进入上次会话或首页</p></div><select id="setting-startup" class="setting-select" data-value="view.settings.startup"><option value="首页">首页</option><option value="上次打开的会话">上次打开的会话</option></select></div>
-            <div class="setting-card"><div class="setting-copy"><strong>自动保存</strong><p>编辑器未保存缓冲的自动保存间隔</p></div><select id="setting-autosave" class="setting-select" data-value="view.settings.autosave"><option value="关闭">关闭</option><option value="1 分钟">1 分钟</option><option value="5 分钟">5 分钟</option><option value="15 分钟">15 分钟</option></select></div>
-            <div class="setting-card"><div class="setting-copy"><strong>更新通道</strong><p>选择稳定版本或预览版本</p></div><select id="setting-channel" class="setting-select" data-value="view.settings.update_channel"><option value="稳定版">稳定版</option><option value="测试版">测试版</option></select></div>
-          </div>
-          <div data-if="view.settings.page == 'model'">
-            <div class="setting-card model-setting-card"><div class="setting-copy"><strong>模型平台</strong><p>来自当前项目配置；凭据只进入系统安全存储</p></div><div class="model-control"><div id="provider-list" class="provider-list model-provider-list"><button class="provider-row" data-for="provider : view.settings.providers" data-class-selected="provider.selected" data-attr-provider-id="provider.name"><span><strong>{{provider.name}}</strong><small>{{provider.model}}</small></span><em>{{provider.credential_source}}</em></button></div></div></div>
-            <div class="setting-card model-setting-card"><div class="setting-copy"><strong>主模型</strong><p>发送请求时使用的模型名称</p></div><div class="model-control"><input id="setting-main-model" type="text" data-value="view.settings.main_model"/></div></div>
-            <div class="setting-card model-setting-card"><div class="setting-copy"><strong>推理强度</strong><p>与旧版标准、高和最高选项一致</p></div><div class="model-control"><select id="setting-reasoning" class="setting-select" data-value="view.settings.reasoning"><option value="标准">标准</option><option value="高">高</option><option value="最高">最高</option></select></div></div>
-            <div class="provider-config-grid"><label>协议<select id="provider-protocol" class="setting-select" data-value="view.settings.provider_protocol"><option value="openai-compatible">openai-compatible</option><option value="anthropic">anthropic</option><option value="gemini">gemini</option><option value="local">local</option></select></label><label>Endpoint<input id="provider-endpoint" type="text" data-value="view.settings.provider_endpoint"/></label><label>认证<select id="provider-auth" class="setting-select" data-value="view.settings.provider_auth"><option value="bearer">bearer</option><option value="x-api-key">x-api-key</option><option value="none">none</option></select></label><label>Secret 环境变量<input id="provider-secret-env" type="text" data-value="view.settings.provider_secret_env"/></label><label>API Key<input id="provider-secret" type="password" data-value="view.settings.provider_secret"/></label><div class="provider-actions"><button id="configure-provider" class="secondary-button">保存 Provider</button><button id="test-provider" class="secondary-button">测试连接</button><button id="store-provider-secret" class="primary-button">安全保存 Key</button></div></div>
-          </div>
-          <div data-if="view.settings.page == 'access'">
-            <div class="setting-card"><div class="setting-copy"><strong>文件访问</strong><p>限定 Agent 可访问的文件范围</p></div><select id="setting-file-access" class="setting-select" data-value="view.settings.file_access"><option value="受信路径">受信路径</option><option value="仅工作区">仅工作区</option><option value="全部">全部</option></select></div>
-            <div class="setting-card"><div class="setting-copy"><strong>命令审批</strong><p>设置执行本地命令前的确认策略</p></div><select id="setting-command-approval" class="setting-select" data-value="view.settings.command_approval"><option value="自动执行">自动执行</option><option value="按需确认">按需确认</option><option value="禁止执行">禁止执行</option></select></div>
-            <div class="setting-card"><div class="setting-copy"><strong>联网能力</strong><p>允许模型使用已配置的网络工具</p></div><select id="setting-network" class="setting-select bool-select" data-value="view.settings.network"><option value="1">已启用</option><option value="0">已禁用</option></select></div>
-            <div class="setting-card"><div class="setting-copy"><strong>高风险二次确认</strong><p>放弃修改、上传和敏感浏览器操作必须确认</p></div><select id="setting-high-risk" class="setting-select bool-select" data-value="view.settings.high_risk_confirmation"><option value="1">已启用</option><option value="0">已禁用</option></select></div>
-          </div>
-          <div data-if="view.settings.page == 'workspace'">
-            <div class="setting-card"><div class="setting-copy"><strong>当前路径</strong><p>项目文件的真实工作目录</p></div><code class="path-value">{{view.settings.workspace_path}}</code></div>
-            <div class="setting-card"><div class="setting-copy"><strong>索引模式</strong><p>控制文件搜索和语法索引范围</p></div><select id="setting-index-mode" class="setting-select" data-value="view.settings.index_mode"><option value="标准">标准</option><option value="智能索引">智能索引</option><option value="深度索引">深度索引</option></select></div>
-            <div class="setting-card"><div class="setting-copy"><strong>自动同步</strong><p>监控文件系统变化并更新工作区视图</p></div><select id="setting-workspace-sync" class="setting-select bool-select" data-value="view.settings.workspace_sync"><option value="1">已启用</option><option value="0">已禁用</option></select></div>
-            <div class="setting-card"><div class="setting-copy"><strong>Git 集成</strong><p>显示审查、暂存、提交和推送操作</p></div><select id="setting-git" class="setting-select bool-select" data-value="view.settings.git"><option value="1">已启用</option><option value="0">已禁用</option></select></div>
-          </div>
-          <div data-if="view.settings.page == 'notifications'">
-            <div class="setting-card"><div class="setting-copy"><strong>通知</strong><p>总通知开关</p></div><select id="setting-notifications" class="setting-select bool-select" data-value="view.settings.notifications"><option value="1">已启用</option><option value="0">已禁用</option></select></div>
-            <div class="setting-card"><div class="setting-copy"><strong>桌面通知</strong><p>允许系统通知中心显示完成状态</p></div><select id="setting-desktop-notifications" class="setting-select bool-select" data-value="view.settings.desktop_notifications"><option value="1">已启用</option><option value="0">已禁用</option></select></div>
-            <div class="setting-card"><div class="setting-copy"><strong>消息提醒</strong><p>新回复到达时发出提醒</p></div><select id="setting-message-alerts" class="setting-select bool-select" data-value="view.settings.message_alerts"><option value="1">已启用</option><option value="0">已禁用</option></select></div>
-            <div class="setting-card"><div class="setting-copy"><strong>免打扰时段</strong><p>在指定时段静默通知</p></div><select id="setting-quiet-hours" class="setting-select" data-value="view.settings.quiet_hours"><option value="关闭">关闭</option><option value="22:00 - 08:00">22:00 - 08:00</option><option value="23:00 - 07:00">23:00 - 07:00</option></select></div>
-          </div>
-          <div data-if="view.settings.page == 'appearance'">
-            <div class="setting-card"><div class="setting-copy"><strong>主题与颜色</strong><p>技术重写不修改旧版 Tokmon 主题和配色</p></div><span class="locked-value">旧版浅色主题 · 已锁定</span></div>
-            <div class="setting-card"><div class="setting-copy"><strong>界面密度</strong><p>调整内容间距，不改变组件风格</p></div><select id="setting-density" class="setting-select" data-value="view.settings.density"><option value="紧凑">紧凑</option><option value="舒适">舒适</option><option value="宽松">宽松</option></select></div>
-            <div class="setting-card"><div class="setting-copy"><strong>界面缩放</strong><p>70%–200%；自动跟随系统显示缩放</p></div><input id="setting-ui-scale" type="number" min="70" max="200" step="5" data-value="view.settings.ui_scale"/></div>
-            <div class="setting-card"><div class="setting-copy"><strong>字体缩放</strong><p>保持内容字体可读性</p></div><input id="setting-font-scale" type="number" min="70" max="200" step="5" data-value="view.settings.font_scale"/></div>
-          </div>
-          <div data-if="view.settings.page == 'shortcuts'"><div class="shortcut-table"><div class="shortcut-row"><span>发送消息</span><kbd>Ctrl + Enter</kbd></div><div class="shortcut-row"><span>保存文件</span><kbd>Ctrl + S</kbd></div><div class="shortcut-row"><span>打开文件</span><kbd>Ctrl + P</kbd></div><div class="shortcut-row"><span>打开审查</span><kbd>Ctrl + Shift + G</kbd></div><div class="shortcut-row"><span>终端复制 / 粘贴</span><kbd>Ctrl + Shift + C / V</kbd></div><div class="shortcut-row"><span>释放编辑器或终端焦点</span><kbd>Esc</kbd></div></div></div>
-          <div data-if="view.settings.page == 'account'">
-            <div class="setting-card"><div class="setting-copy"><strong>昵称</strong><p>在本机 UI 中显示的名称</p></div><input id="setting-nickname" type="text" data-value="view.settings.nickname"/></div>
-            <div class="setting-card"><div class="setting-copy"><strong>邮箱</strong><p>可选账户联系邮箱</p></div><input id="setting-email" type="email" data-value="view.settings.email"/></div>
-            <div class="setting-card"><div class="setting-copy"><strong>云同步</strong><p>同步前仍以当前 Tokmon 配置能力为准</p></div><select id="setting-cloud-sync" class="setting-select bool-select" data-value="view.settings.cloud_sync"><option value="1">已启用</option><option value="0">已禁用</option></select></div>
-          </div>
-          <div data-if="view.settings.page == 'terminal'">
-            <div class="setting-card"><div class="setting-copy"><strong>默认 Shell</strong><p>使用当前平台可用的本地 Shell 或自定义程序</p></div><select id="setting-terminal-profile" class="setting-select" data-value="view.settings.terminal_profile"><option data-for="profile : view.settings.terminal_profiles" data-attr-value="profile.value">{{profile.label}}</option></select></div>
-            <div class="setting-card"><div class="setting-copy"><strong>自定义可执行文件</strong><p>仅在默认 Shell 选择“自定义可执行文件”时使用</p></div><input id="setting-terminal-executable" type="text" data-value="view.settings.terminal_executable" placeholder="选择终端可执行文件"/></div>
-            <div class="setting-card"><div class="setting-copy"><strong>自定义参数</strong><p>支持空格、单引号、双引号和反斜杠转义</p></div><input id="setting-terminal-arguments" type="text" data-value="view.settings.terminal_arguments" placeholder="例如：-NoLogo 或 -l"/></div>
-            <div class="setting-card"><div class="setting-copy"><strong>终端字号</strong><p>新建终端标签时应用，并同步调整 PTY 行列网格</p></div><input id="setting-terminal-font-size" type="number" min="9" max="24" data-value="view.settings.terminal_font_size"/></div>
-            <div class="setting-card"><div class="setting-copy"><strong>滚动缓冲</strong><p>libghostty-vt 保存的最大可回看行数</p></div><input id="setting-terminal-scrollback" type="number" min="1000" max="100000" data-value="view.settings.terminal_scrollback"/></div>
-            <div class="setting-card"><div class="setting-copy"><strong>数据边界</strong><p>终端进程、历史和设置仅属于 tokmon-desk</p></div><span class="locked-value">Desktop 本地</span></div>
-          </div>
-          <div data-if="view.settings.page == 'browser'">
-            <div class="setting-card"><div class="setting-copy"><strong>系统浏览器</strong><p>优先复用已安装的 Chrome/Chromium 可执行文件</p></div><code class="path-value">{{view.settings.browser_executable}}</code></div>
-            <div class="setting-card"><div class="setting-copy"><strong>独立 Profile</strong><p>不会修改用户日常浏览器 Profile</p></div><span class="locked-value">强制隔离</span></div>
-            <div class="setting-card"><div class="setting-copy"><strong>高风险操作</strong><p>上传、下载、权限、支付和密码操作进入用户确认</p></div><select id="setting-browser-confirm" class="setting-select bool-select" data-value="view.settings.browser_high_risk_confirmation"><option value="1">已启用</option><option value="0">已禁用</option></select></div>
-          </div>
-          <div data-if="view.settings.page == 'about'">
-            <div class="setting-card"><div class="setting-copy"><strong>tokmon-desk</strong><p>SDL3 + RmlUi + Skia 原生桌面技术重写</p></div><span class="locked-value">开发版</span></div>
-            <div class="setting-card"><div class="setting-copy"><strong>开源组件</strong><p>RmlUi · SDL3 · Skia · HarfBuzz · FreeType · MD4C · Zep · libgit2 · tree-sitter · libghostty-vt</p></div></div>
-            <div class="setting-card"><div class="setting-copy"><strong>Browser</strong><p>基础安装包不包含浏览器运行时</p></div></div>
-            <div class="setting-card"><div class="setting-copy"><strong>许可声明</strong><p>完整版权与许可文本随发行包的 THIRD_PARTY_NOTICES.txt 和 licenses/ 提供。</p></div><button id="open-notices" class="secondary-button setting-action">打开许可声明</button></div>
-          </div>
-          <div id="settings-dialog-extension"></div>
-        </div>
-        <div class="settings-footer"><span id="settings-status">{{view.settings.status}}</span><button id="reset-settings" class="secondary-button">恢复默认</button><button id="save-settings" class="primary-button">保存更改</button></div>
+      <div class="settings-topbar">
+        <h2>设置</h2>
+        <div class="settings-search-wrap"><span>⌕</span><input id="settings-search" class="settings-search" type="text" placeholder="搜索设置项（例如：语言、模型、权限、快捷键...）"/></div>
+        <button id="close-settings" class="settings-close">×</button>
       </div>
+      <div class="settings-main">
+        <div class="settings-sidebar">
+          <button class="settings-nav" data-class-active="view.settings.page == 'general'" setting-page="general"><span class="settings-nav-icon">通</span><span>通用</span></button>
+          <button class="settings-nav" data-class-active="view.settings.page == 'model'" setting-page="model"><span class="settings-nav-icon">模</span><span>模型</span></button>
+          <button class="settings-nav" data-class-active="view.settings.page == 'agents'" setting-page="agents"><span class="settings-nav-icon">智</span><span>智能体</span></button>
+          <button class="settings-nav" data-class-active="view.settings.page == 'skills'" setting-page="skills"><span class="settings-nav-icon">技</span><span>Skill 技能</span></button>
+          <button class="settings-nav" data-class-active="view.settings.page == 'rules'" setting-page="rules"><span class="settings-nav-icon">规</span><span>规则</span></button>
+          <button class="settings-nav" data-class-active="view.settings.page == 'mcp'" setting-page="mcp"><span class="settings-nav-icon">M</span><span>MCP 服务</span></button>
+          <button class="settings-nav" data-class-active="view.settings.page == 'access'" setting-page="access"><span class="settings-nav-icon">安</span><span>权限与安全</span></button>
+          <button class="settings-nav" data-class-active="view.settings.page == 'workspace'" setting-page="workspace"><span class="settings-nav-icon">工</span><span>工作区</span></button>
+          <button class="settings-nav" data-class-active="view.settings.page == 'notifications'" setting-page="notifications"><span class="settings-nav-icon">知</span><span>通知</span></button>
+          <button class="settings-nav" data-class-active="view.settings.page == 'appearance'" setting-page="appearance"><span class="settings-nav-icon">外</span><span>外观</span></button>
+          <button class="settings-nav" data-class-active="view.settings.page == 'shortcuts'" setting-page="shortcuts"><span class="settings-nav-icon">键</span><span>快捷键</span></button>
+          <button class="settings-nav" data-class-active="view.settings.page == 'account'" setting-page="account"><span class="settings-nav-icon">户</span><span>账户</span></button>
+          <button class="settings-nav" data-class-active="view.settings.page == 'terminal'" setting-page="terminal"><span class="settings-nav-icon">终</span><span>终端</span></button>
+          <button class="settings-nav" data-class-active="view.settings.page == 'browser'" setting-page="browser"><span class="settings-nav-icon">浏</span><span>浏览器</span></button>
+          <button class="settings-nav" data-class-active="view.settings.page == 'about'" setting-page="about"><span class="settings-nav-icon">关</span><span>关于</span></button>
+        </div>
+        <div class="settings-content">
+          <div class="settings-page-heading"><h2 id="settings-title">{{view.settings.title}}</h2><p id="settings-description">{{view.settings.description}}</p></div>
+          <div id="settings-body">
+            <div class="settings-page" data-if="view.settings.page == 'general'">
+              <div class="setting-card"><div class="setting-copy"><strong>应用语言</strong><p>切换 Tokmon 界面显示的语言</p></div><select id="setting-language" class="setting-select" data-value="view.settings.language"><option value="简体中文">简体中文</option><option value="English">English</option><option value="日本語">日本語</option></select></div>
+              <div class="setting-card"><div class="setting-copy"><strong>启动时打开</strong><p>设置启动 Tokmon 时默认进入的初始页面</p></div><div class="segmented-control"><button data-class-selected="view.settings.startup == '首页'" setting-choice="startup" setting-value="首页">首页</button><button data-class-selected="view.settings.startup == '上次打开的会话'" setting-choice="startup" setting-value="上次打开的会话">上次打开的会话</button></div></div>
+              <div class="setting-card"><div class="setting-copy"><strong>默认工作区</strong><p>新建会话及默认打开的项目工作空间根目录</p></div><code class="path-value">{{view.settings.workspace_path}}</code></div>
+            </div>
+
+            <div class="settings-page" data-if="view.settings.page == 'model'">
+              <div class="setting-card model-setting-card"><div class="setting-copy"><strong>模型提供方</strong><p>来自当前项目配置；凭据仅进入系统安全存储</p></div><div class="model-control"><div id="provider-list" class="provider-list model-provider-list"><button class="provider-row" data-for="provider : view.settings.providers" data-class-selected="provider.selected" data-attr-provider-id="provider.name"><span><strong>{{provider.name}}</strong><small>{{provider.model}}</small></span><em>{{provider.credential_source}}</em></button></div></div></div>
+              <div class="setting-card model-setting-card"><div class="setting-copy"><strong>主模型</strong><p>日常任务与代码编写使用的主力模型</p></div><div class="model-control"><input id="setting-main-model" type="text" data-value="view.settings.main_model"/></div></div>
+              <div class="setting-card"><div class="setting-copy"><strong>推理强度</strong><p>调节模型思考深度与响应耗时</p></div><select id="setting-reasoning" class="setting-select" data-value="view.settings.reasoning"><option value="标准">标准</option><option value="高">高</option><option value="最高">最高</option></select></div>
+              <div class="provider-config-grid"><label>协议<select id="provider-protocol" class="setting-select" data-value="view.settings.provider_protocol"><option value="openai-compatible">openai-compatible</option><option value="anthropic">anthropic</option><option value="gemini">gemini</option><option value="local">local</option></select></label><label>Endpoint<input id="provider-endpoint" type="text" data-value="view.settings.provider_endpoint"/></label><label>认证<select id="provider-auth" class="setting-select" data-value="view.settings.provider_auth"><option value="bearer">bearer</option><option value="x-api-key">x-api-key</option><option value="none">none</option></select></label><label>Secret 环境变量<input id="provider-secret-env" type="text" data-value="view.settings.provider_secret_env"/></label><label>API Key<input id="provider-secret" type="password" data-value="view.settings.provider_secret"/></label><div class="provider-actions"><button id="configure-provider" class="secondary-button">保存 Provider</button><button id="test-provider" class="secondary-button">测试连接</button><button id="store-provider-secret" class="primary-button">安全保存 Key</button></div></div>
+            </div>
+
+            <div class="settings-page" data-if="view.settings.page == 'agents'">
+              <div class="setting-card"><div class="setting-copy"><strong>默认智能体</strong><p>新建会话时默认激活的专家角色</p></div><select id="setting-default-agent" class="setting-select" data-value="view.settings.default_agent"><option value="代码助手">代码助手</option><option value="翻译助手">翻译助手</option><option value="演示文稿美化">演示文稿美化</option><option value="数据分析师">数据分析师</option></select></div>
+              <div class="setting-card"><div class="setting-copy"><strong>自主子任务派发</strong><p>允许智能体将复杂目标自主拆解给子智能体执行</p></div><button class="toggle" data-class-on="view.settings.agent_autonomous" setting-toggle="agent_autonomous"><span></span></button></div>
+              <div class="setting-card"><div class="setting-copy"><strong>展示思考与推理过程</strong><p>在对话流中展示智能体的思考与反思步骤</p></div><button class="toggle" data-class-on="view.settings.agent_show_thoughts" setting-toggle="agent_show_thoughts"><span></span></button></div>
+              <div class="settings-section"><div class="settings-section-title">可用智能体角色</div><div class="settings-card-grid">
+                <div class="compact-setting-card"><div><strong>代码助手</strong><p>代码编写、函数重构与单元测试生成</p></div><button class="toggle" data-class-on="view.settings.agent_code_enabled" setting-toggle="agent_code_enabled"><span></span></button></div>
+                <div class="compact-setting-card"><div><strong>架构专家</strong><p>系统方案设计、技术选型与模块拆解</p></div><button class="toggle" data-class-on="view.settings.agent_architect_enabled" setting-toggle="agent_architect_enabled"><span></span></button></div>
+                <div class="compact-setting-card"><div><strong>翻译助手</strong><p>多语言精准本地化与技术文档翻译</p></div><button class="toggle" data-class-on="view.settings.agent_translator_enabled" setting-toggle="agent_translator_enabled"><span></span></button></div>
+                <div class="compact-setting-card"><div><strong>数据分析师</strong><p>SQL 查询分析、数据清洗与报表可视化</p></div><button class="toggle" data-class-on="view.settings.agent_analyst_enabled" setting-toggle="agent_analyst_enabled"><span></span></button></div>
+              </div></div>
+            </div>
+
+            <div class="settings-page" data-if="view.settings.page == 'skills'">
+              <div class="setting-card"><div class="setting-copy"><strong>启用 Skill 技能系统</strong><p>允许智能体加载专业领域技能与指令集</p></div><button class="toggle" data-class-on="view.settings.skills_enabled" setting-toggle="skills_enabled"><span></span></button></div>
+              <div class="setting-card"><div class="setting-copy"><strong>按需自动唤起</strong><p>根据对话意图自动识别并调用对应技能扩展</p></div><button class="toggle" data-class-on="view.settings.skills_auto_invoke" setting-toggle="skills_auto_invoke"><span></span></button></div>
+              <div class="settings-section"><div class="settings-section-title">已安装技能 <span>4 个</span></div><div class="skill-list">
+                <div class="skill-card"><div><strong>扩展与自定义指南</strong><span class="tag">agy-customizations</span><span class="accent-tag">开发配置</span><p>指导智能体正确编写 Skill、Rules、MCP 与扩展插件</p></div><button class="toggle" data-class-on="view.settings.skill_customizations_enabled" setting-toggle="skill_customizations_enabled"><span></span></button></div>
+                <div class="skill-card"><div><strong>交互式富组件渲染</strong><span class="tag">generative_ui</span><span class="accent-tag">界面渲染</span><p>在对话流中动态渲染交互式 HTML、UI 与图表控件</p></div><button class="toggle" data-class-on="view.settings.skill_generative_ui_enabled" setting-toggle="skill_generative_ui_enabled"><span></span></button></div>
+                <div class="skill-card"><div><strong>代码重构与检查</strong><span class="tag">code-refactor</span><span class="accent-tag">代码工程</span><p>识别代码坏味道并遵循设计模式进行模块重构</p></div><button class="toggle" data-class-on="view.settings.skill_refactor_enabled" setting-toggle="skill_refactor_enabled"><span></span></button></div>
+                <div class="skill-card"><div><strong>架构与流程图引擎</strong><span class="tag">mermaid-charts</span><span class="accent-tag">图表设计</span><p>基于 Mermaid 规范绘制系统架构与时序交互图</p></div><button class="toggle" data-class-on="view.settings.skill_diagrams_enabled" setting-toggle="skill_diagrams_enabled"><span></span></button></div>
+              </div></div>
+            </div>
+
+            <div class="settings-page" data-if="view.settings.page == 'rules'">
+              <div class="setting-card"><div class="setting-copy"><strong>启用指令规则系统</strong><p>执行任务前自动注入行为规范与代码准则</p></div><button class="toggle" data-class-on="view.settings.rules_enabled" setting-toggle="rules_enabled"><span></span></button></div>
+              <div class="setting-card"><div class="setting-copy"><strong>优先读取项目规则</strong><p>优先遵循当前工作区中的 AGENTS.md 或 .rules 规范文件</p></div><button class="toggle" data-class-on="view.settings.prefer_project_rules" setting-toggle="prefer_project_rules"><span></span></button></div>
+              <div class="rules-editor"><div><strong>全局通用规则与偏好</strong><span>应用于所有新建任务</span></div><textarea id="setting-global-rules" rows="5" data-value="view.settings.global_rules" placeholder="输入全局提示词规则，如代码规范、格式要求、常用语言偏好..."></textarea></div>
+            </div>
+
+            <div class="settings-page" data-if="view.settings.page == 'mcp'">
+              <div class="mcp-header-card"><strong>Model Context Protocol (MCP)</strong><span class="accent-tag">协议版本 2024-11-05</span><p>连接和管理本地与远程工具协议，赋予智能体调用外部工具与 API 的能力</p><em>3 个运行中 · 12 个可用工具</em></div>
+              <div class="settings-section-title mcp-section-title">全局运行参数</div>
+              <div class="setting-card"><div class="setting-copy"><strong>自动启动 MCP 服务</strong><p>应用启动时自动拉起所有已启用的 stdio 子进程与 SSE 长连接</p></div><button class="toggle" data-class-on="view.settings.mcp_auto_start" setting-toggle="mcp_auto_start"><span></span></button></div>
+              <div class="setting-card"><div class="setting-copy"><strong>工具调用审批策略</strong><p>控制智能体调用 MCP 外部工具时的用户确认规则</p></div><select id="setting-mcp-approval" class="setting-select wide-select" data-value="view.settings.mcp_approval"><option value="自动执行">自动执行</option><option value="高风险时询问">高风险时询问</option><option value="每次调用均需确认">每次调用均需确认</option></select></div>
+              <div class="setting-card"><div class="setting-copy"><strong>请求超时时间</strong><p>设置单次 MCP 工具执行的最长等待响应时间</p></div><select id="setting-mcp-timeout" class="setting-select" data-value="view.settings.mcp_timeout"><option value="30 秒">30 秒</option><option value="60 秒">60 秒</option><option value="120 秒">120 秒</option></select></div>
+              <div class="settings-section-title mcp-section-title">已配置的 MCP 服务器 · 4 个</div>
+              <div class="skill-list">
+                <div class="skill-card mcp-server-card"><div><strong>filesystem</strong><span class="tag">stdio</span><span class="running-tag">运行中</span><p>受保护工作区内的本地文件读写、目录遍历与属性检索</p></div><em>4 工具 · 2 资源</em></div>
+                <div class="skill-card mcp-server-card"><div><strong>github</strong><span class="tag">stdio</span><span class="running-tag">运行中</span><p>检视代码仓库、分支、Pull Request 与 Issue</p></div><em>5 工具 · 1 资源</em></div>
+                <div class="skill-card mcp-server-card"><div><strong>postgresql</strong><span class="tag">stdio</span><span class="stopped-tag">已停用</span><p>只读连接 Postgres 数据库并分析元数据</p></div><em>3 工具 · 2 资源</em></div>
+              </div>
+            </div>
+
+            <div class="settings-page" data-if="view.settings.page == 'access'">
+              <div class="setting-card"><div class="setting-copy"><strong>文件访问</strong><p>限定智能体可访问的本地文件范围</p></div><select id="setting-file-access" class="setting-select" data-value="view.settings.file_access"><option value="受信路径">受信路径</option><option value="仅工作区">仅工作区</option><option value="全部">全部</option></select></div>
+              <div class="setting-card"><div class="setting-copy"><strong>命令审批</strong><p>设置执行本地命令前的确认策略</p></div><select id="setting-command-approval" class="setting-select" data-value="view.settings.command_approval"><option value="自动执行">自动执行</option><option value="按需确认">按需确认</option><option value="禁止执行">禁止执行</option></select></div>
+              <div class="setting-card"><div class="setting-copy"><strong>网络访问权限</strong><p>允许智能体在任务执行过程中发起外部网络请求</p></div><button class="toggle" data-class-on="view.settings.network" setting-toggle="network"><span></span></button></div>
+              <div class="setting-card"><div class="setting-copy"><strong>高风险二次确认</strong><p>执行高危不可逆操作前强制再次确认</p></div><button class="toggle" data-class-on="view.settings.high_risk_confirmation" setting-toggle="high_risk_confirmation"><span></span></button></div>
+            </div>
+
+            <div class="settings-page" data-if="view.settings.page == 'workspace'">
+              <div class="setting-card"><div class="setting-copy"><strong>当前路径</strong><p>项目文件的真实工作目录</p></div><code class="path-value">{{view.settings.workspace_path}}</code></div>
+              <div class="setting-card"><div class="setting-copy"><strong>索引模式</strong><p>控制文件搜索和语法索引范围</p></div><select id="setting-index-mode" class="setting-select" data-value="view.settings.index_mode"><option value="标准">标准</option><option value="智能索引">智能索引</option><option value="深度索引">深度索引</option></select></div>
+              <div class="setting-card"><div class="setting-copy"><strong>自动同步</strong><p>监控文件系统变化并更新工作区视图</p></div><button class="toggle" data-class-on="view.settings.workspace_sync" setting-toggle="workspace_sync"><span></span></button></div>
+              <div class="setting-card"><div class="setting-copy"><strong>Git 集成</strong><p>显示审查、暂存、提交和推送操作</p></div><button class="toggle" data-class-on="view.settings.git" setting-toggle="git"><span></span></button></div>
+            </div>
+
+            <div class="settings-page" data-if="view.settings.page == 'notifications'">
+              <div class="setting-card"><div class="setting-copy"><strong>启用通知</strong><p>开启或关闭 Tokmon 应用的系统级通知</p></div><button class="toggle" data-class-on="view.settings.notifications" setting-toggle="notifications"><span></span></button></div>
+              <div class="setting-card"><div class="setting-copy"><strong>桌面通知</strong><p>任务在后台完成时显示系统横幅</p></div><button class="toggle" data-class-on="view.settings.desktop_notifications" setting-toggle="desktop_notifications"><span></span></button></div>
+              <div class="setting-card"><div class="setting-copy"><strong>消息提醒</strong><p>新消息到达与智能体回复完成时提醒</p></div><button class="toggle" data-class-on="view.settings.message_alerts" setting-toggle="message_alerts"><span></span></button></div>
+              <div class="setting-card"><div class="setting-copy"><strong>免打扰时段</strong><p>在指定时段静默通知</p></div><select id="setting-quiet-hours" class="setting-select" data-value="view.settings.quiet_hours"><option value="关闭">关闭</option><option value="22:00 - 08:00">22:00 - 08:00</option><option value="23:00 - 07:00">23:00 - 07:00</option></select></div>
+            </div>
+
+            <div class="settings-page" data-if="view.settings.page == 'appearance'">
+              <div class="theme-heading"><strong>界面主题风格</strong><p>选择雅绿暖白或森林深色主题</p></div>
+              <div class="theme-grid">
+                <button class="theme-choice" data-class-selected="view.settings.theme_mode == '浅色'" setting-choice="theme_mode" setting-value="浅色"><span class="theme-preview light-preview"><i></i><i></i><i></i></span><strong>浅色 · 雅绿暖白</strong><small>明亮纯净的暖白与鼠尾草绿</small></button>
+                <button class="theme-choice" data-class-selected="view.settings.theme_mode == '深色'" setting-choice="theme_mode" setting-value="深色"><span class="theme-preview dark-preview"><i></i><i></i><i></i></span><strong>深色 · 森林夜色</strong><small>低眩光的深森林绿工作环境</small></button>
+              </div>
+              <div class="setting-card"><div class="setting-copy"><strong>界面密度</strong><p>调整内容间距与信息密度</p></div><select id="setting-density" class="setting-select" data-value="view.settings.density"><option value="紧凑">紧凑</option><option value="舒适">舒适</option><option value="宽松">宽松</option></select></div>
+              <div class="setting-card"><div class="setting-copy"><strong>界面缩放</strong><p>70%–200%，自动跟随系统显示缩放</p></div><input id="setting-ui-scale" type="number" min="70" max="200" step="5" data-value="view.settings.ui_scale"/></div>
+              <div class="setting-card"><div class="setting-copy"><strong>字体缩放</strong><p>调节编辑器与各工作区面板字号</p></div><input id="setting-font-scale" type="number" min="70" max="200" step="5" data-value="view.settings.font_scale"/></div>
+            </div>
+
+            <div class="settings-page" data-if="view.settings.page == 'shortcuts'"><div class="shortcut-table"><div class="shortcut-row"><span>新建会话</span><kbd>Ctrl + N</kbd></div><div class="shortcut-row"><span>打开设置</span><kbd>Ctrl + ,</kbd></div><div class="shortcut-row"><span>发送消息</span><kbd>Enter</kbd></div><div class="shortcut-row"><span>保存文件</span><kbd>Ctrl + S</kbd></div><div class="shortcut-row"><span>打开文件</span><kbd>Ctrl + P</kbd></div><div class="shortcut-row"><span>打开审查</span><kbd>Ctrl + Shift + G</kbd></div><div class="shortcut-row"><span>终端复制 / 粘贴</span><kbd>Ctrl + Shift + C / V</kbd></div></div></div>
+
+            <div class="settings-page" data-if="view.settings.page == 'account'">
+              <div class="account-avatar">T</div>
+              <div class="setting-card"><div class="setting-copy"><strong>昵称</strong><p>在本机 UI 中显示的名称</p></div><input id="setting-nickname" type="text" data-value="view.settings.nickname"/></div>
+              <div class="setting-card"><div class="setting-copy"><strong>登录邮箱</strong><p>可选账户联系邮箱</p></div><input id="setting-email" type="email" data-value="view.settings.email"/></div>
+              <div class="setting-card"><div class="setting-copy"><strong>云同步</strong><p>同步账户偏好与工作空间配置</p></div><button class="toggle" data-class-on="view.settings.cloud_sync" setting-toggle="cloud_sync"><span></span></button></div>
+            </div>
+
+            <div class="settings-page" data-if="view.settings.page == 'terminal'">
+              <div class="setting-card"><div class="setting-copy"><strong>默认 Shell</strong><p>使用当前平台可用的本地 Shell 或自定义程序</p></div><select id="setting-terminal-profile" class="setting-select" data-value="view.settings.terminal_profile"><option data-for="profile : view.settings.terminal_profiles" data-attr-value="profile.value">{{profile.label}}</option></select></div>
+              <div class="setting-card"><div class="setting-copy"><strong>自定义可执行文件</strong><p>仅在默认 Shell 选择自定义程序时使用</p></div><input id="setting-terminal-executable" type="text" data-value="view.settings.terminal_executable" placeholder="选择终端可执行文件"/></div>
+              <div class="setting-card"><div class="setting-copy"><strong>自定义参数</strong><p>支持空格、单引号、双引号和反斜杠转义</p></div><input id="setting-terminal-arguments" type="text" data-value="view.settings.terminal_arguments" placeholder="例如：-NoLogo 或 -l"/></div>
+              <div class="setting-card"><div class="setting-copy"><strong>终端字号</strong><p>新建终端标签时应用</p></div><input id="setting-terminal-font-size" type="number" min="9" max="24" data-value="view.settings.terminal_font_size"/></div>
+              <div class="setting-card"><div class="setting-copy"><strong>滚动缓冲</strong><p>终端保存的最大可回看行数</p></div><input id="setting-terminal-scrollback" type="number" min="1000" max="100000" data-value="view.settings.terminal_scrollback"/></div>
+            </div>
+
+            <div class="settings-page" data-if="view.settings.page == 'browser'">
+              <div class="setting-card"><div class="setting-copy"><strong>系统浏览器</strong><p>优先复用已安装的 Chrome/Chromium 可执行文件</p></div><code class="path-value">{{view.settings.browser_executable}}</code></div>
+              <div class="setting-card"><div class="setting-copy"><strong>独立 Profile</strong><p>不会修改用户日常浏览器 Profile</p></div><span class="locked-value">强制隔离</span></div>
+              <div class="setting-card"><div class="setting-copy"><strong>高风险操作</strong><p>上传、下载、权限、支付和密码操作进入用户确认</p></div><button class="toggle" data-class-on="view.settings.browser_high_risk_confirmation" setting-toggle="browser_high_risk_confirmation"><span></span></button></div>
+            </div>
+
+            <div class="settings-page" data-if="view.settings.page == 'about'">
+              <div class="about-brand"><span>T</span><div><strong>tokmon-desk</strong><p>原生桌面智能工作台 · Forest Sage UI</p></div><em>开发版</em></div>
+              <div class="setting-card"><div class="setting-copy"><strong>开源组件</strong><p>RmlUi · SDL3 · Skia · HarfBuzz · FreeType · MD4C · Zep · libgit2 · tree-sitter · libghostty-vt</p></div></div>
+              <div class="setting-card"><div class="setting-copy"><strong>许可声明</strong><p>完整版权与许可文本随发行包提供</p></div><button id="open-notices" class="secondary-button setting-action">打开许可声明</button></div>
+            </div>
+            <div id="settings-dialog-extension"></div>
+          </div>
+        </div>
+      </div>
+      <div class="settings-footer"><button id="reset-settings" class="reset-settings">↻ <span>恢复默认设置</span></button><span id="settings-status">{{view.settings.status}}</span><div><button id="cancel-settings" class="secondary-button">取消</button><button id="save-settings" class="primary-button">保存更改</button></div></div>
     </div>
   </div>
 </body>

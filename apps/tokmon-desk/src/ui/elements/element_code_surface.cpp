@@ -1,6 +1,7 @@
 #include "ui/elements/element_code_surface.hpp"
 
 #include "editor/grapheme.hpp"
+#include "ui/theme_palette.hpp"
 
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/ElementInstancer.h>
@@ -31,7 +32,9 @@ Rml::ColourbPremultiplied syntax_colour(const SyntaxKind kind) {
     case SyntaxKind::string: return Rml::Colourb(159, 58, 56).ToPremultiplied();
     case SyntaxKind::number: return Rml::Colourb(4, 120, 87).ToPremultiplied();
     case SyntaxKind::preprocessor: return Rml::Colourb(175, 0, 219).ToPremultiplied();
-    default: return Rml::Colourb(41, 37, 36).ToPremultiplied();
+    default: return Rml::Colourb(legacy_theme::body.red,
+                                 legacy_theme::body.green,
+                                 legacy_theme::body.blue).ToPremultiplied();
   }
 }
 
@@ -404,7 +407,7 @@ void ElementCodeSurface::rebuild_geometry(const Rml::Vector2f size) {
           decorations,
           {gutter + 4.f * scale + selection_x - horizontal_offset_, y},
           {std::max(scale, selection_width), line_height},
-          Rml::Colourb(247, 239, 229, 230).ToPremultiplied());
+          Rml::Colourb(234, 241, 232, 230).ToPremultiplied());
     }
     if (caret_ >= line_start && caret_ <= line_end) {
       const float caret_x = width_to(caret_);
@@ -412,7 +415,9 @@ void ElementCodeSurface::rebuild_geometry(const Rml::Vector2f size) {
           decorations,
           {gutter + 4.f * scale + caret_x - horizontal_offset_, y + scale},
           {scale, line_height - 2.f * scale},
-          Rml::Colourb(200, 106, 40).ToPremultiplied());
+          Rml::Colourb(legacy_theme::accent.red,
+                       legacy_theme::accent.green,
+                       legacy_theme::accent.blue).ToPremultiplied());
       if (!composition_text_.empty()) {
         const auto composition_width = static_cast<float>(
             font_engine->GetStringWidth(face, Rml::String(composition_text_),
@@ -422,12 +427,16 @@ void ElementCodeSurface::rebuild_geometry(const Rml::Vector2f size) {
         Rml::MeshUtilities::GenerateQuad(
             decorations, {draw_x, y + line_height - 2.f * scale},
             {std::max(scale, composition_width), scale},
-            Rml::Colourb(200, 106, 40).ToPremultiplied());
+            Rml::Colourb(legacy_theme::accent.red,
+                         legacy_theme::accent.green,
+                         legacy_theme::accent.blue).ToPremultiplied());
         composition_x = draw_x;
       }
     }
     add_text(std::to_string(line + 1), 7.f * scale, y,
-             Rml::Colourb(168, 162, 158).ToPremultiplied());
+             Rml::Colourb(legacy_theme::faint.red,
+                          legacy_theme::faint.green,
+                          legacy_theme::faint.blue).ToPremultiplied());
 
     float x = gutter + 4.f * scale - horizontal_offset_;
     std::size_t cursor = line_start;
@@ -449,7 +458,9 @@ void ElementCodeSurface::rebuild_geometry(const Rml::Vector2f size) {
                      x, y, syntax_colour(SyntaxKind::plain));
     if (composition_x)
       (void)add_text(composition_text_, *composition_x, y,
-                     Rml::Colourb(41, 37, 36).ToPremultiplied());
+                     Rml::Colourb(legacy_theme::body.red,
+                                  legacy_theme::body.green,
+                                  legacy_theme::body.blue).ToPremultiplied());
     ++rendered_lines_;
   }
   decoration_geometry_ = render_manager->MakeGeometry(std::move(decorations));

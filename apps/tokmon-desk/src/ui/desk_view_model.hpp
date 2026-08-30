@@ -139,6 +139,12 @@ struct SettingsView {
   Rml::String index_mode{"标准"};
   Rml::String quiet_hours{"关闭"};
   Rml::String density{"舒适"};
+  Rml::String theme_mode{"浅色"};
+  Rml::String default_agent{"代码助手"};
+  Rml::String global_rules{
+      "优先使用 TypeScript 严格模式；遵循项目代码规范；代码注释使用中文。"};
+  Rml::String mcp_approval{"高风险时询问"};
+  Rml::String mcp_timeout{"60 秒"};
   Rml::String nickname;
   Rml::String email;
   Rml::String terminal_profile{"auto"};
@@ -161,6 +167,21 @@ struct SettingsView {
   bool message_alerts{true};
   bool cloud_sync{false};
   bool browser_high_risk_confirmation{true};
+  bool agent_autonomous{true};
+  bool agent_show_thoughts{true};
+  bool agent_code_enabled{true};
+  bool agent_architect_enabled{true};
+  bool agent_translator_enabled{true};
+  bool agent_analyst_enabled{true};
+  bool skills_enabled{true};
+  bool skills_auto_invoke{true};
+  bool skill_customizations_enabled{true};
+  bool skill_generative_ui_enabled{true};
+  bool skill_refactor_enabled{true};
+  bool skill_diagrams_enabled{true};
+  bool rules_enabled{true};
+  bool prefer_project_rules{true};
+  bool mcp_auto_start{true};
   int ui_scale{125};
   int font_scale{100};
   int terminal_font_size{13};

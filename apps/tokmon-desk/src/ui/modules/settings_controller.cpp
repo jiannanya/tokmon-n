@@ -66,6 +66,9 @@ tokmon::cbor::Value defaults(const int ui_scale) {
       {"notifications", true}, {"desktop_notifications", true},
       {"message_alerts", true}, {"quiet_hours", "关闭"},
       {"density", "舒适"}, {"font_scale", static_cast<std::int64_t>(100)},
+      {"theme_mode", "浅色"}, {"default_agent", "代码助手"},
+      {"global_rules", "优先使用 TypeScript 严格模式；遵循项目代码规范；代码注释使用中文。"},
+      {"mcp_approval", "高风险时询问"}, {"mcp_timeout", "60 秒"},
       {"ui_scale", static_cast<std::int64_t>(ui_scale)}, {"nickname", ""},
       {"email", ""}, {"cloud_sync", false}, {"sidebar_visible", true},
       {"right_panel_visible", true},
@@ -78,7 +81,16 @@ tokmon::cbor::Value defaults(const int ui_scale) {
       {"terminal_font_size", static_cast<std::int64_t>(13)},
       {"terminal_scrollback", static_cast<std::int64_t>(10000)},
       {"network", true}, {"high_risk_confirmation", true},
-      {"browser_high_risk_confirmation", true}});
+      {"browser_high_risk_confirmation", true},
+      {"agent_autonomous", true}, {"agent_show_thoughts", true},
+      {"agent_code_enabled", true}, {"agent_architect_enabled", true},
+      {"agent_translator_enabled", true}, {"agent_analyst_enabled", true},
+      {"skills_enabled", true}, {"skills_auto_invoke", true},
+      {"skill_customizations_enabled", true},
+      {"skill_generative_ui_enabled", true},
+      {"skill_refactor_enabled", true}, {"skill_diagrams_enabled", true},
+      {"rules_enabled", true}, {"prefer_project_rules", true},
+      {"mcp_auto_start", true}});
 }
 
 void normalize_legacy(tokmon::cbor::Value& values) {
@@ -125,11 +137,15 @@ void SettingsController::show(std::string page,
                               const std::filesystem::path& workspace) {
   static const std::map<std::string, std::pair<const char*, const char*>> copy{
       {"general", {"通用", "管理语言、启动、自动保存和更新偏好"}},
-      {"model", {"智能体与模型", "配置现有 tokmon-daemon 模型 Provider"}},
+      {"model", {"模型", "配置现有 tokmon-daemon 模型 Provider"}},
+      {"agents", {"智能体", "配置默认角色、任务派发和可用智能体"}},
+      {"skills", {"Skill 技能", "管理技能系统、自动唤起与已安装技能"}},
+      {"rules", {"规则", "管理项目规则优先级与全局任务偏好"}},
+      {"mcp", {"MCP 服务", "管理工具协议的启动、审批和超时策略"}},
       {"access", {"权限与安全", "控制文件、命令、网络和高风险操作"}},
       {"workspace", {"工作区", "管理当前工作区和索引行为"}},
       {"notifications", {"通知", "配置任务完成和消息提醒"}},
-      {"appearance", {"外观", "保留旧版主题、颜色、密度与缩放设计"}},
+      {"appearance", {"外观", "选择雅绿主题并调整密度与界面缩放"}},
       {"shortcuts", {"快捷键", "与旧版一致的工作台快捷键"}},
       {"account", {"账户", "管理本机显示资料和云同步偏好"}},
       {"terminal", {"终端", "配置 tokmon-desk 的跨平台本地终端"}},
@@ -161,6 +177,13 @@ void SettingsController::values_to_view(
   view.index_mode = string("index_mode", "标准");
   view.quiet_hours = string("quiet_hours", "关闭");
   view.density = string("density", "舒适");
+  view.theme_mode = string("theme_mode", "浅色");
+  view.default_agent = string("default_agent", "代码助手");
+  view.global_rules = string(
+      "global_rules",
+      "优先使用 TypeScript 严格模式；遵循项目代码规范；代码注释使用中文。");
+  view.mcp_approval = string("mcp_approval", "高风险时询问");
+  view.mcp_timeout = string("mcp_timeout", "60 秒");
   view.nickname = string("nickname");
   view.email = string("email");
   view.terminal_profile = string("terminal_profile", "auto");
@@ -176,6 +199,23 @@ void SettingsController::values_to_view(
   view.cloud_sync = boolean("cloud_sync", false);
   view.browser_high_risk_confirmation =
       boolean("browser_high_risk_confirmation", true);
+  view.agent_autonomous = boolean("agent_autonomous", true);
+  view.agent_show_thoughts = boolean("agent_show_thoughts", true);
+  view.agent_code_enabled = boolean("agent_code_enabled", true);
+  view.agent_architect_enabled = boolean("agent_architect_enabled", true);
+  view.agent_translator_enabled = boolean("agent_translator_enabled", true);
+  view.agent_analyst_enabled = boolean("agent_analyst_enabled", true);
+  view.skills_enabled = boolean("skills_enabled", true);
+  view.skills_auto_invoke = boolean("skills_auto_invoke", true);
+  view.skill_customizations_enabled =
+      boolean("skill_customizations_enabled", true);
+  view.skill_generative_ui_enabled =
+      boolean("skill_generative_ui_enabled", true);
+  view.skill_refactor_enabled = boolean("skill_refactor_enabled", true);
+  view.skill_diagrams_enabled = boolean("skill_diagrams_enabled", true);
+  view.rules_enabled = boolean("rules_enabled", true);
+  view.prefer_project_rules = boolean("prefer_project_rules", true);
+  view.mcp_auto_start = boolean("mcp_auto_start", true);
   view.ui_scale = static_cast<int>(std::clamp<std::int64_t>(
       integer("ui_scale", default_ui_scale_), 70, 200));
   view.font_scale = static_cast<int>(std::clamp<std::int64_t>(
@@ -209,7 +249,10 @@ void SettingsController::view_to_values() {
   set("file_access", view.file_access);
   set("command_approval", view.command_approval);
   set("index_mode", view.index_mode); set("quiet_hours", view.quiet_hours);
-  set("density", view.density); set("nickname", view.nickname);
+  set("density", view.density); set("theme_mode", view.theme_mode);
+  set("default_agent", view.default_agent); set("global_rules", view.global_rules);
+  set("mcp_approval", view.mcp_approval); set("mcp_timeout", view.mcp_timeout);
+  set("nickname", view.nickname);
   set("email", view.email); set("terminal_profile", view.terminal_profile);
   set("terminal_executable", view.terminal_executable);
   set("terminal_arguments", view.terminal_arguments);
@@ -219,6 +262,21 @@ void SettingsController::view_to_values() {
   set("desktop_notifications", view.desktop_notifications);
   set("message_alerts", view.message_alerts); set("cloud_sync", view.cloud_sync);
   set("browser_high_risk_confirmation", view.browser_high_risk_confirmation);
+  set("agent_autonomous", view.agent_autonomous);
+  set("agent_show_thoughts", view.agent_show_thoughts);
+  set("agent_code_enabled", view.agent_code_enabled);
+  set("agent_architect_enabled", view.agent_architect_enabled);
+  set("agent_translator_enabled", view.agent_translator_enabled);
+  set("agent_analyst_enabled", view.agent_analyst_enabled);
+  set("skills_enabled", view.skills_enabled);
+  set("skills_auto_invoke", view.skills_auto_invoke);
+  set("skill_customizations_enabled", view.skill_customizations_enabled);
+  set("skill_generative_ui_enabled", view.skill_generative_ui_enabled);
+  set("skill_refactor_enabled", view.skill_refactor_enabled);
+  set("skill_diagrams_enabled", view.skill_diagrams_enabled);
+  set("rules_enabled", view.rules_enabled);
+  set("prefer_project_rules", view.prefer_project_rules);
+  set("mcp_auto_start", view.mcp_auto_start);
   set("ui_scale", static_cast<std::int64_t>(view.ui_scale));
   set("font_scale", static_cast<std::int64_t>(view.font_scale));
   set("terminal_font_size", static_cast<std::int64_t>(view.terminal_font_size));
@@ -340,6 +398,47 @@ void SettingsController::select_access(std::string access) {
   access_ = std::move(access);
   set("access_mode", access_);
   sync_shell();
+}
+
+void SettingsController::toggle(const std::string_view key) {
+  auto& view = view_model_.state().settings;
+#define TOKMON_TOGGLE_SETTING(name) \
+  if (key == #name) { view.name = !view.name; set(#name, view.name); view_model_.dirty(); return; }
+  TOKMON_TOGGLE_SETTING(network)
+  TOKMON_TOGGLE_SETTING(high_risk_confirmation)
+  TOKMON_TOGGLE_SETTING(workspace_sync)
+  TOKMON_TOGGLE_SETTING(git)
+  TOKMON_TOGGLE_SETTING(notifications)
+  TOKMON_TOGGLE_SETTING(desktop_notifications)
+  TOKMON_TOGGLE_SETTING(message_alerts)
+  TOKMON_TOGGLE_SETTING(cloud_sync)
+  TOKMON_TOGGLE_SETTING(browser_high_risk_confirmation)
+  TOKMON_TOGGLE_SETTING(agent_autonomous)
+  TOKMON_TOGGLE_SETTING(agent_show_thoughts)
+  TOKMON_TOGGLE_SETTING(agent_code_enabled)
+  TOKMON_TOGGLE_SETTING(agent_architect_enabled)
+  TOKMON_TOGGLE_SETTING(agent_translator_enabled)
+  TOKMON_TOGGLE_SETTING(agent_analyst_enabled)
+  TOKMON_TOGGLE_SETTING(skills_enabled)
+  TOKMON_TOGGLE_SETTING(skills_auto_invoke)
+  TOKMON_TOGGLE_SETTING(skill_customizations_enabled)
+  TOKMON_TOGGLE_SETTING(skill_generative_ui_enabled)
+  TOKMON_TOGGLE_SETTING(skill_refactor_enabled)
+  TOKMON_TOGGLE_SETTING(skill_diagrams_enabled)
+  TOKMON_TOGGLE_SETTING(rules_enabled)
+  TOKMON_TOGGLE_SETTING(prefer_project_rules)
+  TOKMON_TOGGLE_SETTING(mcp_auto_start)
+#undef TOKMON_TOGGLE_SETTING
+}
+
+void SettingsController::choose(const std::string_view key, std::string value) {
+  auto& view = view_model_.state().settings;
+  if (key == "startup") view.startup = value;
+  else if (key == "theme_mode") view.theme_mode = value;
+  else if (key == "mcp_approval") view.mcp_approval = value;
+  else return;
+  set(std::string(key), std::move(value));
+  view_model_.dirty();
 }
 
 void SettingsController::sync_shell() {

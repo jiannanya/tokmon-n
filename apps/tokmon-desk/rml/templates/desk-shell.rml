@@ -8,7 +8,7 @@
   <link type="text/template" href="overlays.rml"/>
   <link type="text/template" href="trajectory.rml"/>
 </head>
-<body id="app-shell" data-model="desk">
+<body id="app-shell" data-model="desk" data-class-dark="view.settings.theme_mode == '深色'">
   <div id="sidebar" class="sidebar">
     <div id="brand-row" class="brand-row drag-region">
       <svg class="brand-logo" data-attr-src="view.asset_root + '/figma/icon-00.svg'"></svg>

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify that non-trajectory feature surfaces keep the legacy light theme.
+"""Verify that non-trajectory feature surfaces use the Forest Sage light theme.
 
 This check deliberately measures broad visual properties instead of individual
 glyph pixels. It catches the regression that turned terminal, review, and file
@@ -32,7 +32,7 @@ def load_rgb(path: Path) -> np.ndarray:
 
 def surface_metrics(image: np.ndarray) -> dict[str, float]:
     # Ignore the native window shadow and title bar. The remaining area is the
-    # feature surface and must follow the old #FAFAF9 / #FAF9F6 palette.
+    # feature surface and must follow the bright warm-white surface palette.
     region = image[150:-24, 24:-24].astype(np.int32)
     luminance = (
         region[:, :, 0] * 2126
@@ -49,15 +49,16 @@ def surface_metrics(image: np.ndarray) -> dict[str, float]:
 def accent_ratio(image: np.ndarray) -> float:
     pixels = image.astype(np.int16)
     red, green, blue = pixels[:, :, 0], pixels[:, :, 1], pixels[:, :, 2]
-    # Includes the legacy orange family from #C86A28 through its lighter cursor
-    # and antialiased edge shades.
+    # Includes the Forest Sage family around #2D5A43 and antialiased edges.
     accent = (
-        (red >= 150)
-        & (red <= 235)
+        (red >= 25)
+        & (red <= 125)
         & (green >= 65)
-        & (green <= 155)
-        & (blue <= 115)
-        & (red >= green + 45)
+        & (green <= 170)
+        & (blue >= 35)
+        & (blue <= 135)
+        & (green >= red + 12)
+        & (green >= blue + 8)
     )
     return float(np.mean(accent))
 
@@ -80,12 +81,12 @@ def check_surface(name: str, image: np.ndarray) -> dict[str, object]:
         "meanLuminance": metrics["meanLuminance"] >= 235.0,
         "lightPixelRatio": metrics["lightPixelRatio"] >= 0.94,
         "darkPixelRatio": metrics["darkPixelRatio"] <= 0.01,
-        "legacyOrangePresent": accent_ratio(image) >= 0.000005,
+        "forestSagePresent": accent_ratio(image) >= 0.000005,
     }
     return {
         "name": name,
         **metrics,
-        "legacyOrangeRatio": accent_ratio(image),
+        "forestSageRatio": accent_ratio(image),
         "checks": checks,
         "passed": all(checks.values()),
     }
@@ -122,7 +123,7 @@ def main() -> int:
         "policy": {
             "trajectory": "excluded; follows deepseek-harness visual language",
             "reviewFilesTerminal": (
-                "legacy Slint/prototype warm-light palette with orange accent"
+                "Forest Sage warm-light palette with deep green accent"
             ),
         },
         "dimensions": {"width": EXPECTED_SIZE[0], "height": EXPECTED_SIZE[1]},

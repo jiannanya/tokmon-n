@@ -45,6 +45,8 @@ public:
   void select_model(std::string model);
   void select_effort(std::string effort);
   void select_access(std::string access);
+  void toggle(std::string_view key);
+  void choose(std::string_view key, std::string value);
 
   [[nodiscard]] std::string string(std::string_view key,
                                    std::string_view fallback = {}) const;

@@ -1,45 +1,133 @@
-body { background-color: #f5f5f4; color: #292524; }
-.sidebar { background-color: #f9f9f8; border-color: rgba(231, 229, 228, 153); }
-.workspace { background-color: #fafaf9; }
-.right-panel { background-color: #fafaf9; border-color: rgba(231, 229, 228, 153); }
-.new-session-button { background-color: #f2ece2; color: #7c431b; }
-.new-session-button:hover { background-color: #eae2d5; }
-.search-box, .panel-search { background-color: #f0efea; color: #a8a29e; }
-.tree-caption, .timestamp, small { color: #a8a29e; }
-.tree-row { color: #44403c; }
-.tree-row:hover { background-color: rgba(0, 0, 0, 10); }
-.tree-row.selected { background-color: #f7efe5; color: #8b5229; }
-.brand-row, .workspace-titlebar, .window-controls { background-color: #fafaf9; border-color: rgba(231, 229, 228, 153); }
-.project-chip, .branch-chip { background-color: #f0eee8; color: #78716c; }
-.environment-panel { background-color: #faf9f6; border-color: #e7e5e4; }
-.user-message { background-color: #fcf8f3; border-color: #ebdcd0; }
-.parameter-card { background-color: rgba(247, 239, 229, 153); }
-.thought-card { background-color: #fafafa; border-color: #e7e5e4; }
-.workflow-card { background-color: #ffffff; border-color: #e7e5e4; }
+/* Forest Sage / warm-white theme, aligned with the current Tokmon UI prototype. */
+body { background-color: #f4f2ec; color: #252d27; }
+.sidebar { background-color: #faf9f6; border-color: rgba(234, 230, 220, 179); }
+.workspace { background-color: #ffffff; }
+.right-panel { background-color: #ffffff; border-color: rgba(234, 230, 220, 179); }
+.new-session-button { background-color: #edf4ec; color: #2d5a43; }
+.new-session-button:hover { background-color: #dce7d9; }
+.search-box, .panel-search { background-color: #f7f5ef; color: #949e97; }
+.tree-caption, .timestamp, small { color: #949e97; }
+.tree-row { color: #38403b; }
+.tree-row:hover { background-color: rgba(45, 90, 67, 13); }
+.tree-row.selected { background-color: #eaf1e8; color: #2d5a43; }
+.brand-row, .workspace-titlebar, .window-controls { background-color: #ffffff; border-color: rgba(234, 230, 220, 179); }
+.project-chip, .branch-chip { background-color: #f3f1ea; color: #747f78; }
+.environment-panel { background-color: #faf9f6; border-color: #eae6dc; }
+.user-message { background-color: #edf4ec; border-color: #cddcd0; }
+.parameter-card { background-color: rgba(234, 241, 232, 179); }
+.thought-card { background-color: #faf9f6; border-color: #eae6dc; }
+.workflow-card { background-color: #ffffff; border-color: #eae6dc; }
 .status-dot { background-color: #16a34a; }
-.complete-pill { background-color: #f0fdf4; color: #166534; border-color: #bbf7d0; }
-.progress { background-color: #f0eee8; }
-.progress div { background-color: #c86a28; }
-.composer-card { background-color: #ffffff; border-color: #e7e5e4; }
-.workspace-context, .branch { color: #8b5229; }
-.tool-pill, .select-pill, .round-button { background-color: transparent; color: #57534e; border-color: transparent; }
-.tool-pill.access { background-color: transparent; color: #d97706; border-color: transparent; }
-.send-button { background-color: #1c1917; color: #ffffff; }
-.primary-button { background-color: #c86a28; color: #ffffff; }
-.review-toolbar, .review-summary, .browser-toolbar { border-color: #f0eee8; }
-.empty-panel, .browser-placeholder { color: #a8a29e; }
-.count-pill { background-color: #f0eee8; color: #57534e; }
+.complete-pill { background-color: #f0f6ef; color: #2d5a43; border-color: #cddcd0; }
+.progress { background-color: #f3f1ea; }
+.progress div { background-color: #2d5a43; }
+.composer-card { background-color: #ffffff; border-color: #eae6dc; }
+.workspace-context, .branch { color: #2d5a43; }
+.tool-pill, .select-pill, .round-button { background-color: transparent; color: #5c6760; border-color: transparent; }
+.tool-pill.access { background-color: transparent; color: #4a7860; border-color: transparent; }
+.send-button { background-color: #2d5a43; color: #ffffff; }
+.send-button:hover, .primary-button:hover { background-color: #234937; }
+.primary-button { background-color: #2d5a43; color: #ffffff; }
+.review-toolbar, .review-summary, .browser-toolbar { border-color: #f3f1ea; }
+.empty-panel, .browser-placeholder { color: #949e97; }
+.count-pill { background-color: #f3f1ea; color: #5c6760; }
 .overlay { background-color: rgba(0, 0, 0, 89); }
-.settings-dialog, .modal { background-color: #ffffff; border-color: #e7e5e4; }
-.settings-sidebar { background-color: #faf9f6; border-color: #e7e5e4; }
-.settings-nav.active { background-color: #f7efe5; color: #8b5229; }
-.setting-card { border-color: #e7e5e4; }
-.toggle { background-color: #d6d3d1; }
-.toggle.on { background-color: #c86a28; }
+.settings-dialog, .modal { background-color: #ffffff; border-color: #eae6dc; }
+.settings-sidebar { background-color: #fbfbf9; border-color: #eae6dc; }
+.settings-nav { color: #5c6760; }
+.settings-nav:hover { background-color: #f5f3eb; }
+.settings-nav.active { background-color: #eaf1e8; color: #2d5a43; }
+.setting-card, .settings-section { border-color: #f7f5ef; }
+.toggle { background-color: #ded9cd; }
+.toggle.on { background-color: #2d5a43; }
 .toggle span { background-color: #ffffff; }
-.secondary-button, .select-box { background-color: #fafaf9; color: #57534e; border-color: #e7e5e4; }
-.locked-value { color: #8b5229; }
-.terminal-view { background-color: #faf9f6; color: #292524; }
-.file-preview { background-color: #fafaf9; color: #292524; }
-.review-diff, .diff-surface { background-color: #ffffff; color: #1c1917; }
-#review-view, #files-view { background-color: #ffffff; color: #292524; }
+.secondary-button, .select-box { background-color: #f7f5ef; color: #5c6760; border-color: #eae6dc; }
+.secondary-button:hover { background-color: #eae6dc; color: #2d5a43; }
+.locked-value, .path-value { color: #2d5a43; }
+.terminal-view { background-color: #faf9f6; color: #252d27; }
+.file-preview { background-color: #ffffff; color: #252d27; }
+.review-diff, .diff-surface { background-color: #ffffff; color: #1a211c; }
+#review-view, #files-view { background-color: #ffffff; color: #252d27; }
+
+/* Dark counterpart from the same Forest Sage system. */
+body.dark { background-color: #111613; color: #e6ede7; border-color: rgba(255, 255, 255, 20); }
+body.dark .sidebar { background-color: #161c18; border-color: rgba(255, 255, 255, 20); }
+body.dark .workspace, body.dark .right-panel,
+body.dark .brand-row, body.dark .workspace-titlebar,
+body.dark .window-controls { background-color: #1a221d; border-color: rgba(255, 255, 255, 20); }
+body.dark .new-session-button, body.dark .tree-row.selected,
+body.dark .settings-nav.active { background-color: #1c2c22; color: #72b890; }
+body.dark .new-session-button:hover, body.dark .settings-nav:hover,
+body.dark .tree-row:hover { background-color: #23382c; }
+body.dark .search-box, body.dark .panel-search,
+body.dark .project-chip, body.dark .branch-chip,
+body.dark .progress, body.dark .count-pill { background-color: #1c2520; color: #7f9485; }
+body.dark .tree-row { color: #b8c7bb; }
+body.dark .tree-caption, body.dark .timestamp, body.dark small,
+body.dark .empty-panel, body.dark .browser-placeholder { color: #627568; }
+body.dark .environment-panel, body.dark .thought-card,
+body.dark .settings-sidebar, body.dark .terminal-view { background-color: #161c18; border-color: rgba(255, 255, 255, 20); color: #e6ede7; }
+body.dark .user-message, body.dark .parameter-card { background-color: #1c2c22; border-color: rgba(114, 184, 144, 64); }
+body.dark .workflow-card, body.dark .composer-card,
+body.dark .settings-dialog, body.dark .modal,
+body.dark .file-preview, body.dark .review-diff,
+body.dark .diff-surface, body.dark #review-view,
+body.dark #files-view { background-color: #1a221d; border-color: rgba(255, 255, 255, 20); color: #e6ede7; }
+body.dark .tool-pill, body.dark .select-pill,
+body.dark .round-button, body.dark .secondary-button,
+body.dark .select-box { color: #9bb0a0; }
+body.dark .tool-pill.access, body.dark .workspace-context,
+body.dark .branch, body.dark .locked-value,
+body.dark .path-value { color: #72b890; }
+body.dark .settings-nav { color: #9bb0a0; }
+body.dark .setting-card, body.dark .settings-section { border-color: rgba(255, 255, 255, 20); }
+body.dark .secondary-button, body.dark .select-box { background-color: #1c2520; border-color: rgba(255, 255, 255, 20); }
+body.dark .secondary-button:hover { background-color: #243028; color: #8ee0af; }
+body.dark .brand-name, body.dark .session-title,
+body.dark .starter-block h1, body.dark .starter-title,
+body.dark .settings-topbar h2, body.dark .setting-card strong,
+body.dark .compact-setting-card strong, body.dark .skill-card strong,
+body.dark .rules-editor strong, body.dark .theme-heading strong,
+body.dark .theme-choice strong, body.dark .mcp-header-card strong,
+body.dark .mcp-server strong { color: #e6ede7; }
+body.dark .starter-card, body.dark .right-tab-pill,
+body.dark .panel-toggle, body.dark .environment-actions button {
+  background-color: #1a221d;
+  border-color: rgba(255, 255, 255, 20);
+  color: #e6ede7;
+}
+body.dark .starter-card:hover { background-color: #202b24; border-color: #3d684f; }
+body.dark .launcher-entry { background-color: #1c2520; color: #e6ede7; }
+body.dark .launcher-entry:hover { background-color: #243028; }
+body.dark .launcher-entry kbd { background-color: #26332b; border-color: rgba(255, 255, 255, 20); color: #9bb0a0; }
+body.dark .workspace-context, body.dark .segmented-control,
+body.dark .tag, body.dark .stopped-tag { background-color: #1c2520; color: #9bb0a0; }
+body.dark .mode-pill button.active,
+body.dark .segmented-control button.selected { background-color: #2a382f; color: #e6ede7; }
+body.dark .composer-card input, body.dark .panel-search input { color: #e6ede7; }
+body.dark .settings-topbar, body.dark .settings-footer { border-color: rgba(255, 255, 255, 20); }
+body.dark .settings-search, body.dark .setting-card input,
+body.dark .setting-select, body.dark .path-value,
+body.dark .provider-config-grid input, body.dark .provider-config-grid select,
+body.dark .rules-editor textarea {
+  background-color: #1c2520;
+  border-color: rgba(255, 255, 255, 20);
+  color: #d5e0d7;
+}
+body.dark .settings-search:focus { background-color: #202b24; border-color: #72b890; }
+body.dark .settings-close { color: #9bb0a0; }
+body.dark .settings-close:hover { background-color: #243028; color: #e6ede7; }
+body.dark .setting-card p, body.dark .compact-setting-card p,
+body.dark .skill-card p, body.dark .mcp-header-card p,
+body.dark .mcp-server p, body.dark .rules-editor > div span,
+body.dark .theme-heading p, body.dark .about-brand p { color: #7f9485; }
+body.dark .compact-setting-card, body.dark .skill-card,
+body.dark .provider-row, body.dark .provider-config-grid,
+body.dark .mcp-overview, body.dark .mcp-header-card,
+body.dark .mcp-server, body.dark .about-brand,
+body.dark .theme-choice {
+  background-color: #1a221d;
+  border-color: rgba(255, 255, 255, 20);
+  color: #e6ede7;
+}
+body.dark .theme-choice.selected { background-color: #1c2c22; border-color: #72b890; }

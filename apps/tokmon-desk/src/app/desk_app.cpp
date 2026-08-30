@@ -1814,16 +1814,21 @@ bool write_interaction_report(SdlPlatform& platform,
   document.QuerySelectorAll(settings_pages, "[setting-page]");
   const std::vector<std::tuple<std::string_view, std::string_view,
                                std::string_view>> settings_contracts{
-      {"general", "UI-032", "通用"},
-      {"model", "UI-033", "智能体与模型"},
-      {"access", "UI-034", "权限与安全"},
+       {"general", "UI-032", "通用"},
+       {"model", "UI-033", "模型"},
+       {"agents", "UI-033A", "智能体"},
+       {"skills", "UI-033B", "Skill 技能"},
+       {"rules", "UI-033C", "规则"},
+       {"mcp", "UI-033D", "MCP 服务"},
+       {"access", "UI-034", "权限与安全"},
       {"workspace", "UI-035", "工作区"},
       {"notifications", "UI-036", "通知"},
       {"appearance", "UI-037", "外观"},
       {"shortcuts", "UI-038", "快捷键"},
-      {"account", "UI-039", "账户"},
-      {"terminal", "UI-040", "终端"},
-      {"about", "UI-041", "关于"}};
+       {"account", "UI-039", "账户"},
+       {"terminal", "UI-040", "终端"},
+       {"browser", "UI-040B", "浏览器"},
+       {"about", "UI-041", "关于"}};
   auto* settings_title = document.GetElementById("settings-title");
   auto* settings_content = document.GetElementById("settings-body");
   for (const auto& [page, id, expected_title] : settings_contracts) {
@@ -1891,6 +1896,21 @@ bool write_interaction_report(SdlPlatform& platform,
                                                    "nickname");
   const bool local_setting_persisted = stored_nickname &&
       stored_nickname->as_string() == "Tokmon Desk E2E";
+  const auto* stored_theme = tokmon::cbor::find(stored_after_save,
+                                                "theme_mode");
+  const auto* stored_agent = tokmon::cbor::find(stored_after_save,
+                                                "agent_autonomous");
+  const auto* stored_skills = tokmon::cbor::find(stored_after_save,
+                                                 "skills_enabled");
+  const auto* stored_rules = tokmon::cbor::find(stored_after_save,
+                                                "rules_enabled");
+  const auto* stored_mcp = tokmon::cbor::find(stored_after_save,
+                                              "mcp_auto_start");
+  const bool new_settings_persisted = stored_theme &&
+      stored_theme->as_string() == "浅色" && stored_agent &&
+      stored_agent->as_bool() && stored_skills && stored_skills->as_bool() &&
+      stored_rules && stored_rules->as_bool() && stored_mcp &&
+      stored_mcp->as_bool();
   const bool settings_reopened = click_id("settings-button", detail) &&
       click_element(context, account_navigation, detail);
   nickname = dynamic_cast<Rml::ElementFormControl*>(
@@ -1905,12 +1925,14 @@ bool write_interaction_report(SdlPlatform& platform,
   const bool reset_saved = click_id("save-settings", detail);
   record("UI-031/032/STATE-003", "Desktop 设置保存、重开恢复、重置并写入私有状态",
          account_opened && settings_saved && local_setting_persisted &&
+             new_settings_persisted &&
              settings_reopened && value_restored && settings_reset &&
              reset_visible && reset_saved && hidden("settings-overlay"),
-          "account/open/save/persist/reopen/restore/reset/visible/save=" +
+          "account/open/save/persist/new-pages/reopen/restore/reset/visible/save=" +
               std::string(account_opened ? "1" : "0") + "/" +
               (settings_saved ? "1" : "0") + "/" +
               (local_setting_persisted ? "1" : "0") + "/" +
+              (new_settings_persisted ? "1" : "0") + "/" +
               (settings_reopened ? "1" : "0") + "/" +
               (value_restored ? "1" : "0") + "/" +
               (settings_reset ? "1" : "0") + "/" +

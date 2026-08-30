@@ -508,9 +508,17 @@ bool DeskController::save_local_settings(std::string& error) {
       "language", "startup", "autosave", "update_channel", "index_mode",
       "workspace_sync", "git", "notifications", "desktop_notifications",
       "message_alerts", "quiet_hours", "density", "font_scale", "ui_scale",
-      "nickname", "email", "cloud_sync", "sidebar_visible",
+      "theme_mode", "nickname", "email", "cloud_sync", "sidebar_visible",
       "right_panel_visible", "sidebar_width", "right_panel_width",
       "layout_revision", "navigation_revision", "last_workspace",
+      "default_agent", "agent_autonomous", "agent_show_thoughts",
+      "agent_code_enabled", "agent_architect_enabled",
+      "agent_translator_enabled", "agent_analyst_enabled",
+      "skills_enabled", "skills_auto_invoke", "skill_customizations_enabled",
+      "skill_generative_ui_enabled", "skill_refactor_enabled",
+      "skill_diagrams_enabled", "rules_enabled", "prefer_project_rules",
+      "global_rules", "mcp_auto_start", "mcp_approval", "mcp_timeout",
+      "browser_high_risk_confirmation",
       "terminal_profile", "terminal_executable", "terminal_arguments",
       "terminal_font_size", "terminal_scrollback"}), error);
 }
@@ -2834,7 +2842,9 @@ void DeskController::ProcessEvent(Rml::Event& event) {
       id == "settings-search") {
     const auto query = control(document_, "settings-search")->GetValue();
     const std::pair<std::string_view, std::string_view> pages[] = {
-        {"general", "语言启动自动保存更新通用"}, {"model", "智能体模型provider平台推理"},
+        {"general", "语言启动默认工作区通用"}, {"model", "模型provider平台推理"},
+        {"agents", "智能体角色子任务思考"}, {"skills", "skill技能自动唤起扩展"},
+        {"rules", "规则agents提示词偏好"}, {"mcp", "mcp服务工具协议审批超时"},
         {"access", "文件访问命令审批联网高风险权限安全"}, {"workspace", "工作区索引同步git"},
         {"notifications", "通知桌面消息免打扰"}, {"appearance", "外观主题颜色密度缩放字体"},
         {"shortcuts", "快捷键键盘"}, {"account", "账户昵称邮箱云同步"},
@@ -2937,6 +2947,17 @@ void DeskController::ProcessEvent(Rml::Event& event) {
     show_settings_page(*element);
     return;
   }
+  if (const auto key = element->GetAttribute<Rml::String>("setting-toggle", "");
+      !key.empty()) {
+    settings_.toggle(key);
+    return;
+  }
+  if (const auto key = element->GetAttribute<Rml::String>("setting-choice", "");
+      !key.empty()) {
+    settings_.choose(key,
+        element->GetAttribute<Rml::String>("setting-value", ""));
+    return;
+  }
   if (element->GetAttribute<Rml::String>("starter-kind", "").size()) {
     choose_starter(*element);
     return;
@@ -2966,7 +2987,8 @@ void DeskController::ProcessEvent(Rml::Event& event) {
     render_settings_page(settings_.page());
     toggle_hidden("settings-overlay");
   }
-  else if (id == "close-settings") toggle_hidden("settings-overlay");
+  else if (id == "close-settings" || id == "cancel-settings")
+    toggle_hidden("settings-overlay");
   else if (id == "save-settings") { save_settings(); toggle_hidden("settings-overlay"); }
   else if (id == "reset-settings") reset_settings();
   else if (id == "close-new-session" || id == "cancel-new-session") toggle_hidden("new-session-overlay");

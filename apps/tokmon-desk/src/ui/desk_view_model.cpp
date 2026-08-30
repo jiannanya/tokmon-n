@@ -151,7 +151,10 @@ bool DeskViewModel::bind(Rml::Context& context, std::string asset_root) {
   TOKMON_BIND_SETTING(main_model); TOKMON_BIND_SETTING(reasoning);
   TOKMON_BIND_SETTING(file_access); TOKMON_BIND_SETTING(command_approval);
   TOKMON_BIND_SETTING(index_mode); TOKMON_BIND_SETTING(quiet_hours);
-  TOKMON_BIND_SETTING(density); TOKMON_BIND_SETTING(nickname);
+  TOKMON_BIND_SETTING(density); TOKMON_BIND_SETTING(theme_mode);
+  TOKMON_BIND_SETTING(default_agent); TOKMON_BIND_SETTING(global_rules);
+  TOKMON_BIND_SETTING(mcp_approval); TOKMON_BIND_SETTING(mcp_timeout);
+  TOKMON_BIND_SETTING(nickname);
   TOKMON_BIND_SETTING(email); TOKMON_BIND_SETTING(terminal_profile);
   TOKMON_BIND_SETTING(terminal_executable); TOKMON_BIND_SETTING(terminal_arguments);
   TOKMON_BIND_SETTING(provider_protocol); TOKMON_BIND_SETTING(provider_endpoint);
@@ -162,6 +165,15 @@ bool DeskViewModel::bind(Rml::Context& context, std::string asset_root) {
   TOKMON_BIND_SETTING(git); TOKMON_BIND_SETTING(notifications);
   TOKMON_BIND_SETTING(desktop_notifications); TOKMON_BIND_SETTING(message_alerts);
   TOKMON_BIND_SETTING(cloud_sync); TOKMON_BIND_SETTING(browser_high_risk_confirmation);
+  TOKMON_BIND_SETTING(agent_autonomous); TOKMON_BIND_SETTING(agent_show_thoughts);
+  TOKMON_BIND_SETTING(agent_code_enabled); TOKMON_BIND_SETTING(agent_architect_enabled);
+  TOKMON_BIND_SETTING(agent_translator_enabled); TOKMON_BIND_SETTING(agent_analyst_enabled);
+  TOKMON_BIND_SETTING(skills_enabled); TOKMON_BIND_SETTING(skills_auto_invoke);
+  TOKMON_BIND_SETTING(skill_customizations_enabled);
+  TOKMON_BIND_SETTING(skill_generative_ui_enabled);
+  TOKMON_BIND_SETTING(skill_refactor_enabled); TOKMON_BIND_SETTING(skill_diagrams_enabled);
+  TOKMON_BIND_SETTING(rules_enabled); TOKMON_BIND_SETTING(prefer_project_rules);
+  TOKMON_BIND_SETTING(mcp_auto_start);
   TOKMON_BIND_SETTING(ui_scale); TOKMON_BIND_SETTING(font_scale);
   TOKMON_BIND_SETTING(terminal_font_size); TOKMON_BIND_SETTING(terminal_scrollback);
   TOKMON_BIND_SETTING(providers); TOKMON_BIND_SETTING(terminal_profiles);

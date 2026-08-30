@@ -774,7 +774,7 @@ int main(int argc, char** argv) {
             terminal_snapshot.cursor_color.red == legacy_theme::accent.red &&
             terminal_snapshot.cursor_color.green == legacy_theme::accent.green &&
             terminal_snapshot.cursor_color.blue == legacy_theme::accent.blue,
-        "libghostty-vt uses the legacy warm-light pane palette");
+        "libghostty-vt uses the Forest Sage warm-light pane palette");
   check(vt.encode_key(TerminalKey::unidentified, "x", 0) == "x",
         "libghostty-vt encodes raw UTF-8 terminal text input");
   check(vt.encode_key(TerminalKey::enter, {}, 0) == "\r",
@@ -1022,8 +1022,8 @@ int main(int argc, char** argv) {
       desk_source / "assets" / "visual-baseline-manifest.json");
   const auto manifest = tokmon::json::parse(manifest_text);
   check(manifest && manifest->as_map() &&
-            field(*manifest, "schema") && field(*manifest, "schema")->as_integer() == 2,
-        "visual baseline manifest is valid schema 2 JSON");
+            field(*manifest, "schema") && field(*manifest, "schema")->as_integer() == 3,
+        "visual baseline manifest is valid schema 3 JSON");
   if (manifest) {
     const auto* legacy = field(*manifest, "legacyDesktop");
     const auto* assets = field(*manifest, "assetsSha256");
@@ -1043,15 +1043,12 @@ int main(int argc, char** argv) {
     if (assets && assets->as_map()) {
       bool exact_assets = true;
       for (const auto& [name, digest] : *assets->as_map()) {
-        const auto old_file = legacy_source / "assets" / "figma" / name;
         const auto new_file = desk_source / "assets" / "figma" / name;
-        exact_assets = exact_assets && std::filesystem::is_regular_file(old_file) &&
-            std::filesystem::is_regular_file(new_file) &&
-            tokmon::sha256_hex(read_file(old_file)) == digest.as_string() &&
+        exact_assets = exact_assets && std::filesystem::is_regular_file(new_file) &&
             tokmon::sha256_hex(read_file(new_file)) == digest.as_string();
       }
       check(exact_assets,
-            "tokmon-desk preserves every legacy SVG byte-for-byte");
+            "tokmon-desk packaged SVGs match the Forest Sage asset manifest");
     }
     const auto* font = field(*manifest, "font");
     check(font && field(*font, "sha256") &&
