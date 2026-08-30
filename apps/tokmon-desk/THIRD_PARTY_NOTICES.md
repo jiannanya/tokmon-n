@@ -13,8 +13,9 @@ must copy this file together with the complete license texts installed by vcpkg.
 | MD4C | MIT | https://github.com/mity/md4c |
 | libgit2 | GPL-2.0-only with linking exception | https://github.com/libgit2/libgit2 |
 | tree-sitter | MIT | https://github.com/tree-sitter/tree-sitter |
+| tree-sitter generated grammars (C++, Rust, JavaScript, TypeScript/TSX, Python, JSON, YAML, TOML, Markdown, Bash, CMake) | MIT | See exact repositories and revisions in `assets/dependency-manifest.json` |
+| Zep core headers | MIT | https://github.com/Rezonality/zep |
 | MiSans VF | Xiaomi MiSans font license; see `assets/fonts/MiSans-NOTICE.txt` | https://hyperos.mi.com/font |
-| agent-browser runtime (optional) | Apache-2.0 | https://github.com/vercel-labs/agent-browser |
 | Ghostty `libghostty-vt` | MIT | https://github.com/ghostty-org/ghostty |
 
 HarfBuzz does not impose an advertising clause or require an in-application
@@ -22,6 +23,6 @@ HarfBuzz does not impose an advertising clause or require an in-application
 distributed license materials. The same rule applies independently to every
 bundled component according to its own license.
 
-Chrome, Chromium, Chrome for Testing, and browser codecs are not covered by
-agent-browser's Apache-2.0 license. The base `tokmon-desk` package does not
-redistribute a browser; it uses a user-installed Chrome/Chromium executable.
+Browser integration is `DEFERRED-BROWSER` for this release. The base package
+does not redistribute agent-browser, Chrome, Chromium, Chrome for Testing,
+browser codecs, or a browser profile.

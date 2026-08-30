@@ -1,6 +1,6 @@
 body { background-color: #f5f5f4; color: #292524; }
 .sidebar { background-color: #fbfbf9; border-color: #e7e5e4; }
-.workspace { background-color: #ffffff; }
+.workspace { background-color: #fafaf9; }
 .right-panel { background-color: #ffffff; border-color: #e7e5e4; }
 .new-session-button { background-color: #f2ece2; color: #7c431b; }
 .new-session-button:hover { background-color: #eae2d5; }

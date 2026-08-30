@@ -11,6 +11,9 @@ struct DeskAppPaths {
   std::filesystem::path state;
   std::filesystem::path cache;
   std::filesystem::path logs;
+  std::filesystem::path runtime;
+  std::filesystem::path recovery;
+  std::filesystem::path change_snapshots;
 
   [[nodiscard]] static DeskAppPaths resolve();
   [[nodiscard]] bool ensure(std::string& error) const;

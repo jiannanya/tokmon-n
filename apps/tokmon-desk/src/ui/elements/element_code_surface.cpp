@@ -1,5 +1,7 @@
 #include "ui/elements/element_code_surface.hpp"
 
+#include "editor/grapheme.hpp"
+
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/ElementInstancer.h>
 #include <RmlUi/Core/Factory.h>
@@ -14,26 +16,6 @@
 
 namespace tokmon::desk {
 namespace {
-
-std::size_t previous_utf8(const std::string_view text, std::size_t offset) {
-  if (offset == 0)
-    return 0;
-  --offset;
-  while (offset > 0 &&
-         (static_cast<unsigned char>(text[offset]) & 0xc0u) == 0x80u)
-    --offset;
-  return offset;
-}
-
-std::size_t next_utf8(const std::string_view text, std::size_t offset) {
-  if (offset >= text.size())
-    return text.size();
-  ++offset;
-  while (offset < text.size() &&
-         (static_cast<unsigned char>(text[offset]) & 0xc0u) == 0x80u)
-    ++offset;
-  return offset;
-}
 
 Rml::ColourbPremultiplied syntax_colour(const SyntaxKind kind) {
   switch (kind) {
@@ -73,6 +55,9 @@ void ElementCodeSurface::set_document(std::string text,
       line_starts_.push_back(index + 1);
   spans_ = std::move(spans);
   version_ = version;
+  composition_text_.clear();
+  composition_cursor_ = 0;
+  composition_selection_length_ = 0;
   if (!preserve_caret) {
     caret_ = 0;
     anchor_ = 0;
@@ -104,7 +89,7 @@ std::optional<CodeEditIntent> ElementCodeSurface::erase_backward() const {
     return CodeEditIntent{begin, end - begin, {}, begin};
   if (caret_ == 0)
     return std::nullopt;
-  const auto previous = previous_utf8(text_, caret_);
+  const auto previous = previous_grapheme_boundary(text_, caret_);
   return CodeEditIntent{previous, caret_ - previous, {}, previous};
 }
 
@@ -114,7 +99,7 @@ std::optional<CodeEditIntent> ElementCodeSurface::erase_forward() const {
     return CodeEditIntent{begin, end - begin, {}, begin};
   if (caret_ >= text_.size())
     return std::nullopt;
-  const auto next = next_utf8(text_, caret_);
+  const auto next = next_grapheme_boundary(text_, caret_);
   return CodeEditIntent{caret_, next - caret_, {}, caret_};
 }
 
@@ -140,7 +125,7 @@ std::size_t ElementCodeSurface::offset_at(const std::size_t line,
 
 void ElementCodeSurface::set_caret(const std::size_t value,
                                    const bool selecting) {
-  caret_ = std::min(value, text_.size());
+  caret_ = clamp_grapheme_boundary(text_, std::min(value, text_.size()));
   if (!selecting)
     anchor_ = caret_;
   preferred_column_ = line_column(caret_).second;
@@ -155,8 +140,8 @@ void ElementCodeSurface::move_horizontal(const int direction,
     set_caret(direction < 0 ? begin : end, false);
     return;
   }
-  set_caret(direction < 0 ? previous_utf8(text_, caret_)
-                          : next_utf8(text_, caret_), selecting);
+  set_caret(direction < 0 ? previous_grapheme_boundary(text_, caret_)
+                          : next_grapheme_boundary(text_, caret_), selecting);
 }
 
 void ElementCodeSurface::move_vertical(const int direction,
@@ -198,6 +183,91 @@ void ElementCodeSurface::set_caret_offset(const std::size_t value) {
   set_caret(value, false);
 }
 
+bool ElementCodeSurface::find(const std::string_view query,
+                              const bool backwards) {
+  if (query.empty() || text_.empty())
+    return false;
+  const auto [selected_begin, selected_end] = selection();
+  std::size_t found = std::string::npos;
+  if (backwards) {
+    const auto before = selected_begin == 0 ? text_.size() : selected_begin - 1;
+    found = text_.rfind(query, before);
+    if (found == std::string::npos && before != text_.size())
+      found = text_.rfind(query);
+  } else {
+    found = text_.find(query, selected_end);
+    if (found == std::string::npos && selected_end != 0)
+      found = text_.find(query);
+  }
+  if (found == std::string::npos)
+    return false;
+  anchor_ = found;
+  caret_ = found + query.size();
+  preferred_column_ = line_column(caret_).second;
+  ++revision_;
+  reveal_caret();
+  return true;
+}
+
+bool ElementCodeSurface::go_to_line(const std::size_t one_based_line) {
+  if (one_based_line == 0 || one_based_line > line_starts_.size())
+    return false;
+  set_caret(line_starts_[one_based_line - 1], false);
+  return true;
+}
+
+bool ElementCodeSurface::jump_to_matching_bracket() {
+  if (text_.empty())
+    return false;
+  auto origin = std::min(caret_, text_.size() - 1);
+  const std::string_view opening = "([{<";
+  const std::string_view closing = ")]}>";
+  if (opening.find(text_[origin]) == std::string_view::npos &&
+      closing.find(text_[origin]) == std::string_view::npos) {
+    if (origin == 0)
+      return false;
+    --origin;
+  }
+  const auto open_index = opening.find(text_[origin]);
+  const auto close_index = closing.find(text_[origin]);
+  if (open_index == std::string_view::npos && close_index == std::string_view::npos)
+    return false;
+  const bool forward = open_index != std::string_view::npos;
+  const auto pair_index = forward ? open_index : close_index;
+  const char open = opening[pair_index];
+  const char close = closing[pair_index];
+  int depth = 0;
+  if (forward) {
+    for (auto index = origin; index < text_.size(); ++index) {
+      if (text_[index] == open) ++depth;
+      else if (text_[index] == close && --depth == 0) {
+        set_caret(index, false);
+        return true;
+      }
+    }
+  } else {
+    for (auto index = origin + 1; index > 0; ) {
+      --index;
+      if (text_[index] == close) ++depth;
+      else if (text_[index] == open && --depth == 0) {
+        set_caret(index, false);
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+void ElementCodeSurface::set_composition(std::string text,
+                                         const std::size_t cursor,
+                                         const std::size_t selection_length) {
+  composition_text_ = std::move(text);
+  composition_cursor_ = std::min(cursor, composition_text_.size());
+  composition_selection_length_ = std::min(
+      selection_length, composition_text_.size() - composition_cursor_);
+  ++revision_;
+}
+
 std::string ElementCodeSurface::selected_text() const {
   const auto [begin, end] = selection();
   return text_.substr(begin, end - begin);
@@ -207,9 +277,32 @@ void ElementCodeSurface::click(const float local_x, const float local_y,
                                const bool selecting) {
   const auto line = std::min(first_line_ + static_cast<std::size_t>(
       std::max(0.f, local_y) / 17.f), line_starts_.size() - 1);
-  const auto column = static_cast<std::size_t>(
-      std::max(0.f, local_x - 48.f) / 7.f);
-  set_caret(offset_at(line, column), selecting);
+  const auto line_start = line_starts_[line];
+  const auto line_end = line + 1 < line_starts_.size()
+      ? line_starts_[line + 1] - 1 : text_.size();
+  auto* font_engine = Rml::GetFontEngineInterface();
+  const auto face = GetFontFaceHandle();
+  static const Rml::String language;
+  Rml::TextShapingContext shaping{language};
+  shaping.text_direction = Rml::Style::Direction::Ltr;
+  shaping.font_kerning = Rml::Style::FontKerning::None;
+  const float target = std::max(0.f, local_x - 48.f) + horizontal_offset_;
+  auto offset = line_start;
+  while (offset < line_end && font_engine && face) {
+    const auto next = std::min(next_grapheme_boundary(text_, offset), line_end);
+    const auto width = static_cast<float>(font_engine->GetStringWidth(
+        face, Rml::StringView(text_.data() + line_start, next - line_start),
+        shaping));
+    if (width >= target)
+      break;
+    offset = next;
+  }
+  set_caret(offset, selecting);
+}
+
+void ElementCodeSurface::scroll_columns(const float pixels) {
+  horizontal_offset_ = std::max(0.f, horizontal_offset_ + pixels);
+  ++revision_;
 }
 
 void ElementCodeSurface::scroll_lines(const int lines) {
@@ -282,26 +375,46 @@ void ElementCodeSurface::rebuild_geometry(const Rml::Vector2f size) {
     const auto line_end = line + 1 < line_starts_.size()
         ? line_starts_[line + 1] - 1 : text_.size();
     const float y = static_cast<float>(visible) * line_height;
+    std::optional<float> composition_x;
     const auto selected_start = std::max(selection_begin, line_start);
     const auto selected_end = std::min(selection_end, line_end);
+    const auto width_to = [&](const std::size_t offset) {
+      return static_cast<float>(font_engine->GetStringWidth(
+          face, Rml::StringView(text_.data() + line_start,
+                                offset - line_start), shaping));
+    };
     if (selected_start < selected_end) {
+      const float selection_x = width_to(selected_start);
+      const float selection_width = width_to(selected_end) - selection_x;
       Rml::MeshUtilities::GenerateQuad(
           decorations,
-          {gutter + 4.f + static_cast<float>(selected_start - line_start) * 7.f, y},
-          {std::max(1.f, static_cast<float>(selected_end - selected_start) * 7.f), line_height},
+          {gutter + 4.f + selection_x - horizontal_offset_, y},
+          {std::max(1.f, selection_width), line_height},
           Rml::Colourb(38, 79, 120, 210).ToPremultiplied());
     }
     if (caret_ >= line_start && caret_ <= line_end) {
+      const float caret_x = width_to(caret_);
       Rml::MeshUtilities::GenerateQuad(
           decorations,
-          {gutter + 4.f + static_cast<float>(caret_ - line_start) * 7.f, y + 1.f},
+          {gutter + 4.f + caret_x - horizontal_offset_, y + 1.f},
           {1.f, line_height - 2.f},
           Rml::Colourb(248, 250, 252).ToPremultiplied());
+      if (!composition_text_.empty()) {
+        const auto composition_width = static_cast<float>(
+            font_engine->GetStringWidth(face, Rml::String(composition_text_),
+                                        shaping));
+        const float draw_x = gutter + 4.f + caret_x - horizontal_offset_;
+        Rml::MeshUtilities::GenerateQuad(
+            decorations, {draw_x, y + line_height - 2.f},
+            {std::max(1.f, composition_width), 1.f},
+            Rml::Colourb(200, 106, 40).ToPremultiplied());
+        composition_x = draw_x;
+      }
     }
     add_text(std::to_string(line + 1), 7.f, y,
              Rml::Colourb(120, 113, 108).ToPremultiplied());
 
-    float x = gutter + 4.f;
+    float x = gutter + 4.f - horizontal_offset_;
     std::size_t cursor = line_start;
     for (const auto& span : spans_) {
       if (span.byte_end <= line_start || span.byte_start >= line_end)
@@ -319,6 +432,9 @@ void ElementCodeSurface::rebuild_geometry(const Rml::Vector2f size) {
     if (cursor < line_end)
       (void)add_text(std::string_view(text_).substr(cursor, line_end - cursor),
                      x, y, syntax_colour(SyntaxKind::plain));
+    if (composition_x)
+      (void)add_text(composition_text_, *composition_x, y,
+                     Rml::Colourb(248, 250, 252).ToPremultiplied());
     ++rendered_lines_;
   }
   decoration_geometry_ = render_manager->MakeGeometry(std::move(decorations));

@@ -301,39 +301,52 @@ if(BUILD_TESTING AND TOKMON_BUILD_TESTS)
   add_subdirectory(tests)
 endif()
 
-install(TARGETS ${TOKMON_RUNTIME_TARGETS} RUNTIME DESTINATION bin)
 if(WIN32)
-  install(FILES $<TARGET_RUNTIME_DLLS:tokmon> DESTINATION bin)
-  if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
-    install(DIRECTORY
-      "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/"
-      DESTINATION bin
-      CONFIGURATIONS Release RelWithDebInfo MinSizeRel
-      FILES_MATCHING PATTERN "*.dll")
-    install(DIRECTORY
-      "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin/"
-      DESTINATION bin
-      CONFIGURATIONS Debug
-      FILES_MATCHING PATTERN "*.dll")
-  endif()
+  install(TARGETS ${TOKMON_RUNTIME_TARGETS}
+    RUNTIME_DEPENDENCY_SET tokmon_windows_runtime_dependencies
+    RUNTIME DESTINATION bin)
+else()
+  install(TARGETS ${TOKMON_RUNTIME_TARGETS} RUNTIME DESTINATION bin)
 endif()
 if(TARGET tokmon-desktop)
-  install(TARGETS tokmon-desktop RUNTIME DESTINATION bin)
+  if(WIN32)
+    install(TARGETS tokmon-desktop
+      RUNTIME_DEPENDENCY_SET tokmon_windows_runtime_dependencies
+      RUNTIME DESTINATION bin)
+  else()
+    install(TARGETS tokmon-desktop RUNTIME DESTINATION bin)
+  endif()
   install(DIRECTORY apps/tokmon-desktop/assets/ DESTINATION bin/assets)
   install(FILES "${TOKMON_MISANS_FONT_FILE}" DESTINATION bin/assets/fonts)
-  if(WIN32)
-    install(FILES $<TARGET_RUNTIME_DLLS:tokmon-desktop> DESTINATION bin)
-  endif()
 endif()
 if(TARGET tokmon-desk)
-  install(TARGETS tokmon-desk RUNTIME DESTINATION bin BUNDLE DESTINATION bin)
+  if(WIN32)
+    install(TARGETS tokmon-desk
+      RUNTIME_DEPENDENCY_SET tokmon_windows_runtime_dependencies
+      RUNTIME DESTINATION bin BUNDLE DESTINATION bin)
+  else()
+    install(TARGETS tokmon-desk RUNTIME DESTINATION bin BUNDLE DESTINATION bin)
+  endif()
   install(DIRECTORY apps/tokmon-desk/assets/ DESTINATION bin/assets)
   install(DIRECTORY apps/tokmon-desk/rml/ DESTINATION bin/rml)
   install(FILES apps/tokmon-desk/THIRD_PARTY_NOTICES.md DESTINATION bin)
+  install(FILES apps/tokmon-desk/THIRD_PARTY_NOTICES.md
+    DESTINATION bin RENAME THIRD_PARTY_NOTICES.txt)
   install(FILES "${TOKMON_MISANS_FONT_FILE}" DESTINATION bin/assets/fonts)
-  if(WIN32)
-    install(FILES $<TARGET_RUNTIME_DLLS:tokmon-desk> DESTINATION bin)
+endif()
+if(WIN32)
+  set(_tokmon_runtime_search_directories)
+  if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
+    list(APPEND _tokmon_runtime_search_directories
+      "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
   endif()
+  install(RUNTIME_DEPENDENCY_SET tokmon_windows_runtime_dependencies
+    DESTINATION bin
+    DIRECTORIES ${_tokmon_runtime_search_directories}
+    PRE_EXCLUDE_REGEXES "api-ms-.*" "ext-ms-.*"
+    POST_EXCLUDE_REGEXES
+      ".*[Ww][Ii][Nn][Dd][Oo][Ww][Ss][/\\\\][Ss][Yy][Ss][Tt][Ee][Mm]32[/\\\\].*")
+  unset(_tokmon_runtime_search_directories)
 endif()
 if(TOKMON_BUILD_EXTERNAL_LENSES AND TOKMON_LENS_TARGETS)
   install(TARGETS ${TOKMON_LENS_TARGETS}

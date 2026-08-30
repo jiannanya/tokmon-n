@@ -124,11 +124,14 @@ bool SdlPlatform::pump_event(Rml::Context& context, bool& quit, bool& resized) {
       (event.type == SDL_EVENT_KEY_DOWN ||
        event.type == SDL_EVENT_KEY_UP ||
        event.type == SDL_EVENT_TEXT_INPUT ||
+       event.type == SDL_EVENT_TEXT_EDITING ||
+       event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+       event.type == SDL_EVENT_MOUSE_BUTTON_UP ||
+       event.type == SDL_EVENT_MOUSE_MOTION ||
        event.type == SDL_EVENT_MOUSE_WHEEL) &&
       raw_event_handler_(event))
     return true;
-  const float density = SDL_GetWindowPixelDensity(window_);
-  const float input_scale = density / ui_scale_;
+  const float input_scale = input_coordinate_scale();
   switch (event.type) {
     case SDL_EVENT_QUIT:
     case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
@@ -205,21 +208,44 @@ int SdlPlatform::default_ui_scale_percent() const noexcept {
   return std::clamp(quarter_step, 100, 200);
 }
 
+int SdlPlatform::default_content_scale_percent() const noexcept {
+  if (!window_)
+    return 100;
+  const SDL_DisplayID display = SDL_GetDisplayForWindow(window_);
+  const SDL_DisplayMode* mode = display ? SDL_GetCurrentDisplayMode(display)
+                                        : nullptr;
+  // This is the legacy tokmon-desktop startup rule: only a 4K-or-larger
+  // desktop receives the default 125% content zoom. OS display scaling is a
+  // separate transform and must never replace this user-facing preference.
+  if (mode && mode->w >= 3840 && mode->h >= 2160)
+    return 125;
+  return 100;
+}
+
 void SdlPlatform::set_ui_scale(const float scale) noexcept {
   ui_scale_ = std::clamp(scale, 0.7f, 2.f);
 }
 
 void SdlPlatform::size_window_for_ui_scale(const int logical_width,
-                                           const int logical_height) {
+                                           const int logical_height,
+                                           const float window_scale) {
   if (!window_)
     return;
+  const float scale = std::clamp(window_scale, 0.7f, 2.f);
   SDL_SetWindowMinimumSize(
-      window_, static_cast<int>(std::lround(712.f * ui_scale_)) + 16,
-      static_cast<int>(std::lround(680.f * ui_scale_)));
+      window_, static_cast<int>(std::lround(712.f * scale)) + 16,
+      static_cast<int>(std::lround(680.f * scale)));
   SDL_SetWindowSize(window_,
-                    static_cast<int>(std::lround(logical_width * ui_scale_)),
-                    static_cast<int>(std::lround(logical_height * ui_scale_)));
+                    static_cast<int>(std::lround(
+                        static_cast<float>(logical_width) * scale)),
+                    static_cast<int>(std::lround(
+                        static_cast<float>(logical_height) * scale)));
   SDL_SyncWindow(window_);
+}
+
+float SdlPlatform::input_coordinate_scale() const noexcept {
+  const float density = window_ ? SDL_GetWindowPixelDensity(window_) : 1.f;
+  return density / std::max(ui_scale_, 0.01f);
 }
 
 void SdlPlatform::minimize() { if (window_) SDL_MinimizeWindow(window_); }

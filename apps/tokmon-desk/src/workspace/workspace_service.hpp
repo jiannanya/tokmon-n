@@ -69,9 +69,22 @@ public:
   [[nodiscard]] std::string read_text(const std::filesystem::path& path,
                                       std::size_t max_bytes,
                                       std::string& error) const;
+  [[nodiscard]] bool create_file(const std::filesystem::path& relative,
+                                 std::string_view initial_text,
+                                 std::string& error) const;
+  [[nodiscard]] bool create_directory(const std::filesystem::path& relative,
+                                      std::string& error) const;
+  [[nodiscard]] bool rename_entry(const std::filesystem::path& relative,
+                                  const std::filesystem::path& new_name,
+                                  std::string& error) const;
+  [[nodiscard]] bool remove_entry(const std::filesystem::path& relative,
+                                  bool recursive, std::string& error) const;
 
 private:
   std::filesystem::path root_;
+  [[nodiscard]] bool resolve_mutation_path(
+      const std::filesystem::path& relative, bool may_not_exist,
+      std::filesystem::path& absolute, std::string& error) const;
 };
 
 } // namespace tokmon::desk

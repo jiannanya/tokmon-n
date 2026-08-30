@@ -4,9 +4,12 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstdlib>
 #include <functional>
 #include <memory>
+#include <optional>
+#include <sstream>
 #include <vector>
 
 #if defined(_WIN32)
@@ -30,6 +33,49 @@
 namespace tokmon::desk {
 
 namespace {
+
+std::string environment_value(const char* name) {
+#if defined(_WIN32)
+  char* value = nullptr;
+  std::size_t length = 0;
+  if (_dupenv_s(&value, &length, name) != 0 || !value)
+    return {};
+  std::string result(value, length > 0 ? length - 1 : 0);
+  std::free(value);
+  return result;
+#else
+  const auto* value = std::getenv(name);
+  return value ? std::string(value) : std::string{};
+#endif
+}
+
+std::filesystem::path environment_path(const char* name) {
+  return std::filesystem::path(environment_value(name));
+}
+
+std::filesystem::path find_in_path(const std::filesystem::path& name) {
+  const auto raw_path = environment_value("PATH");
+  if (raw_path.empty())
+    return {};
+#if defined(_WIN32)
+  constexpr char separator = ';';
+#else
+  constexpr char separator = ':';
+#endif
+  std::string_view paths(raw_path);
+  while (!paths.empty()) {
+    const auto end = paths.find(separator);
+    const auto part = paths.substr(0, end);
+    std::error_code error;
+    const auto candidate = std::filesystem::path(part) / name;
+    if (std::filesystem::is_regular_file(candidate, error))
+      return candidate;
+    if (end == std::string_view::npos)
+      break;
+    paths.remove_prefix(end + 1);
+  }
+  return {};
+}
 
 TerminalColor color(const GhosttyColorRgb value) {
   return {value.r, value.g, value.b};
@@ -60,7 +106,7 @@ struct GhosttyVt::Impl {
           reinterpret_cast<const char*>(data), length));
   }
 
-  Impl(const int columns, const int rows) {
+  Impl(const int columns, const int rows, const std::size_t scrollback_lines) {
     const auto cols = static_cast<std::uint16_t>(std::clamp(columns, 1, 65535));
     const auto rows_value = static_cast<std::uint16_t>(std::clamp(rows, 1, 65535));
     if (ghostty_terminal_new(nullptr, &terminal, cols, rows_value) != GHOSTTY_SUCCESS)
@@ -80,7 +126,8 @@ struct GhosttyVt::Impl {
       ghostty_color_palette_default(palette.data());
       ghostty_color_palette_generate(palette.data(), nullptr, &background,
                                      &foreground, true, palette.data());
-      const std::size_t scrollback_lines = 10000;
+      const auto bounded_scrollback = std::clamp<std::size_t>(
+          scrollback_lines, 1000, 100000);
       (void)ghostty_terminal_set(
           terminal, GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND, &foreground);
       (void)ghostty_terminal_set(
@@ -91,7 +138,7 @@ struct GhosttyVt::Impl {
           terminal, GHOSTTY_TERMINAL_OPT_COLOR_PALETTE, palette.data());
       (void)ghostty_terminal_set(
           terminal, GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_LINES,
-          &scrollback_lines);
+          &bounded_scrollback);
       (void)ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_USERDATA, this);
       (void)ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_WRITE_PTY,
                                 reinterpret_cast<const void*>(write_pty));
@@ -217,8 +264,9 @@ bool read_paste(void* userdata, const GhosttyString mime,
 
 } // namespace
 
-GhosttyVt::GhosttyVt(const int columns, const int rows)
-    : impl_(std::make_unique<Impl>(columns, rows)) {}
+GhosttyVt::GhosttyVt(const int columns, const int rows,
+                     const std::size_t scrollback_lines)
+    : impl_(std::make_unique<Impl>(columns, rows, scrollback_lines)) {}
 
 GhosttyVt::~GhosttyVt() = default;
 
@@ -534,6 +582,14 @@ TerminalSession::~TerminalSession() { stop(); }
 
 bool TerminalSession::start(std::string shell, const std::filesystem::path& cwd,
                             int columns, int rows, std::string& error) {
+  TerminalLaunchOptions launch;
+  launch.executable = std::move(shell);
+  return start_profile(launch, cwd, columns, rows, error);
+}
+
+bool TerminalSession::start_profile(const TerminalLaunchOptions& launch,
+                                    const std::filesystem::path& cwd,
+                                    int columns, int rows, std::string& error) {
   stop();
 #if defined(_WIN32)
   HANDLE input_read = nullptr;
@@ -586,10 +642,34 @@ bool TerminalSession::start(std::string shell, const std::filesystem::path& cwd,
   startup.StartupInfo.hStdError = nullptr;
   startup.lpAttributeList = attributes;
   PROCESS_INFORMATION process{};
-  auto shell_path = std::filesystem::path(shell).wstring();
+  auto shell_path = launch.executable.wstring();
   if (shell_path.empty())
     shell_path = L"powershell.exe";
-  std::wstring command = L"\"" + shell_path + L"\"";
+  const auto quote = [](const std::wstring& value) {
+    std::wstring result = L"\"";
+    std::size_t backslashes = 0;
+    for (const wchar_t character : value) {
+      if (character == L'\\') {
+        ++backslashes;
+      } else if (character == L'\"') {
+        result.append(backslashes * 2 + 1, L'\\');
+        result.push_back(L'\"');
+        backslashes = 0;
+      } else {
+        result.append(backslashes, L'\\');
+        backslashes = 0;
+        result.push_back(character);
+      }
+    }
+    result.append(backslashes * 2, L'\\');
+    result.push_back(L'\"');
+    return result;
+  };
+  std::wstring command = quote(shell_path);
+  for (const auto& argument : launch.arguments) {
+    command.push_back(L' ');
+    command += quote(std::filesystem::path(argument).wstring());
+  }
   auto cwd_wide = cwd.wstring();
   const BOOL created = CreateProcessW(
       nullptr, command.data(), nullptr, nullptr, FALSE,
@@ -622,11 +702,23 @@ bool TerminalSession::start(std::string shell, const std::filesystem::path& cwd,
   if (pid == 0) {
     if (!cwd.empty())
       (void)chdir(cwd.c_str());
+    auto shell = launch.executable.string();
     if (shell.empty()) {
       const auto* environment_shell = std::getenv("SHELL");
       shell = environment_shell && *environment_shell ? environment_shell : "/bin/sh";
     }
-    execl(shell.c_str(), shell.c_str(), "-l", static_cast<char*>(nullptr));
+    std::vector<std::string> values;
+    values.push_back(shell);
+    if (launch.arguments.empty())
+      values.push_back("-l");
+    else
+      values.insert(values.end(), launch.arguments.begin(), launch.arguments.end());
+    std::vector<char*> argv;
+    argv.reserve(values.size() + 1);
+    for (auto& value : values)
+      argv.push_back(value.data());
+    argv.push_back(nullptr);
+    execv(shell.c_str(), argv.data());
     _exit(127);
   }
   master_fd_ = master;
@@ -635,6 +727,122 @@ bool TerminalSession::start(std::string shell, const std::filesystem::path& cwd,
   running_.store(true);
   reader_ = std::thread([this] { read_loop(); });
   return true;
+}
+
+std::vector<TerminalProfile> discover_terminal_profiles() {
+  std::vector<TerminalProfile> profiles;
+#if defined(_WIN32)
+  const auto system_root = environment_path("SystemRoot");
+  const auto powershell = system_root.empty() ? std::filesystem::path{}
+      : system_root / "System32" / "WindowsPowerShell" / "v1.0" /
+            "powershell.exe";
+  const auto command = environment_path("ComSpec");
+  const auto pwsh = find_in_path("pwsh.exe");
+  const auto wsl = find_in_path("wsl.exe");
+  profiles.push_back({"auto", "PowerShell（自动）",
+                      !pwsh.empty() ? pwsh : powershell, {},
+                      !pwsh.empty() || std::filesystem::exists(powershell)});
+  profiles.push_back({"pwsh", "PowerShell 7", pwsh, {}, !pwsh.empty()});
+  profiles.push_back({"windows-powershell", "Windows PowerShell", powershell,
+                      {}, std::filesystem::exists(powershell)});
+  profiles.push_back({"cmd", "命令提示符", command, {},
+                      !command.empty() && std::filesystem::exists(command)});
+  profiles.push_back({"wsl", "WSL", wsl, {}, !wsl.empty()});
+#else
+  auto shell = environment_path("SHELL");
+  if (shell.empty())
+    shell = "/bin/sh";
+  profiles.push_back({"auto", "登录 Shell（自动）", shell, {},
+                      std::filesystem::exists(shell)});
+  for (const auto& [id, label] : {
+           std::pair{"zsh", "zsh"}, std::pair{"bash", "bash"},
+           std::pair{"fish", "fish"}, std::pair{"sh", "sh"}}) {
+    auto executable = find_in_path(id);
+    profiles.push_back({id, label, executable, {}, !executable.empty()});
+  }
+#endif
+  return profiles;
+}
+
+std::optional<TerminalProfile> resolve_terminal_profile(
+    const std::string_view id) {
+  auto profiles = discover_terminal_profiles();
+  const auto found = std::ranges::find(profiles, id, &TerminalProfile::id);
+  if (found != profiles.end() && found->available)
+    return *found;
+  const auto automatic = std::ranges::find(profiles, std::string_view("auto"),
+                                           &TerminalProfile::id);
+  return automatic != profiles.end() && automatic->available
+      ? std::optional<TerminalProfile>(*automatic) : std::nullopt;
+}
+
+std::optional<std::vector<std::string>> parse_terminal_arguments(
+    const std::string_view text, std::string& error) {
+  error.clear();
+  std::vector<std::string> result;
+  std::string current;
+  char quote = 0;
+  bool escaping = false;
+  for (const char character : text) {
+    if (escaping) {
+      current.push_back(character);
+      escaping = false;
+    } else if (character == '\\') {
+      if (quote == '\'')
+        current.push_back(character);
+      else
+        escaping = true;
+    } else if (quote) {
+      if (character == quote)
+        quote = 0;
+      else
+        current.push_back(character);
+    } else if (character == '\'' || character == '"') {
+      quote = character;
+    } else if (std::isspace(static_cast<unsigned char>(character))) {
+      if (!current.empty()) {
+        result.push_back(std::move(current));
+        current.clear();
+      }
+    } else {
+      current.push_back(character);
+    }
+  }
+  if (escaping)
+    current.push_back('\\');
+  if (quote) {
+    error = "unterminated quote in terminal arguments";
+    return std::nullopt;
+  }
+  if (!current.empty())
+    result.push_back(std::move(current));
+  return result;
+}
+
+std::string terminal_selection_text(const TerminalRenderSnapshot& snapshot,
+                                    const std::size_t first,
+                                    const std::size_t last) {
+  if (snapshot.cells.empty() || snapshot.columns == 0 ||
+      first >= snapshot.cells.size())
+    return {};
+  const auto bounded_last = std::min(last, snapshot.cells.size() - 1);
+  std::string result;
+  for (auto index = first; index <= bounded_last; ++index) {
+    const auto& cell = snapshot.cells[index];
+    result += cell.grapheme.empty() ? " " : cell.grapheme;
+    if (index != bounded_last && (index + 1) % snapshot.columns == 0) {
+      while (!result.empty() && result.back() == ' ')
+        result.pop_back();
+      result.push_back('\n');
+    }
+  }
+  while (!result.empty() && result.back() == ' ')
+    result.pop_back();
+  return result;
+}
+
+bool terminal_safe_hyperlink(const std::string_view uri) noexcept {
+  return uri.starts_with("https://") || uri.starts_with("http://");
 }
 
 bool TerminalSession::write(std::string_view text, std::string& error) {
@@ -710,10 +918,13 @@ void TerminalSession::read_loop() {
   running_.store(false);
 }
 
-std::string TerminalSession::take_output() {
+std::string TerminalSession::take_output(const std::size_t max_bytes) {
   std::scoped_lock lock(output_mutex_);
-  std::string result;
-  result.swap(output_);
+  if (max_bytes == 0 || output_.empty())
+    return {};
+  const auto count = std::min(max_bytes, output_.size());
+  std::string result(output_.data(), count);
+  output_.erase(0, count);
   return result;
 }
 

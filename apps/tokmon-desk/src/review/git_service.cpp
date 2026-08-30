@@ -823,4 +823,99 @@ bool GitService::push(std::string& error) const {
   return run({"git", "push"}, output, error);
 }
 
+std::string GitService::head_revision(std::string& error) const {
+  std::string output;
+  if (!run({"git", "rev-parse", "HEAD"}, output, error))
+    return {};
+  while (!output.empty() && (output.back() == '\r' || output.back() == '\n'))
+    output.pop_back();
+  return output;
+}
+
+std::vector<std::string> GitService::tracked_files(std::string& error) const {
+  error.clear();
+#if defined(TOKMON_DESK_HAS_LIBGIT2)
+  std::vector<std::string> result;
+  git_libgit2_init();
+  git_repository* repository = nullptr;
+  git_index* index = nullptr;
+  if (git_repository_open_ext(&repository, workspace_.string().c_str(),
+                              GIT_REPOSITORY_OPEN_CROSS_FS, nullptr) != 0 ||
+      git_repository_index(&index, repository) != 0) {
+    error = git_error_text("could not enumerate tracked files");
+  } else {
+    const auto count = git_index_entrycount(index);
+    result.reserve(count);
+    for (std::size_t position = 0; position < count; ++position) {
+      const auto* entry = git_index_get_byindex(index, position);
+      if (entry && entry->path && GIT_INDEX_ENTRY_STAGE(entry) == 0)
+        result.emplace_back(entry->path);
+    }
+    std::ranges::sort(result);
+    result.erase(std::unique(result.begin(), result.end()), result.end());
+  }
+  git_index_free(index);
+  git_repository_free(repository);
+  git_libgit2_shutdown();
+  return result;
+#else
+  std::string output;
+  if (!run({"git", "ls-files", "-z"}, output, error))
+    return {};
+  std::vector<std::string> result;
+  for (std::size_t begin = 0; begin < output.size();) {
+    const auto end = output.find('\0', begin);
+    result.push_back(output.substr(begin, end == std::string::npos
+                                             ? std::string::npos
+                                             : end - begin));
+    begin = end == std::string::npos ? output.size() : end + 1;
+  }
+  return result;
+#endif
+}
+
+std::optional<std::string> GitService::head_file(const std::string& path,
+                                                 std::string& error) const {
+  std::filesystem::path absolute;
+  if (!resolve_path(path, absolute, error))
+    return std::nullopt;
+#if defined(TOKMON_DESK_HAS_LIBGIT2)
+  git_libgit2_init();
+  git_repository* repository = nullptr;
+  git_object* head = nullptr;
+  git_tree* tree = nullptr;
+  git_tree_entry* entry = nullptr;
+  git_blob* blob = nullptr;
+  const auto git_path = std::filesystem::path(path).generic_string();
+  bool success = git_repository_open_ext(&repository, workspace_.string().c_str(),
+                                         GIT_REPOSITORY_OPEN_CROSS_FS, nullptr) == 0 &&
+                 git_revparse_single(&head, repository, "HEAD^{tree}") == 0;
+  if (success)
+    tree = reinterpret_cast<git_tree*>(head);
+  success = success && git_tree_entry_bypath(&entry, tree, git_path.c_str()) == 0 &&
+            git_tree_entry_type(entry) == GIT_OBJECT_BLOB &&
+            git_blob_lookup(&blob, repository, git_tree_entry_id(entry)) == 0;
+  std::optional<std::string> result;
+  if (success) {
+    const auto* bytes = static_cast<const char*>(git_blob_rawcontent(blob));
+    result = std::string(bytes ? bytes : "",
+                         static_cast<std::size_t>(git_blob_rawsize(blob)));
+  } else {
+    error = git_error_text("could not read file from HEAD");
+  }
+  git_blob_free(blob);
+  git_tree_entry_free(entry);
+  git_object_free(head);
+  git_repository_free(repository);
+  git_libgit2_shutdown();
+  return result;
+#else
+  std::string output;
+  if (!run({"git", "show", "HEAD:" +
+            std::filesystem::path(path).generic_string()}, output, error))
+    return std::nullopt;
+  return output;
+#endif
+}
+
 } // namespace tokmon::desk

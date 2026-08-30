@@ -6,7 +6,9 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -48,6 +50,29 @@ struct TerminalRenderSnapshot {
   std::vector<TerminalCell> cells;
 };
 
+struct TerminalProfile {
+  std::string id;
+  std::string label;
+  std::filesystem::path executable;
+  std::vector<std::string> arguments;
+  bool available{false};
+};
+
+struct TerminalLaunchOptions {
+  std::filesystem::path executable;
+  std::vector<std::string> arguments;
+};
+
+[[nodiscard]] std::vector<TerminalProfile> discover_terminal_profiles();
+[[nodiscard]] std::optional<TerminalProfile> resolve_terminal_profile(
+    std::string_view id);
+[[nodiscard]] std::optional<std::vector<std::string>>
+parse_terminal_arguments(std::string_view text, std::string& error);
+[[nodiscard]] std::string terminal_selection_text(
+    const TerminalRenderSnapshot& snapshot, std::size_t first,
+    std::size_t last);
+[[nodiscard]] bool terminal_safe_hyperlink(std::string_view uri) noexcept;
+
 enum class TerminalKey {
   unidentified,
   key_a, key_b, key_c, key_d, key_e, key_f, key_g, key_h, key_i, key_j,
@@ -79,7 +104,8 @@ enum class TerminalPasteResult { written, empty, unsafe, failed };
 // from upstream ABI details.
 class GhosttyVt final {
  public:
-  GhosttyVt(int columns = 80, int rows = 24);
+  GhosttyVt(int columns = 80, int rows = 24,
+            std::size_t scrollback_lines = 10000);
   ~GhosttyVt();
   GhosttyVt(const GhosttyVt&) = delete;
   GhosttyVt& operator=(const GhosttyVt&) = delete;
@@ -119,9 +145,13 @@ class TerminalSession final {
 
   [[nodiscard]] bool start(std::string shell, const std::filesystem::path& cwd,
                            int columns, int rows, std::string& error);
+  [[nodiscard]] bool start_profile(const TerminalLaunchOptions& launch,
+                                   const std::filesystem::path& cwd,
+                                   int columns, int rows, std::string& error);
   [[nodiscard]] bool write(std::string_view text, std::string& error);
   [[nodiscard]] bool resize(int columns, int rows, std::string& error);
-  [[nodiscard]] std::string take_output();
+  [[nodiscard]] std::string take_output(
+      std::size_t max_bytes = 128u * 1024u);
   [[nodiscard]] bool running() const noexcept;
   void stop() noexcept;
 

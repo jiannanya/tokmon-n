@@ -11,6 +11,10 @@
 #include <thread>
 #include <unordered_map>
 
+#if defined(TOKMON_DESK_HAS_LIBGIT2)
+#include <git2.h>
+#endif
+
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -27,7 +31,10 @@ namespace tokmon::desk {
 namespace {
 
 std::string utf8(const std::filesystem::path& path) {
-  const auto value = path.u8string();
+  // Workspace-facing paths are protocol/UI paths and therefore always use
+  // forward slashes. libgit2's ignore matcher also requires Git-style paths
+  // on Windows.
+  const auto value = path.generic_u8string();
   return {reinterpret_cast<const char*>(value.data()), value.size()};
 }
 
@@ -43,6 +50,53 @@ bool ignored_relative(const std::filesystem::path& path) {
       return true;
   return false;
 }
+
+class IgnoreRules final {
+ public:
+  explicit IgnoreRules(const std::filesystem::path& root) : root_(root) {
+#if defined(TOKMON_DESK_HAS_LIBGIT2)
+    git_libgit2_init();
+    git_repository* opened = nullptr;
+    if (git_repository_open_ext(&opened, root.string().c_str(),
+                                GIT_REPOSITORY_OPEN_NO_SEARCH, nullptr) == 0)
+      repository_ = opened;
+#endif
+  }
+  ~IgnoreRules() {
+#if defined(TOKMON_DESK_HAS_LIBGIT2)
+    if (repository_)
+      git_repository_free(repository_);
+    git_libgit2_shutdown();
+#endif
+  }
+  [[nodiscard]] bool ignored_path(const std::filesystem::path& absolute) const {
+    std::error_code error;
+    const auto relative = std::filesystem::relative(absolute, root_, error);
+    if (error || ignored_relative(relative))
+      return true;
+#if defined(TOKMON_DESK_HAS_LIBGIT2)
+    if (repository_) {
+      int ignored_by_git = 0;
+      auto git_path = utf8(relative);
+      std::error_code type_error;
+      if (std::filesystem::is_directory(absolute, type_error) &&
+          !git_path.ends_with('/'))
+        git_path.push_back('/');
+      if (git_status_should_ignore(&ignored_by_git, repository_,
+                                   git_path.c_str()) == 0 &&
+          ignored_by_git != 0)
+        return true;
+    }
+#endif
+    return false;
+  }
+
+ private:
+  std::filesystem::path root_;
+#if defined(TOKMON_DESK_HAS_LIBGIT2)
+  git_repository* repository_{nullptr};
+#endif
+};
 
 std::string ascii_lower(std::string value) {
   std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
@@ -69,9 +123,10 @@ StampMap collect_stamps(const std::filesystem::path& root) {
   std::filesystem::recursive_directory_iterator iterator(
       root, std::filesystem::directory_options::skip_permission_denied, error);
   const std::filesystem::recursive_directory_iterator end;
+  const IgnoreRules ignore_rules(root);
   for (; !error && iterator != end; iterator.increment(error)) {
     const auto& entry = *iterator;
-    if (ignored(entry.path())) {
+    if (ignore_rules.ignored_path(entry.path())) {
       if (entry.is_directory(error))
         iterator.disable_recursion_pending();
       error.clear();
@@ -508,10 +563,11 @@ std::vector<WorkspaceEntry> WorkspaceService::enumerate(
   std::filesystem::recursive_directory_iterator iterator(
       root_, std::filesystem::directory_options::skip_permission_denied, ec);
   const std::filesystem::recursive_directory_iterator end;
+  const IgnoreRules ignore_rules(root_);
   for (; !ec && iterator != end && result.size() < max_entries;
        iterator.increment(ec)) {
     const auto& entry = *iterator;
-    if (ignored(entry.path())) {
+    if (ignore_rules.ignored_path(entry.path())) {
       if (entry.is_directory(ec))
         iterator.disable_recursion_pending();
       continue;
@@ -552,10 +608,11 @@ std::vector<WorkspaceEntry> WorkspaceService::children(
       directory, std::filesystem::directory_options::skip_permission_denied,
       error);
   const std::filesystem::directory_iterator end;
+  const IgnoreRules ignore_rules(root_);
   for (; !error && iterator != end && result.size() < max_entries;
        iterator.increment(error)) {
     const auto& entry = *iterator;
-    if (ignored(entry.path()))
+    if (ignore_rules.ignored_path(entry.path()))
       continue;
     const auto relative = std::filesystem::relative(entry.path(), root_, error);
     if (error) {
@@ -586,12 +643,13 @@ std::vector<WorkspaceSearchResult> WorkspaceService::search(
   std::filesystem::recursive_directory_iterator iterator(
       root_, std::filesystem::directory_options::skip_permission_denied, error);
   const std::filesystem::recursive_directory_iterator end;
+  const IgnoreRules ignore_rules(root_);
   for (; !error && iterator != end && result.size() < max_results;
        iterator.increment(error)) {
     if (cancelled && cancelled->load())
       break;
     const auto& entry = *iterator;
-    if (ignored(entry.path())) {
+    if (ignore_rules.ignored_path(entry.path())) {
       if (entry.is_directory(error))
         iterator.disable_recursion_pending();
       error.clear();
@@ -654,6 +712,121 @@ std::string WorkspaceService::read_text(const std::filesystem::path& path,
     return {};
   }
   return data;
+}
+
+bool WorkspaceService::resolve_mutation_path(
+    const std::filesystem::path& relative, const bool may_not_exist,
+    std::filesystem::path& absolute, std::string& error) const {
+  if (root_.empty() || relative.empty() || relative.is_absolute()) {
+    error = "workspace mutation path must be relative";
+    return false;
+  }
+  for (const auto& component : relative) {
+    if (component == ".." || component == ".git" || component == ".tokmon") {
+      error = "workspace mutation path is protected";
+      return false;
+    }
+  }
+  absolute = root_ / relative.lexically_normal();
+  const auto containment_target = may_not_exist ? absolute.parent_path() : absolute;
+  if (!contains(containment_target)) {
+    error = "workspace mutation path escapes the workspace";
+    return false;
+  }
+  return true;
+}
+
+bool WorkspaceService::create_file(const std::filesystem::path& relative,
+                                   const std::string_view initial_text,
+                                   std::string& error) const {
+  std::filesystem::path absolute;
+  if (!resolve_mutation_path(relative, true, absolute, error))
+    return false;
+  std::error_code filesystem_error;
+  if (std::filesystem::exists(absolute, filesystem_error)) {
+    error = "file already exists";
+    return false;
+  }
+  if (!std::filesystem::is_directory(absolute.parent_path(), filesystem_error)) {
+    error = "parent directory does not exist";
+    return false;
+  }
+  std::ofstream output(absolute, std::ios::binary | std::ios::trunc);
+  output.write(initial_text.data(), static_cast<std::streamsize>(initial_text.size()));
+  output.flush();
+  if (!output) {
+    error = "cannot create file";
+    return false;
+  }
+  return true;
+}
+
+bool WorkspaceService::create_directory(const std::filesystem::path& relative,
+                                        std::string& error) const {
+  std::filesystem::path absolute;
+  if (!resolve_mutation_path(relative, true, absolute, error))
+    return false;
+  std::error_code filesystem_error;
+  if (!std::filesystem::create_directory(absolute, filesystem_error)) {
+    error = filesystem_error ? filesystem_error.message() : "directory already exists";
+    return false;
+  }
+  return true;
+}
+
+bool WorkspaceService::rename_entry(const std::filesystem::path& relative,
+                                    const std::filesystem::path& new_name,
+                                    std::string& error) const {
+  if (new_name.empty() || new_name.has_parent_path() || new_name == "." ||
+      new_name == "..") {
+    error = "new name must be one file name";
+    return false;
+  }
+  std::filesystem::path source;
+  if (!resolve_mutation_path(relative, false, source, error))
+    return false;
+  const auto target_relative = relative.parent_path() / new_name;
+  std::filesystem::path target;
+  if (!resolve_mutation_path(target_relative, true, target, error))
+    return false;
+  std::error_code filesystem_error;
+  if (std::filesystem::exists(target, filesystem_error)) {
+    error = "rename destination already exists";
+    return false;
+  }
+  std::filesystem::rename(source, target, filesystem_error);
+  if (filesystem_error) {
+    error = "cannot rename workspace entry: " + filesystem_error.message();
+    return false;
+  }
+  return true;
+}
+
+bool WorkspaceService::remove_entry(const std::filesystem::path& relative,
+                                    const bool recursive,
+                                    std::string& error) const {
+  std::filesystem::path absolute;
+  if (!resolve_mutation_path(relative, false, absolute, error))
+    return false;
+  std::error_code filesystem_error;
+  if (!std::filesystem::exists(absolute, filesystem_error)) {
+    error = "workspace entry does not exist";
+    return false;
+  }
+  if (std::filesystem::is_directory(absolute, filesystem_error) && !recursive &&
+      !std::filesystem::is_empty(absolute, filesystem_error)) {
+    error = "directory is not empty";
+    return false;
+  }
+  if (recursive)
+    (void)std::filesystem::remove_all(absolute, filesystem_error);
+  else
+    (void)std::filesystem::remove(absolute, filesystem_error);
+  if (filesystem_error) {
+    error = "cannot remove workspace entry: " + filesystem_error.message();
+    return false;
+  }
+  return true;
 }
 
 } // namespace tokmon::desk

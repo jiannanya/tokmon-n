@@ -40,9 +40,18 @@ class ElementCodeSurface final : public Rml::Element {
   void page(int direction, bool selecting);
   void select_all();
   void set_caret_offset(std::size_t value);
+  [[nodiscard]] bool find(std::string_view query, bool backwards = false);
+  [[nodiscard]] bool go_to_line(std::size_t one_based_line);
+  [[nodiscard]] bool jump_to_matching_bracket();
+  void set_composition(std::string text, std::size_t cursor,
+                       std::size_t selection_length);
+  [[nodiscard]] const std::string& composition_text() const noexcept {
+    return composition_text_;
+  }
   [[nodiscard]] std::string selected_text() const;
   void click(float local_x, float local_y, bool selecting);
   void scroll_lines(int lines);
+  void scroll_columns(float pixels);
   [[nodiscard]] std::uint64_t version() const noexcept { return version_; }
   [[nodiscard]] std::size_t line_count() const noexcept {
     return line_starts_.size();
@@ -79,6 +88,10 @@ class ElementCodeSurface final : public Rml::Element {
   std::size_t first_line_{0};
   std::size_t preferred_column_{0};
   std::size_t rendered_lines_{0};
+  float horizontal_offset_{0.f};
+  std::string composition_text_;
+  std::size_t composition_cursor_{0};
+  std::size_t composition_selection_length_{0};
   Rml::Geometry decoration_geometry_;
   std::vector<TextGeometry> text_geometry_;
   Rml::Vector2f geometry_size_{};

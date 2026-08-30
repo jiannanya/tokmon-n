@@ -71,11 +71,15 @@ DeskAppPaths DeskAppPaths::resolve() {
   paths.cache = (cache_home.empty() ? home / ".cache" : cache_home) / "tokmon-desk";
   paths.logs = paths.state / "logs";
 #endif
+  paths.runtime = paths.state / "runtime";
+  paths.recovery = paths.state / "recovery";
+  paths.change_snapshots = paths.data / "change-snapshots";
   return paths;
 }
 
 bool DeskAppPaths::ensure(std::string& error) const {
-  for (const auto& path : {config, data, state, cache, logs}) {
+  for (const auto& path : {config, data, state, cache, logs, runtime, recovery,
+                           change_snapshots, state / "ui-state"}) {
     if (path.empty() || !path.is_absolute()) {
       error = "tokmon-desk app path is empty or relative";
       return false;
@@ -92,7 +96,8 @@ bool DeskAppPaths::ensure(std::string& error) const {
 
 bool DeskAppPaths::isolated_from(const std::filesystem::path& workspace) const {
   const auto project_config = workspace / ".tokmon";
-  for (const auto& path : {config, data, state, cache, logs}) {
+  for (const auto& path : {config, data, state, cache, logs, runtime, recovery,
+                           change_snapshots}) {
     if (is_within(path, workspace) || is_within(path, project_config))
       return false;
   }

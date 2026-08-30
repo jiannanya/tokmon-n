@@ -33,7 +33,7 @@ struct AppState {
   std::string model_name;
   std::string daemon_status{"正在连接后台服务"};
   bool sidebar_visible{true};
-  bool right_panel_visible{true};
+  bool right_panel_visible{false};
   bool settings_open{false};
   bool thought_expanded{true};
   bool workflow_expanded{true};

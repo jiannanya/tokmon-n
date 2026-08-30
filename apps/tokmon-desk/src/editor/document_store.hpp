@@ -9,6 +9,9 @@
 
 namespace tokmon::desk {
 
+enum class TextEncoding { utf8, utf8_bom };
+enum class LineEnding { none, lf, crlf, cr, mixed };
+
 struct DocumentSnapshot {
   std::filesystem::path path;
   std::string text;
@@ -18,6 +21,10 @@ struct DocumentSnapshot {
   bool external_conflict{false};
   bool can_undo{false};
   bool can_redo{false};
+  TextEncoding encoding{TextEncoding::utf8};
+  LineEnding line_ending{LineEnding::none};
+  bool read_only{false};
+  bool large_file{false};
 };
 
 // Zep's gap-buffer implementation is isolated behind this stable document
@@ -31,6 +38,7 @@ public:
 
   [[nodiscard]] std::optional<DocumentSnapshot> open(
       const std::filesystem::path& path, std::string& error);
+  [[nodiscard]] bool adopt(DocumentSnapshot snapshot, std::string& error);
   [[nodiscard]] bool edit(const std::filesystem::path& path,
                           std::size_t offset, std::size_t erase_count,
                           std::string replacement,

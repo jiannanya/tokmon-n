@@ -33,6 +33,51 @@ std::optional<WorkspaceEntry> ElementFileTree::row_at(const float local_y) const
   return index < rows_.size() ? std::optional(rows_[index]) : std::nullopt;
 }
 
+std::optional<WorkspaceEntry> ElementFileTree::selected_row() const {
+  const auto selected = std::ranges::find_if(rows_, [&](const auto& row) {
+    return row.relative_path == selected_;
+  });
+  return selected == rows_.end() ? std::nullopt
+                                 : std::optional<WorkspaceEntry>(*selected);
+}
+
+std::optional<WorkspaceEntry> ElementFileTree::move_selection(const int rows) {
+  if (rows_.empty())
+    return std::nullopt;
+  const auto selected = std::ranges::find_if(rows_, [&](const auto& row) {
+    return row.relative_path == selected_;
+  });
+  const auto current = selected == rows_.end()
+      ? std::size_t{0}
+      : static_cast<std::size_t>(std::distance(rows_.begin(), selected));
+  const auto target = rows < 0
+      ? current - std::min(current, static_cast<std::size_t>(-rows))
+      : std::min(current + static_cast<std::size_t>(rows), rows_.size() - 1);
+  selected_ = rows_[target].relative_path;
+  constexpr float row_height = 27.f;
+  const auto visible = std::max<std::size_t>(1u, static_cast<std::size_t>(
+      std::floor(std::max(GetClientHeight(), row_height) / row_height)));
+  if (target < first_row_)
+    first_row_ = target;
+  else if (target >= first_row_ + visible)
+    first_row_ = target - visible + 1;
+  ++revision_;
+  return rows_[target];
+}
+
+std::optional<WorkspaceEntry> ElementFileTree::select_edge(const bool last) {
+  if (rows_.empty())
+    return std::nullopt;
+  const auto target = last ? rows_.size() - 1 : 0u;
+  selected_ = rows_[target].relative_path;
+  constexpr float row_height = 27.f;
+  const auto visible = std::max<std::size_t>(1u, static_cast<std::size_t>(
+      std::floor(std::max(GetClientHeight(), row_height) / row_height)));
+  first_row_ = last && target >= visible ? target - visible + 1 : 0u;
+  ++revision_;
+  return rows_[target];
+}
+
 void ElementFileTree::scroll_lines(const int lines) {
   if (lines < 0)
     first_row_ -= std::min(first_row_, static_cast<std::size_t>(-lines));

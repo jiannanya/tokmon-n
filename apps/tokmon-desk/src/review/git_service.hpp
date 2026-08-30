@@ -83,6 +83,11 @@ class GitService final {
   [[nodiscard]] bool unstage_all(std::string& error) const;
   [[nodiscard]] bool commit(std::string message, std::string& error) const;
   [[nodiscard]] bool push(std::string& error) const;
+  [[nodiscard]] std::string head_revision(std::string& error) const;
+  [[nodiscard]] std::vector<std::string> tracked_files(
+      std::string& error) const;
+  [[nodiscard]] std::optional<std::string> head_file(
+      const std::string& path, std::string& error) const;
 
  private:
   std::filesystem::path workspace_;

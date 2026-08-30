@@ -26,9 +26,12 @@ public:
   [[nodiscard]] int pixel_height() const noexcept;
   [[nodiscard]] float display_scale() const noexcept;
   [[nodiscard]] int default_ui_scale_percent() const noexcept;
+  [[nodiscard]] int default_content_scale_percent() const noexcept;
   void set_ui_scale(float scale) noexcept;
-  void size_window_for_ui_scale(int logical_width, int logical_height);
+  void size_window_for_ui_scale(int logical_width, int logical_height,
+                                float window_scale);
   [[nodiscard]] float ui_scale() const noexcept { return ui_scale_; }
+  [[nodiscard]] float input_coordinate_scale() const noexcept;
 
   void minimize();
   void toggle_maximize();

@@ -108,19 +108,7 @@ std::string ElementTerminal::selected_text() const {
   const auto first = std::min(selection_anchor_, selection_active_);
   const auto last = std::min(std::max(selection_anchor_, selection_active_),
                              snapshot_.cells.size() - 1);
-  std::string result;
-  for (auto index = first; index <= last; ++index) {
-    const auto& cell = snapshot_.cells[index];
-    result += cell.grapheme.empty() ? " " : cell.grapheme;
-    if (index != last && (index + 1) % snapshot_.columns == 0) {
-      while (!result.empty() && result.back() == ' ')
-        result.pop_back();
-      result.push_back('\n');
-    }
-  }
-  while (!result.empty() && result.back() == ' ')
-    result.pop_back();
-  return result;
+  return terminal_selection_text(snapshot_, first, last);
 }
 
 std::string ElementTerminal::hyperlink_at(const float x, const float y) {

@@ -31,6 +31,61 @@ struct EditRecord {
   std::string inserted;
 };
 
+bool valid_utf8(const std::string_view value) {
+  std::size_t index = 0;
+  while (index < value.size()) {
+    const auto first = static_cast<unsigned char>(value[index]);
+    if (first < 0x80) {
+      ++index;
+      continue;
+    }
+    int length = 0;
+    char32_t codepoint = 0;
+    if ((first & 0xe0u) == 0xc0u) { length = 2; codepoint = first & 0x1fu; }
+    else if ((first & 0xf0u) == 0xe0u) { length = 3; codepoint = first & 0x0fu; }
+    else if ((first & 0xf8u) == 0xf0u) { length = 4; codepoint = first & 0x07u; }
+    else return false;
+    if (index + static_cast<std::size_t>(length) > value.size())
+      return false;
+    for (int continuation = 1; continuation < length; ++continuation) {
+      const auto byte = static_cast<unsigned char>(value[index + continuation]);
+      if ((byte & 0xc0u) != 0x80u)
+        return false;
+      codepoint = (codepoint << 6u) | (byte & 0x3fu);
+    }
+    if ((length == 2 && codepoint < 0x80) ||
+        (length == 3 && codepoint < 0x800) ||
+        (length == 4 && codepoint < 0x10000) ||
+        codepoint > 0x10ffff || (codepoint >= 0xd800 && codepoint <= 0xdfff))
+      return false;
+    index += static_cast<std::size_t>(length);
+  }
+  return true;
+}
+
+LineEnding line_ending(const std::string_view value) {
+  std::size_t lf = 0, crlf = 0, cr = 0;
+  for (std::size_t index = 0; index < value.size(); ++index) {
+    if (value[index] == '\r') {
+      if (index + 1 < value.size() && value[index + 1] == '\n') {
+        ++crlf;
+        ++index;
+      } else {
+        ++cr;
+      }
+    } else if (value[index] == '\n') {
+      ++lf;
+    }
+  }
+  const auto kinds = static_cast<int>(lf > 0) + static_cast<int>(crlf > 0) +
+                     static_cast<int>(cr > 0);
+  if (kinds > 1) return LineEnding::mixed;
+  if (crlf) return LineEnding::crlf;
+  if (lf) return LineEnding::lf;
+  if (cr) return LineEnding::cr;
+  return LineEnding::none;
+}
+
 } // namespace
 
 struct DocumentStore::Document {
@@ -79,6 +134,13 @@ std::uint64_t DocumentStore::content_hash(std::string_view value) noexcept {
 
 std::optional<DocumentSnapshot> DocumentStore::open(
     const std::filesystem::path& path, std::string& error) {
+  std::error_code file_error;
+  const auto bytes = std::filesystem::file_size(path, file_error);
+  if (file_error || bytes > 64u * 1024u * 1024u) {
+    error = file_error ? "cannot inspect document" :
+                         "document exceeds the 64 MiB editable limit";
+    return std::nullopt;
+  }
   const auto data = read_all(path);
   if (!data) {
     error = "cannot open document";
@@ -88,17 +150,53 @@ std::optional<DocumentSnapshot> DocumentStore::open(
     error = "binary document is not editable";
     return std::nullopt;
   }
+  const bool bom = data->size() >= 3 &&
+      static_cast<unsigned char>((*data)[0]) == 0xef &&
+      static_cast<unsigned char>((*data)[1]) == 0xbb &&
+      static_cast<unsigned char>((*data)[2]) == 0xbf;
+  if (!valid_utf8(std::string_view(*data).substr(bom ? 3 : 0))) {
+    error = "document is not valid UTF-8";
+    return std::nullopt;
+  }
   auto document = std::make_unique<Document>();
   std::error_code canonical_error;
   auto canonical = std::filesystem::weakly_canonical(path, canonical_error);
   if (canonical_error)
     canonical = path;
-  document->snapshot = {canonical, *data, 1, content_hash(*data), false,
-                        false, false, false};
+  const auto permissions = std::filesystem::status(canonical, file_error).permissions();
+  const bool writable = file_error ||
+      (permissions & (std::filesystem::perms::owner_write |
+                      std::filesystem::perms::group_write |
+                      std::filesystem::perms::others_write)) !=
+          std::filesystem::perms::none;
+  document->snapshot = {.path = canonical, .text = *data, .version = 1,
+                        .disk_hash = content_hash(*data),
+                        .encoding = bom ? TextEncoding::utf8_bom
+                                        : TextEncoding::utf8,
+                        .line_ending = line_ending(*data),
+                        .read_only = !writable,
+                        .large_file = bytes > 8u * 1024u * 1024u};
   document->buffer.assign(data->begin(), data->end());
   auto result = document->snapshot;
   documents_.insert_or_assign(key(path), std::move(document));
   return result;
+}
+
+bool DocumentStore::adopt(DocumentSnapshot snapshot, std::string& error) {
+  if (snapshot.path.empty() || snapshot.version == 0 ||
+      snapshot.text.size() > 64u * 1024u * 1024u ||
+      snapshot.text.find('\0') != std::string::npos ||
+      !valid_utf8(std::string_view(snapshot.text).substr(
+          snapshot.encoding == TextEncoding::utf8_bom ? 3 : 0))) {
+    error = "invalid detached document snapshot";
+    return false;
+  }
+  auto document = std::make_unique<Document>();
+  document->buffer.assign(snapshot.text.begin(), snapshot.text.end());
+  document->snapshot = std::move(snapshot);
+  const auto document_key = key(document->snapshot.path);
+  documents_.insert_or_assign(document_key, std::move(document));
+  return true;
 }
 
 bool DocumentStore::edit(const std::filesystem::path& path,
@@ -113,6 +211,10 @@ bool DocumentStore::edit(const std::filesystem::path& path,
     return false;
   }
   auto& document = *iterator->second;
+  if (document.snapshot.read_only) {
+    error = "document is read-only";
+    return false;
+  }
   if (document.snapshot.version != expected_version ||
       offset > document.snapshot.text.size()) {
     error = "stale document edit";
@@ -140,6 +242,10 @@ bool DocumentStore::undo(const std::filesystem::path& path,
     return false;
   }
   auto& document = *iterator->second;
+  if (document.snapshot.read_only) {
+    error = "document is read-only";
+    return false;
+  }
   if (document.undo.empty()) {
     error = "nothing to undo";
     return false;
@@ -163,6 +269,10 @@ bool DocumentStore::redo(const std::filesystem::path& path,
     return false;
   }
   auto& document = *iterator->second;
+  if (document.snapshot.read_only) {
+    error = "document is read-only";
+    return false;
+  }
   if (document.redo.empty()) {
     error = "nothing to redo";
     return false;
@@ -185,6 +295,10 @@ bool DocumentStore::save(const std::filesystem::path& path,
     return false;
   }
   auto& document = *iterator->second;
+  if (document.snapshot.read_only) {
+    error = "document is read-only";
+    return false;
+  }
   if (document.snapshot.version != expected_version) {
     error = "stale document save";
     return false;
@@ -256,6 +370,9 @@ bool DocumentStore::reload(const std::filesystem::path& path,
   document.buffer.assign(data->begin(), data->end());
   document.snapshot.text = *data;
   document.snapshot.disk_hash = content_hash(*data);
+  document.snapshot.encoding = data->starts_with("\xef\xbb\xbf")
+      ? TextEncoding::utf8_bom : TextEncoding::utf8;
+  document.snapshot.line_ending = line_ending(*data);
   ++document.snapshot.version;
   document.snapshot.dirty = false;
   document.snapshot.external_conflict = false;

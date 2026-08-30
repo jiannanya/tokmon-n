@@ -21,6 +21,9 @@ class ElementFileTree final : public Rml::Element {
   void set_rows(std::vector<WorkspaceEntry> rows);
   void set_selected(std::string relative_path);
   [[nodiscard]] std::optional<WorkspaceEntry> row_at(float local_y) const;
+  [[nodiscard]] std::optional<WorkspaceEntry> selected_row() const;
+  [[nodiscard]] std::optional<WorkspaceEntry> move_selection(int rows);
+  [[nodiscard]] std::optional<WorkspaceEntry> select_edge(bool last);
   void scroll_lines(int lines);
   [[nodiscard]] std::size_t visible_geometry_rows() const noexcept {
     return rendered_rows_;
