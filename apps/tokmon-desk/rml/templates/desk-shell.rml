@@ -1,0 +1,85 @@
+<template name="desk-shell" content="desk-document-content">
+<head>
+  <link type="text/rcss" href="../themes/legacy-palette.rcss"/>
+  <link type="text/rcss" href="../themes/legacy-metrics.rcss"/>
+  <link type="text/rcss" href="../themes/legacy-components.rcss"/>
+  <link type="text/template" href="right-panel.rml"/>
+  <link type="text/template" href="settings-dialog.rml"/>
+  <link type="text/template" href="overlays.rml"/>
+</head>
+<body id="app-shell" data-model="desk">
+  <div id="sidebar" class="sidebar">
+    <div id="brand-row" class="brand-row drag-region">
+      <svg class="brand-logo" data-attr-src="view.asset_root + '/figma/icon-00.svg'"></svg>
+      <span class="brand-name">Tokmon</span>
+    </div>
+    <button id="new-session-button" class="new-session-button"><svg data-attr-src="view.asset_root + '/figma/icon-02.svg'"></svg><span>新建会话</span></button>
+    <div class="search-box"><svg data-attr-src="view.asset_root + '/figma/icon-03.svg'"></svg><span id="navigation-search-placeholder" class="search-placeholder">搜索会话、项目或分组...</span><input id="navigation-search" type="text"/></div>
+    <div class="tree-caption">分组 / 项目 / 会话</div>
+    <div id="navigation-tree" class="navigation-tree">
+      <button data-for="row : view.navigation" data-attr-class="'tree-row ' + row.classes" data-style-padding-left="row.padding" data-attr-nav-id="row.id">
+        <span class="chevron">{{row.chevron}}</span><svg data-attr-src="row.icon"></svg><span>{{row.title}}</span>
+      </button>
+      <div class="navigation-empty" data-if="view.navigation_empty">没有匹配的会话、项目或分组</div>
+    </div>
+    <button id="settings-button" class="settings-button"><svg data-attr-src="view.asset_root + '/figma/icon-13.svg'"></svg><span>设置</span><i class="settings-status-dot"></i></button>
+  </div>
+
+  <button id="sidebar-toggle" class="panel-toggle left-toggle"><svg data-attr-src="view.asset_root + '/figma/icon-01.svg'"></svg></button>
+  <div id="sidebar-resizer" class="panel-resizer sidebar-resizer"></div>
+
+  <div id="workspace" class="workspace">
+    <div id="workspace-titlebar" class="workspace-titlebar drag-region">
+      <span id="session-title" class="session-title">{{view.session_title}}</span>
+      <button id="title-edit" class="title-edit"><svg data-attr-src="view.asset_root + '/figma/icon-14.svg'"></svg></button>
+      <div class="mode-pill"><button id="chat-mode" class="active">对话</button><button id="trajectory-mode">轨迹</button></div>
+    </div>
+    <div id="environment-panel" class="environment-panel hidden">
+      <div class="environment-panel-head"><strong>环境信息</strong><span class="environment-panel-status"></span><button id="environment-close" title="收起环境信息">◎</button></div>
+      <div class="environment-grid">
+        <div class="environment-row"><span>变更</span><span id="environment-change-count">正在读取…</span></div>
+        <div class="environment-row"><span>本地</span><code id="workspace-path">{{view.workspace_path}}</code></div>
+        <div class="environment-row"><span>Git 分支</span><span id="environment-branch">{{view.branch}}</span></div>
+        <div class="environment-row"><span>索引</span><span id="environment-index">正在读取…</span></div>
+        <div class="environment-row"><span>Daemon</span><span id="daemon-status">正在连接后台服务</span></div>
+      </div>
+      <div class="environment-actions"><button id="environment-refresh">刷新状态</button><button id="environment-settings">环境设置</button></div>
+    </div>
+    <div id="environment-orb" class="environment-orb"><span class="environment-ring outer"></span><span class="environment-ring inner"></span><span class="environment-core"></span><span class="environment-online"></span><button id="environment-toggle" class="environment-orb-hit" title="环境信息"></button></div>
+    <div id="initial-session" class="initial-session" data-if="view.conversation_empty">
+      <div class="starter-block">
+        <h1>你想在 <strong id="starter-workspace-name">{{view.workspace_name}}</strong> 中创造什么？</h1>
+        <div class="starter-grid">
+          <button class="starter-card" starter-kind="explore"><span class="starter-icon explore"><svg data-attr-src="view.asset_root + '/figma/starter-explore.svg'"></svg></span><strong>探索并理解代码</strong><small>梳理架构、依赖与核心逻辑</small></button>
+          <button class="starter-card" starter-kind="build"><span class="starter-icon build"><svg data-attr-src="view.asset_root + '/figma/starter-build.svg'"></svg></span><strong>构建新功能、应用或工具</strong><small>设计方案并编写实现代码</small></button>
+          <button class="starter-card" starter-kind="review"><span class="starter-icon review"><svg data-attr-src="view.asset_root + '/figma/starter-review.svg'"></svg></span><strong>审查代码并提出修改建议</strong><small>排查隐患与提升代码规范</small></button>
+          <button class="starter-card" starter-kind="fix"><span class="starter-icon fix"><svg data-attr-src="view.asset_root + '/figma/starter-fix.svg'"></svg></span><strong>修复问题和失败</strong><small>诊断报错堆栈并修复异常</small></button>
+        </div>
+      </div>
+    </div>
+    <div id="conversation" class="conversation" data-if="!view.conversation_empty">
+      <div class="conversation-spacer" data-if="view.conversation_has_top_spacer" data-style-height="view.conversation_top_spacer"></div>
+      <div data-for="turn : view.conversation">
+        <div class="user-message-row" data-if="turn.has_user"><article class="message user-message" data-rml="turn.user_rml"></article></div>
+        <article class="thought-card" data-if="turn.has_reasoning"><div class="card-title"><span>●</span> 思考过程</div><div class="thought-content" data-rml="turn.reasoning_rml"></div></article>
+        <article class="workflow-card" data-if="turn.has_workflow"><div class="card-title"><span class="status-dot"></span> 工作流执行<span class="complete-pill">{{turn.workflow.size}} 项</span></div><div class="workflow-content"><div data-for="step : turn.workflow" class="workflow-step" data-class-failed="step.failed"><span class="step-icon">{{step.failed ? '!' : '✓'}}</span><div><strong>{{step.kind}}</strong><small>{{step.detail}}</small></div></div></div></article>
+        <article class="message assistant-message" data-if="turn.has_assistant" data-rml="turn.assistant_rml"></article>
+      </div>
+      <div class="conversation-spacer" data-if="view.conversation_has_bottom_spacer" data-style-height="view.conversation_bottom_spacer"></div>
+    </div>
+    <div id="trajectory" class="trajectory hidden">
+      <div class="trajectory-empty" data-if="view.trajectory_empty"><strong>尚无执行轨迹</strong><span>提交请求后，真实 Photon 事件会在这里按因果顺序显示</span></div>
+      <div data-if="!view.trajectory_empty"><div class="trajectory-summary"><div><strong>{{view.trajectory_count}}</strong><span>Photon</span></div><div><strong>{{view.trajectory_ray}}</strong><span>当前 Ray</span></div><div><strong>{{view.trajectory_cursor}}</strong><span>Snow Cursor</span></div><button id="export-trajectory"><svg data-attr-src="view.asset_root + '/figma/icon-42.svg'"></svg>导出</button></div><div class="trajectory-list"><div class="trajectory-window-notice" data-if="view.trajectory_has_notice">{{view.trajectory_window_notice}}</div><article class="trajectory-row" data-for="row : view.trajectory"><span class="trajectory-sequence">#{{row.sequence}}</span><span class="trajectory-dot"></span><div><strong>{{row.kind}}</strong><small>{{row.metadata}}</small><code>{{row.detail}}</code></div></article></div></div>
+    </div>
+    <div id="composer-wrap" class="composer-wrap">
+      <div class="workspace-context"><svg data-attr-src="view.asset_root + '/figma/icon-18.svg'"></svg><strong id="composer-workspace-name">{{view.workspace_name}}</strong><span>·</span><svg data-attr-src="view.asset_root + '/figma/icon-19.svg'"></svg><span>本地</span><span>·</span><svg data-attr-src="view.asset_root + '/figma/icon-50.svg'"></svg><span class="branch">{{view.branch}}</span></div>
+      <div id="composer-card" class="composer-card"><span id="composer-placeholder" class="composer-placeholder">随心输入需求，或点击上方卡片快速开始...</span><input id="composer" type="text" placeholder="随心输入需求，或点击上方卡片快速开始..."/><div class="composer-toolbar"><div class="composer-tools"><button id="attach-button" class="round-button"><svg data-attr-src="view.asset_root + '/figma/icon-23.svg'"></svg></button><span id="attachment-pill" class="attachment-pill hidden"></span><button id="access-button" class="tool-pill access"><svg data-attr-src="view.asset_root + '/figma/icon-28.svg'"></svg>{{view.access_label}}⌄</button></div><div class="composer-options"><button class="context-ring"><svg data-attr-src="view.asset_root + '/figma/spinner-ring.svg'"></svg></button><button id="active-model" class="select-pill">{{view.active_model}}</button><button id="effort-button" class="select-pill"><svg data-attr-src="view.asset_root + '/figma/icon-40.svg'"></svg>{{view.effort}}⌄</button><button id="send-button" class="send-button"><svg data-attr-src="view.asset_root + '/figma/icon-58.svg'"></svg></button></div></div></div>
+    </div>
+  </div>
+
+  <template src="desk-right-panel"/>
+  <template src="desk-settings-dialog"/>
+  <template src="desk-overlays"/>
+  <div id="desk-document-content"></div>
+</body>
+</template>

@@ -76,10 +76,10 @@ body.sidebar-hidden .sidebar-resizer, body.right-hidden .right-resizer { display
 .starter-grid { width: 100%; max-width: 840px; height: 126px; margin: 0 auto; display: flex; gap: 14px; }
 .starter-card { flex: 1; min-width: 0; height: 126px; padding: 18px 16px 10px; border-width: 1px; border-color: #e8e6df; border-radius: 16px; background-color: #ffffff; display: flex; flex-direction: column; align-items: center; text-align: center; overflow: hidden; }
 .starter-card:hover { background-color: #fefcfb; border-color: #ebdcd0; }
-.starter-card[data-starter="explore"]:hover { border-color: #0ea5e9; }
-.starter-card[data-starter="build"]:hover { border-color: #a855f7; }
-.starter-card[data-starter="review"]:hover { border-color: #10b981; }
-.starter-card[data-starter="fix"]:hover { border-color: #c86a28; }
+.starter-card[starter-kind="explore"]:hover { border-color: #0ea5e9; }
+.starter-card[starter-kind="build"]:hover { border-color: #a855f7; }
+.starter-card[starter-kind="review"]:hover { border-color: #10b981; }
+.starter-card[starter-kind="fix"]:hover { border-color: #c86a28; }
 .starter-icon { width: 32px; height: 32px; padding: 6px; border-width: 1px; border-radius: 11px; }
 .starter-icon svg { width: 20px; height: 20px; }
 .starter-icon.explore { background-color: #f0f9ff; border-color: #e0f2fe; }

@@ -2,7 +2,6 @@
 
 #include <RmlUi/Core/EventListener.h>
 
-#include "browser/browser_manager.hpp"
 #include "editor/document_store.hpp"
 #include "editor/syntax_service.hpp"
 #include "integration/daemon_client.hpp"
@@ -11,10 +10,14 @@
 #include "review/desktop_change_tracker.hpp"
 #include "state/desk_state_store.hpp"
 #include "state/document_recovery.hpp"
-#include "terminal/terminal_service.hpp"
 #include "ui/elements/element_code_surface.hpp"
 #include "ui/elements/element_file_tree.hpp"
 #include "ui/navigation_model.hpp"
+#include "ui/desk_view_model.hpp"
+#include "ui/modules/browser_controller.hpp"
+#include "ui/modules/settings_controller.hpp"
+#include "ui/modules/desk_renderer.hpp"
+#include "ui/modules/terminal_controller.hpp"
 #include "workspace/workspace_service.hpp"
 #include "tokmon/daemon_lifecycle.hpp"
 
@@ -41,6 +44,7 @@ class SdlPlatform;
 class DeskController final : public Rml::EventListener {
 public:
   DeskController(Rml::ElementDocument& document, SdlPlatform& platform,
+                 DeskViewModel& view_model,
                  std::filesystem::path workspace, DeskAppPaths app_paths,
                  std::filesystem::path daemon_endpoint = {});
   ~DeskController() override;
@@ -81,15 +85,6 @@ private:
   void render_search_results(const std::vector<WorkspaceSearchResult>& results);
   void open_file_operation(std::string operation);
   void confirm_file_operation();
-  void start_terminal();
-  void resize_terminal_to_surface();
-  void paste_terminal(bool allow_unsafe);
-  void send_terminal_input();
-  void search_terminal();
-  void create_terminal_tab();
-  void close_terminal_tab();
-  void select_terminal_tab(std::string_view id);
-  void render_terminal_tabs();
   void send_message();
   void choose_attachment();
   void apply_pending_photons();
@@ -109,16 +104,6 @@ private:
   void update_composer_placeholder();
   void render_slash_commands();
   void select_slash_command(std::size_t index);
-  void launch_browser();
-  void refresh_browser();
-  void back_browser();
-  void forward_browser();
-  void reload_browser();
-  void toggle_browser_takeover();
-  void stop_browser();
-  void click_browser();
-  void fill_browser();
-  void render_browser_state(const BrowserSessionState& state);
   void create_session();
   void preview_file(Rml::Element& row);
   void start_pending_file_load();
@@ -156,26 +141,9 @@ private:
   void finish_intent();
   static std::string escape(std::string_view text);
 
-  struct TerminalTab {
-    std::string id;
-    std::string title;
-    std::unique_ptr<TerminalSession> session;
-    std::unique_ptr<GhosttyVt> vt;
-    TerminalLaunchOptions launch;
-    std::string launch_error;
-    bool started{false};
-    int columns{100};
-    int rows{28};
-    int font_size{13};
-    int cell_width{8};
-    int cell_height{17};
-  };
-  [[nodiscard]] TerminalTab& active_terminal_tab();
-  [[nodiscard]] TerminalSession& terminal_session();
-  [[nodiscard]] GhosttyVt& terminal_vt();
-
   Rml::ElementDocument& document_;
   SdlPlatform& platform_;
+  DeskViewModel& view_model_;
   WorkspaceService workspace_;
   WorkspaceWatcher watcher_;
   GitService git_;
@@ -199,8 +167,11 @@ private:
   };
   std::future<ReviewTaskResult> review_future_;
   bool review_refresh_queued_{false};
-  BrowserManager browser_;
+  BrowserController browser_;
   DeskStateStore state_store_;
+  SettingsController settings_;
+  DeskRenderer renderer_;
+  TerminalController terminal_;
   DocumentRecoveryStore recovery_store_;
   DaemonClient daemon_;
   struct PendingIntent {
@@ -228,9 +199,6 @@ private:
   std::future<WorkspaceSwitchResult> workspace_switch_future_;
   std::optional<tokmon::DaemonClientLease> workspace_lease_;
   bool create_session_after_workspace_switch_{false};
-  std::future<BrowserSessionState> browser_future_;
-  std::string browser_session_{"tokmon-desk"};
-  bool browser_takeover_{false};
   DocumentStore documents_;
   struct RecoveryTaskResult {
     bool success{false};
@@ -259,16 +227,8 @@ private:
   std::future<SyntaxTaskResult> syntax_future_;
   std::optional<SyntaxTaskRequest> pending_syntax_;
   std::uint64_t syntax_generation_{0};
-  MarkdownParser markdown_;
   NavigationModel navigation_;
   bool navigation_loaded_{false};
-  tokmon::cbor::Value settings_values_{tokmon::cbor::Value::Map{}};
-  tokmon::cbor::Value providers_payload_{tokmon::cbor::Value::Map{}};
-  std::string settings_page_{"general"};
-  std::string selected_provider_;
-  std::string selected_model_;
-  std::string selected_effort_{"高"};
-  std::string selected_access_{"full"};
   bool pending_automatic_title_{false};
   struct FileSearchTaskResult {
     std::uint64_t generation{0};
@@ -314,9 +274,6 @@ private:
   std::size_t pending_discard_hunk_{0};
   bool pending_discard_file_{false};
   std::uint64_t pending_discard_hash_{0};
-  std::vector<std::unique_ptr<TerminalTab>> terminal_tabs_;
-  std::size_t active_terminal_index_{0};
-  std::uint64_t next_terminal_id_{1};
   std::mutex photon_mutex_;
   std::vector<tokmon::Photon> pending_photons_;
   std::vector<tokmon::Photon> photons_;
@@ -331,7 +288,6 @@ private:
   std::size_t slash_command_index_{0};
   std::size_t slash_command_count_{0};
   enum class HeavyFocus { none, editor, terminal } heavy_focus_{HeavyFocus::none};
-  bool terminal_mouse_down_{false};
   enum class PanelResize { none, sidebar, right } panel_resize_{PanelResize::none};
   float panel_resize_anchor_x_{0.f};
   int panel_resize_start_width_{0};
@@ -340,8 +296,6 @@ private:
   bool sidebar_visible_{true};
   bool right_panel_visible_{true};
   std::string active_right_view_{"launcher"};
-  std::string pending_terminal_keydown_text_;
-  std::string pending_terminal_paste_;
   struct AttachmentDialogState {
     std::mutex mutex;
     std::filesystem::path selected;

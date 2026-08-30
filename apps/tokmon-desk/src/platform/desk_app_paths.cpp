@@ -13,10 +13,12 @@
 namespace tokmon::desk {
 namespace {
 
+#if !defined(_WIN32)
 std::filesystem::path environment_path(const char* name) {
   const auto* value = std::getenv(name);
   return value && *value ? std::filesystem::path(value) : std::filesystem::path{};
 }
+#endif
 
 bool is_within(const std::filesystem::path& child, const std::filesystem::path& parent) {
   if (parent.empty())
@@ -34,8 +36,17 @@ bool is_within(const std::filesystem::path& child, const std::filesystem::path& 
 
 } // namespace
 
-DeskAppPaths DeskAppPaths::resolve() {
+DeskAppPaths DeskAppPaths::resolve(
+    const std::filesystem::path& override_root) {
   DeskAppPaths paths;
+  if (!override_root.empty()) {
+    const auto base = std::filesystem::absolute(override_root).lexically_normal();
+    paths.config = base / "config";
+    paths.data = base / "data";
+    paths.state = base / "state";
+    paths.cache = base / "cache";
+    paths.logs = base / "logs";
+  } else {
 #if defined(_WIN32)
   PWSTR raw = nullptr;
   if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_DEFAULT, nullptr, &raw)))
@@ -71,6 +82,7 @@ DeskAppPaths DeskAppPaths::resolve() {
   paths.cache = (cache_home.empty() ? home / ".cache" : cache_home) / "tokmon-desk";
   paths.logs = paths.state / "logs";
 #endif
+  }
   paths.runtime = paths.state / "runtime";
   paths.recovery = paths.state / "recovery";
   paths.change_snapshots = paths.data / "change-snapshots";

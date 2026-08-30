@@ -20,9 +20,9 @@
 #include <algorithm>
 #include <cctype>
 #include <ranges>
-#include <sstream>
 #include <iostream>
 #include <fstream>
+#include <limits>
 
 namespace tokmon::desk {
 namespace {
@@ -79,26 +79,12 @@ std::string cbor_string(const tokmon::cbor::Value& values,
       ? std::string(value->as_string()) : std::string(fallback);
 }
 
-bool cbor_bool(const tokmon::cbor::Value& values, const std::string_view key,
-               const bool fallback) {
-  const auto* value = tokmon::cbor::find(values, key);
-  return value && std::holds_alternative<bool>(value->data)
-      ? value->as_bool() : fallback;
-}
-
 std::int64_t cbor_integer(const tokmon::cbor::Value& values,
                           const std::string_view key,
                           const std::int64_t fallback) {
   const auto* value = tokmon::cbor::find(values, key);
   return value && std::holds_alternative<std::int64_t>(value->data)
       ? value->as_integer() : fallback;
-}
-
-void set_cbor(tokmon::cbor::Value& values, std::string key,
-              tokmon::cbor::Value value) {
-  if (!values.as_map())
-    values = tokmon::cbor::Value::Map{};
-  (*values.as_map())[std::move(key)] = std::move(value);
 }
 
 tokmon::cbor::Value select_cbor_keys(
@@ -109,38 +95,6 @@ tokmon::cbor::Value select_cbor_keys(
     if (const auto* value = tokmon::cbor::find(source, key))
       result.emplace(std::string(key), *value);
   return result;
-}
-
-void merge_cbor_map(tokmon::cbor::Value& destination,
-                    const tokmon::cbor::Value& source) {
-  if (!destination.as_map())
-    destination = tokmon::cbor::Value::Map{};
-  if (!source.as_map())
-    return;
-  for (const auto& [key, value] : *source.as_map())
-    destination.as_map()->insert_or_assign(key, value);
-}
-
-tokmon::cbor::Value default_desktop_settings(const int ui_scale = 100) {
-  return tokmon::cbor::object({
-      {"language", "简体中文"}, {"startup", "首页"},
-      {"autosave", "5 分钟"}, {"update_channel", "稳定版"},
-      {"index_mode", "标准"}, {"workspace_sync", true}, {"git", true},
-      {"notifications", true}, {"desktop_notifications", true},
-      {"message_alerts", true}, {"quiet_hours", "关闭"},
-      {"density", "舒适"}, {"font_scale", static_cast<std::int64_t>(100)},
-      {"ui_scale", static_cast<std::int64_t>(ui_scale)}, {"nickname", ""},
-      {"email", ""}, {"cloud_sync", false}, {"sidebar_visible", true},
-      {"right_panel_visible", true},
-      {"sidebar_width", static_cast<std::int64_t>(240)},
-      {"right_panel_width", static_cast<std::int64_t>(214)},
-      {"layout_revision", static_cast<std::int64_t>(2)},
-      {"navigation_revision", static_cast<std::int64_t>(2)},
-      {"last_workspace", ""},
-      {"terminal_profile", "auto"},
-      {"terminal_executable", ""}, {"terminal_arguments", ""},
-      {"terminal_font_size", static_cast<std::int64_t>(13)},
-      {"terminal_scrollback", static_cast<std::int64_t>(10000)}});
 }
 
 std::vector<DeskNavigationItem> legacy_navigation_seed(
@@ -175,29 +129,6 @@ std::vector<DeskNavigationItem> legacy_navigation_seed(
   add("演讲稿润色", "session", 2, false);
   add("旅行计划", "group", 0, false);
   return items;
-}
-
-void normalize_legacy_settings(tokmon::cbor::Value& values) {
-  const auto normalize_boolean = [&values](const char* key,
-                                           const char* enabled,
-                                           const char* disabled) {
-    const auto* value = tokmon::cbor::find(values, key);
-    if (value && std::holds_alternative<bool>(value->data))
-      set_cbor(values, key, value->as_bool() ? enabled : disabled);
-  };
-  normalize_boolean("autosave", "5 分钟", "关闭");
-  normalize_boolean("quiet_hours", "22:00 - 08:00", "关闭");
-
-  const auto normalize_alias = [&values](const char* key,
-                                         const std::string_view legacy,
-                                         const char* current) {
-    const auto* value = tokmon::cbor::find(values, key);
-    if (value && value->as_string() == legacy)
-      set_cbor(values, key, current);
-  };
-  normalize_alias("startup", "恢复上次会话", "上次打开的会话");
-  normalize_alias("command_approval", "高风险操作时询问", "按需确认");
-  normalize_alias("file_access", "工作区", "仅工作区");
 }
 
 bool same_workspace(const std::filesystem::path& left,
@@ -274,123 +205,27 @@ std::vector<tokmon::Photon> response_photons(
   return result;
 }
 
-std::string payload_text(const tokmon::Photon& photon) {
-  if (const auto* value = tokmon::cbor::find(photon.payload, "text"))
-    return std::string(value->as_string());
-  return {};
-}
-
-std::uint16_t terminal_modifiers(const SDL_Keymod value) {
-  std::uint16_t result = 0;
-  if (value & SDL_KMOD_SHIFT) result |= terminal_shift;
-  if (value & SDL_KMOD_CTRL) result |= terminal_ctrl;
-  if (value & SDL_KMOD_ALT) result |= terminal_alt;
-  if (value & SDL_KMOD_GUI) result |= terminal_super;
-  if (value & SDL_KMOD_CAPS) result |= terminal_caps_lock;
-  if (value & SDL_KMOD_NUM) result |= terminal_num_lock;
-  return result;
-}
-
-TerminalKey terminal_key(const SDL_Keycode value) {
-  if (value >= SDLK_A && value <= SDLK_Z)
-    return static_cast<TerminalKey>(
-        static_cast<int>(TerminalKey::key_a) + (value - SDLK_A));
-  if (value >= SDLK_0 && value <= SDLK_9)
-    return static_cast<TerminalKey>(
-        static_cast<int>(TerminalKey::digit_0) + (value - SDLK_0));
-  switch (value) {
-    case SDLK_RETURN: case SDLK_KP_ENTER: return TerminalKey::enter;
-    case SDLK_BACKSPACE: return TerminalKey::backspace;
-    case SDLK_TAB: return TerminalKey::tab;
-    case SDLK_ESCAPE: return TerminalKey::escape;
-    case SDLK_SPACE: return TerminalKey::space;
-    case SDLK_LEFT: return TerminalKey::left;
-    case SDLK_RIGHT: return TerminalKey::right;
-    case SDLK_UP: return TerminalKey::up;
-    case SDLK_DOWN: return TerminalKey::down;
-    case SDLK_HOME: return TerminalKey::home;
-    case SDLK_END: return TerminalKey::end;
-    case SDLK_PAGEUP: return TerminalKey::page_up;
-    case SDLK_PAGEDOWN: return TerminalKey::page_down;
-    case SDLK_INSERT: return TerminalKey::insert_key;
-    case SDLK_DELETE: return TerminalKey::delete_key;
-    case SDLK_F1: return TerminalKey::f1;
-    case SDLK_F2: return TerminalKey::f2;
-    case SDLK_F3: return TerminalKey::f3;
-    case SDLK_F4: return TerminalKey::f4;
-    case SDLK_F5: return TerminalKey::f5;
-    case SDLK_F6: return TerminalKey::f6;
-    case SDLK_F7: return TerminalKey::f7;
-    case SDLK_F8: return TerminalKey::f8;
-    case SDLK_F9: return TerminalKey::f9;
-    case SDLK_F10: return TerminalKey::f10;
-    case SDLK_F11: return TerminalKey::f11;
-    case SDLK_F12: return TerminalKey::f12;
-    default: return TerminalKey::unidentified;
-  }
-}
-
-std::string key_text(const SDL_Keycode value) {
-  if (value >= SDLK_A && value <= SDLK_Z)
-    return std::string(1, static_cast<char>('a' + value - SDLK_A));
-  if (value >= SDLK_0 && value <= SDLK_9)
-    return std::string(1, static_cast<char>('0' + value - SDLK_0));
-  if (value == SDLK_SPACE)
-    return " ";
-  return {};
-}
-
-std::string printable_key_text(const SDL_Keycode value,
-                               const SDL_Keymod modifiers) {
-  const bool shift = (modifiers & SDL_KMOD_SHIFT) != 0;
-  const bool caps = (modifiers & SDL_KMOD_CAPS) != 0;
-  if (value >= SDLK_A && value <= SDLK_Z) {
-    char character = static_cast<char>('a' + value - SDLK_A);
-    if (shift != caps)
-      character = static_cast<char>(std::toupper(
-          static_cast<unsigned char>(character)));
-    return std::string(1, character);
-  }
-  if (value >= SDLK_0 && value <= SDLK_9) {
-    constexpr std::string_view shifted = ")!@#$%^&*(";
-    return std::string(1, shift ? shifted[static_cast<std::size_t>(
-                                          value - SDLK_0)]
-                                : static_cast<char>('0' + value - SDLK_0));
-  }
-  switch (value) {
-    case SDLK_SPACE: return " ";
-    case SDLK_MINUS: return shift ? "_" : "-";
-    case SDLK_EQUALS: return shift ? "+" : "=";
-    case SDLK_LEFTBRACKET: return shift ? "{" : "[";
-    case SDLK_RIGHTBRACKET: return shift ? "}" : "]";
-    case SDLK_BACKSLASH: return shift ? "|" : "\\";
-    case SDLK_SEMICOLON: return shift ? ":" : ";";
-    case SDLK_APOSTROPHE: return shift ? "\"" : "'";
-    case SDLK_GRAVE: return shift ? "~" : "`";
-    case SDLK_COMMA: return shift ? "<" : ",";
-    case SDLK_PERIOD: return shift ? ">" : ".";
-    case SDLK_SLASH: return shift ? "?" : "/";
-    default: return {};
-  }
-}
-
 } // namespace
 
 DeskController::DeskController(Rml::ElementDocument& document, SdlPlatform& platform,
+                               DeskViewModel& view_model,
                                std::filesystem::path workspace,
                                DeskAppPaths app_paths,
                                std::filesystem::path daemon_endpoint)
-    : document_(document), platform_(platform), workspace_(workspace),
+    : document_(document), platform_(platform), view_model_(view_model),
+      workspace_(workspace),
       watcher_(workspace), git_(workspace),
       change_tracker_(workspace, app_paths.change_snapshots),
-      browser_(app_paths.data),
-      state_store_(app_paths), recovery_store_(app_paths.recovery),
+      browser_(app_paths.data, view_model),
+      state_store_(app_paths),
+      settings_(view_model, browser_, platform.default_content_scale_percent()),
+      renderer_(view_model),
+      terminal_(platform, view_model, settings_, workspace),
+      recovery_store_(app_paths.recovery),
       daemon_(std::move(daemon_endpoint)), navigation_(workspace) {}
 
 DeskController::~DeskController() {
   platform_.set_raw_event_handler({});
-  for (auto& tab : terminal_tabs_)
-    tab->session->stop();
   if (file_load_future_.valid())
     file_load_future_.wait();
   if (syntax_future_.valid())
@@ -406,30 +241,16 @@ DeskController::~DeskController() {
   }
 }
 
-DeskController::TerminalTab& DeskController::active_terminal_tab() {
-  if (terminal_tabs_.empty())
-    create_terminal_tab();
-  active_terminal_index_ = std::min(active_terminal_index_,
-                                    terminal_tabs_.size() - 1);
-  return *terminal_tabs_[active_terminal_index_];
-}
-
-TerminalSession& DeskController::terminal_session() {
-  return *active_terminal_tab().session;
-}
-
-GhosttyVt& DeskController::terminal_vt() {
-  return *active_terminal_tab().vt;
-}
-
 void DeskController::listen(const char* id, const char* event) {
   if (auto* element = document_.GetElementById(id))
     element->AddEventListener(event, this);
 }
 
 void DeskController::bind(const bool start_background_work) {
+  browser_.attach(document_);
+  terminal_.attach(document_);
   for (const char* id : {"new-session-button", "settings-button", "close-settings",
-                         "save-settings", "reset-settings", "new-session-overlay", "close-new-session",
+                         "save-settings", "reset-settings", "close-new-session",
                          "cancel-new-session", "confirm-new-session", "environment-toggle",
                          "environment-close", "environment-refresh", "environment-settings",
                          "thought-toggle", "workflow-toggle", "sidebar-toggle", "right-toggle",
@@ -490,51 +311,52 @@ void DeskController::bind(const bool start_background_work) {
   listen("terminal-search", "change");
   listen("terminal-search", "keyup");
   listen("terminal-search");
+  for (const char* id : {"navigation-tree", "review-empty", "review-diff",
+                         "branch-menu", "terminal-tabs", "settings-body",
+                         "composer-popover", "trajectory"})
+    listen(id);
   Rml::ElementList settings_navigation;
-  document_.QuerySelectorAll(settings_navigation, "[data-page]");
+  document_.QuerySelectorAll(settings_navigation, "[setting-page]");
   for (auto* item : settings_navigation)
     item->AddEventListener("click", this);
   Rml::ElementList starter_cards;
-  document_.QuerySelectorAll(starter_cards, "[data-starter]");
+  document_.QuerySelectorAll(starter_cards, "[starter-kind]");
   for (auto* item : starter_cards)
     item->AddEventListener("click", this);
   std::string local_warning;
-  settings_values_ = default_desktop_settings(
-      platform_.default_content_scale_percent());
   const auto stored_settings = state_store_.load_settings(local_warning);
-  merge_cbor_map(settings_values_, stored_settings);
-  normalize_legacy_settings(settings_values_);
+  settings_.load(stored_settings);
   const bool migrate_legacy_shell =
       cbor_integer(stored_settings, "layout_revision", 0) < 2;
   const bool migrate_legacy_navigation =
       cbor_integer(stored_settings, "navigation_revision", 0) < 2;
   const auto current_workspace = workspace_.root().generic_string();
   const auto* stored_workspace =
-      tokmon::cbor::find(settings_values_, "last_workspace");
+      tokmon::cbor::find(settings_.values(), "last_workspace");
   const bool remember_workspace =
       !stored_workspace || stored_workspace->as_string() != current_workspace;
   if (remember_workspace)
-    set_cbor(settings_values_, "last_workspace", current_workspace);
+    settings_.set("last_workspace", current_workspace);
   sidebar_width_ = static_cast<int>(std::clamp<std::int64_t>(
-      cbor_integer(settings_values_, "sidebar_width", 240), 196, 420));
+      settings_.integer("sidebar_width", 240), 196, 420));
   right_panel_width_ = static_cast<int>(std::clamp<std::int64_t>(
       migrate_legacy_shell
           ? 214
-          : cbor_integer(settings_values_, "right_panel_width", 214),
+          : settings_.integer("right_panel_width", 214),
       214, 720));
   if (migrate_legacy_shell || remember_workspace) {
-    set_cbor(settings_values_, "right_panel_width",
-             static_cast<std::int64_t>(right_panel_width_));
-    set_cbor(settings_values_, "layout_revision", static_cast<std::int64_t>(2));
+    settings_.set("right_panel_width",
+                  static_cast<std::int64_t>(right_panel_width_));
+    settings_.set("layout_revision", static_cast<std::int64_t>(2));
   }
   if (migrate_legacy_navigation)
-    set_cbor(settings_values_, "navigation_revision", static_cast<std::int64_t>(2));
-  sidebar_visible_ = cbor_bool(settings_values_, "sidebar_visible", true);
+    settings_.set("navigation_revision", static_cast<std::int64_t>(2));
+  sidebar_visible_ = settings_.boolean("sidebar_visible", true);
   // The frozen legacy screenshot and the prototype both show the panel-open
   // launcher state: no feature tab is selected until the user picks one.
   right_panel_visible_ = true;
   active_right_view_ = "launcher";
-  set_cbor(settings_values_, "right_panel_visible", true);
+  settings_.set("right_panel_visible", true);
   apply_panel_layout();
   show_right_launcher();
   std::string navigation_warning;
@@ -571,20 +393,20 @@ void DeskController::bind(const bool start_background_work) {
       local_warning = migration_error;
   }
   if (!local_warning.empty())
-    text(document_, "settings-status", escape(local_warning));
+    settings_.set_status(local_warning);
   navigation_loaded_ = true;
   if (!navigation_warning.empty())
     text(document_, "daemon-status", escape(navigation_warning));
 
   const auto workspace_name = workspace_.root().filename().string();
-  create_terminal_tab();
-  text(document_, "starter-workspace-name", escape(workspace_name));
-  text(document_, "composer-workspace-name", escape(workspace_name));
-  text(document_, "workspace-path", escape(workspace_.root().string()));
+  auto& shell_view = view_model_.state();
+  shell_view.workspace_name = workspace_name;
+  shell_view.workspace_path = workspace_.root().generic_string();
+  shell_view.settings.workspace_path = shell_view.workspace_path;
+  shell_view.branch = "正在读取 Git…";
+  view_model_.dirty();
   text(document_, "environment-index",
        seeded_legacy_navigation ? "已恢复旧版导航" : "正在读取…");
-  if (auto* branch = document_.QuerySelector(".workspace-context .branch"))
-    branch->SetInnerRML("正在读取 Git…");
   auto* selected_navigation = navigation_.selected();
   if (navigation_.items().empty() || !selected_navigation ||
       !same_workspace(navigation_.selected_workspace(), workspace_.root())) {
@@ -595,7 +417,7 @@ void DeskController::bind(const bool start_background_work) {
   }
   if (selected_navigation) {
     active_ray_ = selected_navigation->ray;
-    text(document_, "session-title", escape(selected_navigation->title));
+    view_model_.state().session_title = selected_navigation->title;
   }
   render_navigation();
   if (start_background_work) {
@@ -660,24 +482,23 @@ void DeskController::apply_panel_layout() {
 
 void DeskController::set_sidebar_visible(const bool visible) {
   sidebar_visible_ = visible;
-  set_cbor(settings_values_, "sidebar_visible", visible);
+  settings_.set("sidebar_visible", visible);
   apply_panel_layout();
 }
 
 void DeskController::set_right_panel_visible(const bool visible) {
   right_panel_visible_ = visible;
-  set_cbor(settings_values_, "right_panel_visible", visible);
+  settings_.set("right_panel_visible", visible);
   apply_panel_layout();
 }
 
 bool DeskController::save_local_settings(std::string& error) {
-  set_cbor(settings_values_, "sidebar_visible", sidebar_visible_);
-  set_cbor(settings_values_, "right_panel_visible", right_panel_visible_);
-  set_cbor(settings_values_, "sidebar_width",
-           static_cast<std::int64_t>(sidebar_width_));
-  set_cbor(settings_values_, "right_panel_width",
-           static_cast<std::int64_t>(right_panel_width_));
-  return state_store_.save_settings(select_cbor_keys(settings_values_, {
+  settings_.set("sidebar_visible", sidebar_visible_);
+  settings_.set("right_panel_visible", right_panel_visible_);
+  settings_.set("sidebar_width", static_cast<std::int64_t>(sidebar_width_));
+  settings_.set("right_panel_width",
+                static_cast<std::int64_t>(right_panel_width_));
+  return state_store_.save_settings(select_cbor_keys(settings_.values(), {
       "language", "startup", "autosave", "update_channel", "index_mode",
       "workspace_sync", "git", "notifications", "desktop_notifications",
       "message_alerts", "quiet_hours", "density", "font_scale", "ui_scale",
@@ -714,8 +535,7 @@ void DeskController::show_right_view(const char* id) {
   if (std::string_view(id) != "terminal-view" &&
       heavy_focus_ != HeavyFocus::none) {
     heavy_focus_ = HeavyFocus::none;
-    pending_terminal_keydown_text_.clear();
-    platform_.DeactivateKeyboard();
+    terminal_.release_focus();
   }
   set_right_panel_visible(true);
   active_right_view_ = id;
@@ -735,11 +555,10 @@ void DeskController::show_right_view(const char* id) {
     if (std::string_view(view) == id)
       text(document_, "active-right-label", label);
   if (auto* icon = document_.GetElementById("active-right-icon")) {
-    const char* source = std::string_view(id) == "review-view"
-        ? "../../assets/figma/icon-51.svg"
-        : std::string_view(id) == "files-view"
-              ? "../../assets/figma/icon-18.svg"
-              : "../../assets/figma/icon-19.svg";
+    const auto source = view_model_.state().asset_root +
+        (std::string_view(id) == "review-view" ? "/figma/icon-51.svg" :
+         std::string_view(id) == "files-view" ? "/figma/icon-18.svg" :
+                                                "/figma/icon-19.svg");
     icon->SetAttribute("src", source);
   }
 }
@@ -749,8 +568,7 @@ void DeskController::refresh_review() {
     review_refresh_queued_ = true;
     return;
   }
-  if (auto* empty = document_.GetElementById("review-empty"))
-    empty->SetInnerRML("<strong>正在刷新更改…</strong><span>Git 状态在工作线程读取</span>");
+  renderer_.review_loading();
   const auto root = workspace_.root();
   review_future_ = std::async(std::launch::async, [root] {
     ReviewTaskResult result;
@@ -763,54 +581,11 @@ void DeskController::refresh_review() {
 }
 
 void DeskController::render_review_snapshot(const GitSnapshot& snapshot) {
+  renderer_.review(snapshot);
   const auto branch_name = snapshot.branch.empty() ? "workspace" : snapshot.branch;
-  if (auto* branch = document_.GetElementById("branch-button"))
-    branch->SetInnerRML("⑂ " + escape(branch_name) + "⌄");
-  text(document_, "environment-branch", escape(branch_name));
+  text(document_, "environment-branch", branch_name);
   text(document_, "environment-change-count",
        std::to_string(snapshot.files.size()) + " 个文件");
-  if (auto* count = document_.QuerySelector(".count-pill"))
-    count->SetInnerRML(std::to_string(snapshot.files.size()));
-  auto* empty = document_.GetElementById("review-empty");
-  if (!empty) return;
-  if (!snapshot.repository) {
-    empty->SetInnerRML("<strong>当前工作区不是 Git 仓库</strong><span>" + escape(snapshot.error) + "</span>");
-    return;
-  }
-  if (snapshot.files.empty()) {
-    empty->SetInnerRML("<strong>没有待审查的更改</strong><span>工作区修改会在这里显示</span>");
-    return;
-  }
-  std::ostringstream rml;
-  rml << "<div class='change-list'>";
-  for (const auto& file : snapshot.files) {
-    const bool worktree = file.worktree_status != ' ';
-    const bool staged = file.index_status != ' ';
-    rml << "<div class='change-row'><button class='change-open' data-diff-path='"
-        << escape(file.path) << "' data-diff-staged='" << (worktree ? "0" : "1")
-        << "'><code>" << file.index_status << file.worktree_status
-        << "</code><span>" << escape(file.path) << "</span></button>";
-    if (worktree)
-      rml << "<button class='change-action' data-git-action='stage-file' data-git-path='"
-          << escape(file.path) << "'>＋</button>";
-    if (staged)
-      rml << "<button class='change-action' data-git-action='unstage-file' data-git-path='"
-          << escape(file.path) << "'>−</button>";
-    if (worktree)
-      rml << "<button class='change-action danger' data-git-action='discard-file' data-git-path='"
-          << escape(file.path) << "'>↶</button>";
-    rml << "</div>";
-  }
-  rml << "</div>";
-  empty->SetInnerRML(rml.str());
-  Rml::ElementList rows;
-  empty->QuerySelectorAll(rows, "[data-diff-path]");
-  for (auto* row : rows)
-    row->AddEventListener("click", this);
-  Rml::ElementList actions;
-  empty->QuerySelectorAll(actions, "[data-git-action]");
-  for (auto* action : actions)
-    action->AddEventListener("click", this);
 }
 
 void DeskController::apply_review_task() {
@@ -822,25 +597,7 @@ void DeskController::apply_review_task() {
   if (result.kind == ReviewTaskResult::Kind::status) {
     render_review_snapshot(result.snapshot);
   } else if (result.kind == ReviewTaskResult::Kind::branches) {
-    auto* menu = document_.GetElementById("branch-menu");
-    if (menu) {
-      std::ostringstream rml;
-      rml << "<strong>切换 Git 分支</strong>";
-      for (const auto& branch : result.branches)
-        rml << "<button data-git-branch='" << escape(branch) << "'"
-            << (branch == result.snapshot.branch ? " class='active'" : "")
-            << ">" << (branch == result.snapshot.branch ? "✓ " : "")
-            << escape(branch) << "</button>";
-      if (result.branches.empty())
-        rml << "<span>" << escape(result.error.empty() ? "没有本地分支"
-                                                        : result.error)
-            << "</span>";
-      menu->SetInnerRML(rml.str());
-      Rml::ElementList choices;
-      menu->QuerySelectorAll(choices, "[data-git-branch]");
-      for (auto* choice : choices)
-        choice->AddEventListener("click", this);
-    }
+    renderer_.branches(result.branches, result.snapshot.branch, result.error);
   } else if (result.kind == ReviewTaskResult::Kind::checkout) {
     if (result.success) {
       if (auto* menu = document_.GetElementById("branch-menu"))
@@ -853,48 +610,16 @@ void DeskController::apply_review_task() {
       show_toast(result.error);
     }
   } else if (result.kind == ReviewTaskResult::Kind::diff) {
-    auto* view = document_.GetElementById("review-diff");
-    if (view && result.diff) {
-      std::ostringstream rml;
-      rml << "<div class='diff-header'><button id='close-diff' title='返回更改列表'>"
-             "‹ 更改列表</button><strong>" << escape(result.path)
-          << "</strong><span>" << (result.staged ? "已暂存" : "工作区")
-          << " · " << result.diff->hunks.size() << " 个修改块 · "
-          << result.diff->patch.size() << " bytes</span></div>"
-          << "<div class='diff-hunk-actions'>";
-      for (const auto& hunk : result.diff->hunks) {
-        rml << "<button data-git-action='"
-            << (result.staged ? "unstage-hunk" : "stage-hunk")
-            << "' data-git-path='" << escape(result.path)
-            << "' data-git-hunk='" << hunk.index << "'>"
-            << escape(hunk.header) << " · "
-            << (result.staged ? "取消暂存" : "暂存") << "</button>";
-        if (!result.staged)
-          rml << "<button class='danger' data-git-action='discard-hunk' "
-                 "data-git-path='" << escape(result.path)
-              << "' data-git-hunk='" << hunk.index
-              << "'>放弃修改块</button>";
-      }
-      rml << "</div><tokmon-diff-surface id='diff-surface' class='diff-surface' "
-             "tab-index='0'></tokmon-diff-surface>";
-      view->SetInnerRML(rml.str());
-      view->SetClass("virtual", true);
-      view->SetClass("hidden", false);
+    if (result.diff) {
+      renderer_.diff(*result.diff, result.path, result.staged);
       if (auto* surface = dynamic_cast<ElementDiffSurface*>(
               document_.GetElementById("diff-surface"))) {
         surface->set_diff(*result.diff);
         surface->set_split_view(diff_split_view_);
         surface->AddEventListener("mousescroll", this);
       }
-      Rml::ElementList actions;
-      view->QuerySelectorAll(actions, "[data-git-action]");
-      for (auto* action : actions)
-        action->AddEventListener("click", this);
-      listen("close-diff");
-    } else if (view) {
-      view->SetInnerRML("<div class='diff-error'>" + escape(result.error) +
-                        "</div>");
-    }
+    } else
+      renderer_.diff_error(result.error);
   } else if (result.kind == ReviewTaskResult::Kind::mutation &&
              result.operation.starts_with("discard-")) {
     if (!result.success) {
@@ -917,30 +642,30 @@ void DeskController::apply_review_task() {
     } else {
       render_review_snapshot(result.snapshot);
       current_diff_path_.clear();
-      if (auto* view = document_.GetElementById("review-diff")) {
-        view->SetInnerRML({});
-        view->SetClass("hidden", true);
-      }
+      renderer_.close_diff();
     }
   } else if (result.kind == ReviewTaskResult::Kind::commit) {
     if (!result.success) {
-      text(document_, "review-empty", escape(result.error));
+      auto& view = view_model_.state();
+      view.review_has_files = false;
+      view.review_title = "提交失败";
+      view.review_detail = result.error;
+      view_model_.dirty();
     } else {
       if (auto* overlay = document_.GetElementById("commit-overlay"))
         overlay->SetClass("hidden", true);
-      if (auto* diff = document_.GetElementById("review-diff"))
-        diff->SetClass("hidden", true);
+      renderer_.close_diff();
       show_toast(result.push_requested ? "已提交并推送" : "已创建提交");
       render_review_snapshot(result.snapshot);
     }
   }
   if (result.snapshot.repository) {
-    if (auto* branch = document_.QuerySelector(".workspace-context .branch"))
-      branch->SetInnerRML(escape(result.snapshot.branch.empty()
-                                     ? "无 Git" : result.snapshot.branch));
+    view_model_.state().branch = result.snapshot.branch.empty()
+        ? "无 Git" : result.snapshot.branch;
+    view_model_.dirty();
   } else if (result.kind == ReviewTaskResult::Kind::status) {
-    if (auto* branch = document_.QuerySelector(".workspace-context .branch"))
-      branch->SetInnerRML("无 Git");
+    view_model_.state().branch = "无 Git";
+    view_model_.dirty();
   }
   if (review_refresh_queued_) {
     review_refresh_queued_ = false;
@@ -960,7 +685,7 @@ void DeskController::toggle_branch_menu() {
     show_toast("另一个 Git 操作仍在执行");
     return;
   }
-  menu->SetInnerRML("<strong>正在读取分支…</strong>");
+  renderer_.branch_loading();
   menu->SetClass("hidden", false);
   const auto root = workspace_.root();
   review_future_ = std::async(std::launch::async, [root] {
@@ -975,7 +700,7 @@ void DeskController::toggle_branch_menu() {
 }
 
 void DeskController::switch_branch(Rml::Element& element) {
-  const auto branch = element.GetAttribute<Rml::String>("data-git-branch", "");
+  const auto branch = element.GetAttribute<Rml::String>("git-branch", "");
   if (branch.empty())
     return;
   if (review_future_.valid()) {
@@ -993,8 +718,7 @@ void DeskController::switch_branch(Rml::Element& element) {
         result.snapshot = service.status();
         return result;
       });
-  if (auto* menu = document_.GetElementById("branch-menu"))
-    menu->SetInnerRML("<strong>正在切换分支…</strong>");
+  renderer_.branch_loading();
 }
 
 void DeskController::refresh_files() {
@@ -1258,206 +982,6 @@ void DeskController::confirm_file_operation() {
   show_toast("工作区文件操作已完成");
 }
 
-void DeskController::start_terminal() {
-  auto& tab = active_terminal_tab();
-  if (tab.started && tab.session->running()) return;
-  if (!tab.launch_error.empty() || tab.launch.executable.empty()) {
-    text(document_, "terminal-status",
-         escape("不可用：" + (tab.launch_error.empty()
-                    ? std::string("未配置可执行文件") : tab.launch_error)));
-    return;
-  }
-  std::string error;
-  auto* session = tab.session.get();
-  tab.vt->set_response_sink([session](const std::string_view response) {
-    std::string ignored;
-    (void)session->write(response, ignored);
-  });
-  (void)tab.vt->resize(tab.columns, tab.rows, tab.cell_width, tab.cell_height);
-  tab.started = tab.session->start_profile(tab.launch, workspace_.root(),
-                                           tab.columns, tab.rows, error);
-  if (!tab.started)
-    text(document_, "terminal-status", escape("不可用：" + error));
-  else {
-    text(document_, "terminal-status", "正在运行");
-    resize_terminal_to_surface();
-  }
-}
-
-void DeskController::resize_terminal_to_surface() {
-  auto* surface = dynamic_cast<ElementTerminal*>(
-      document_.GetElementById("terminal-surface"));
-  if (!surface)
-    return;
-  auto& tab = active_terminal_tab();
-  const auto columns = std::clamp(
-      static_cast<int>(surface->GetClientWidth() /
-                       static_cast<float>(tab.cell_width)), 20, 400);
-  const auto rows = std::clamp(
-      static_cast<int>(surface->GetClientHeight() /
-                       static_cast<float>(tab.cell_height)), 5, 200);
-  if (columns == tab.columns && rows == tab.rows)
-    return;
-  tab.columns = columns;
-  tab.rows = rows;
-  std::string error;
-  if (tab.started && !tab.session->resize(columns, rows, error))
-    tab.vt->append("\r\n" + error + "\r\n");
-  (void)tab.vt->resize(columns, rows, tab.cell_width, tab.cell_height);
-  surface->set_snapshot(tab.vt->render_snapshot());
-}
-
-void DeskController::paste_terminal(const bool allow_unsafe) {
-  if (!active_terminal_tab().started)
-    start_terminal();
-  if (pending_terminal_paste_.empty()) {
-    Rml::String clipboard;
-    platform_.GetClipboardText(clipboard);
-    pending_terminal_paste_ = clipboard;
-  }
-  if (pending_terminal_paste_.empty())
-    return;
-  const auto result = terminal_vt().paste(pending_terminal_paste_, allow_unsafe);
-  if (result == TerminalPasteResult::unsafe) {
-    if (auto* overlay = document_.GetElementById("terminal-paste-overlay"))
-      overlay->SetClass("hidden", false);
-    return;
-  }
-  if (result == TerminalPasteResult::failed)
-    terminal_vt().append("\r\nTerminal paste failed\r\n");
-  pending_terminal_paste_.clear();
-  if (auto* overlay = document_.GetElementById("terminal-paste-overlay"))
-    overlay->SetClass("hidden", true);
-}
-
-void DeskController::send_terminal_input() {
-  auto* input = control(document_, "terminal-input");
-  if (!input || input->GetValue().empty()) return;
-  std::string error;
-  const auto command = input->GetValue() + "\r\n";
-  if (!terminal_session().write(command, error))
-    terminal_vt().append("\n" + error + "\n");
-  input->SetValue("");
-}
-
-void DeskController::search_terminal() {
-  auto* surface = dynamic_cast<ElementTerminal*>(
-      document_.GetElementById("terminal-surface"));
-  auto* input = control(document_, "terminal-search");
-  if (!surface || !input)
-    return;
-  surface->set_search(input->GetValue());
-  text(document_, "terminal-search-count",
-       input->GetValue().empty()
-           ? std::string{}
-           : std::to_string(surface->search_match_count()) + " 个");
-}
-
-void DeskController::create_terminal_tab() {
-  auto tab = std::make_unique<TerminalTab>();
-  tab->id = "terminal-" + std::to_string(next_terminal_id_++);
-  const auto profile_id = cbor_string(settings_values_, "terminal_profile", "auto");
-  tab->font_size = static_cast<int>(std::clamp<std::int64_t>(
-      cbor_integer(settings_values_, "terminal_font_size", 13), 9, 24));
-  tab->cell_width = std::max(6, static_cast<int>(std::lround(
-      static_cast<double>(tab->font_size) * 0.62)));
-  tab->cell_height = tab->font_size + 4;
-  if (profile_id == "custom") {
-    const auto executable = std::filesystem::path(
-        cbor_string(settings_values_, "terminal_executable"));
-    std::error_code path_error;
-    if (executable.empty() || !std::filesystem::is_regular_file(
-                                  executable, path_error)) {
-      tab->launch_error = "自定义终端可执行文件不存在或不是普通文件";
-    } else {
-      std::string argument_error;
-      const auto arguments = parse_terminal_arguments(
-          cbor_string(settings_values_, "terminal_arguments"), argument_error);
-      if (!arguments)
-        tab->launch_error = argument_error;
-      else
-        tab->launch = {executable, *arguments};
-    }
-    tab->title = "自定义 " + std::to_string(next_terminal_id_ - 1);
-  } else {
-    const auto profile = resolve_terminal_profile(profile_id);
-    tab->title = (profile ? profile->label : "Shell") + " " +
-                 std::to_string(next_terminal_id_ - 1);
-    if (profile)
-      tab->launch = {profile->executable, profile->arguments};
-    else
-      tab->launch_error = "没有可用的系统 Shell";
-  }
-  tab->session = std::make_unique<TerminalSession>();
-  tab->vt = std::make_unique<GhosttyVt>(
-      100, 28, static_cast<std::size_t>(std::clamp<std::int64_t>(
-                   cbor_integer(settings_values_, "terminal_scrollback", 10000),
-                   1000, 100000)));
-  terminal_tabs_.push_back(std::move(tab));
-  active_terminal_index_ = terminal_tabs_.size() - 1;
-  render_terminal_tabs();
-  if (auto* surface = document_.GetElementById("terminal-surface"))
-    surface->SetProperty("font-size",
-        std::to_string(active_terminal_tab().font_size) + "px");
-}
-
-void DeskController::close_terminal_tab() {
-  if (terminal_tabs_.empty())
-    return;
-  terminal_tabs_[active_terminal_index_]->session->stop();
-  terminal_tabs_.erase(terminal_tabs_.begin() +
-                       static_cast<std::ptrdiff_t>(active_terminal_index_));
-  if (terminal_tabs_.empty())
-    create_terminal_tab();
-  else {
-    active_terminal_index_ = std::min(active_terminal_index_,
-                                      terminal_tabs_.size() - 1);
-    render_terminal_tabs();
-    auto& tab = active_terminal_tab();
-    if (auto* surface = dynamic_cast<ElementTerminal*>(
-            document_.GetElementById("terminal-surface"))) {
-      surface->SetProperty("font-size", std::to_string(tab.font_size) + "px");
-      surface->set_snapshot(tab.vt->render_snapshot());
-    }
-    text(document_, "terminal-status", tab.started ? "正在运行" : "未启动");
-  }
-}
-
-void DeskController::select_terminal_tab(const std::string_view id) {
-  const auto found = std::ranges::find_if(terminal_tabs_, [&](const auto& tab) {
-    return tab->id == id;
-  });
-  if (found == terminal_tabs_.end())
-    return;
-  active_terminal_index_ = static_cast<std::size_t>(
-      std::distance(terminal_tabs_.begin(), found));
-  render_terminal_tabs();
-  auto& tab = active_terminal_tab();
-  if (auto* surface = dynamic_cast<ElementTerminal*>(
-          document_.GetElementById("terminal-surface"))) {
-    surface->SetProperty("font-size", std::to_string(tab.font_size) + "px");
-    surface->set_snapshot(tab.vt->render_snapshot());
-  }
-  text(document_, "terminal-status", tab.started ? "正在运行" : "未启动");
-  search_terminal();
-}
-
-void DeskController::render_terminal_tabs() {
-  auto* container = document_.GetElementById("terminal-tabs");
-  if (!container)
-    return;
-  std::ostringstream rml;
-  for (std::size_t index = 0; index < terminal_tabs_.size(); ++index)
-    rml << "<button class='" << (index == active_terminal_index_ ? "active" : "")
-        << "' data-terminal-tab='" << terminal_tabs_[index]->id << "'>"
-        << escape(terminal_tabs_[index]->title) << "</button>";
-  container->SetInnerRML(rml.str());
-  Rml::ElementList buttons;
-  container->QuerySelectorAll(buttons, "[data-terminal-tab]");
-  for (auto* button : buttons)
-    button->AddEventListener("click", this);
-}
-
 void DeskController::send_message() {
   auto* composer = control(document_, "composer");
   auto* conversation = document_.GetElementById("conversation");
@@ -1468,7 +992,7 @@ void DeskController::send_message() {
       selected->kind == "session" && !selected->title_manual) {
     const auto title = automatic_title(prompt);
     if (navigation_.rename_selected(title, false)) {
-      text(document_, "session-title", escape(title));
+      view_model_.state().session_title = title;
       render_navigation();
       save_navigation();
     }
@@ -1485,10 +1009,10 @@ void DeskController::send_message() {
     pill->SetInnerRML("");
   }
   const auto ray = active_ray_;
-  const auto provider = selected_provider_;
-  const auto model = selected_model_;
-  const auto effort = selected_effort_;
-  const auto access = selected_access_;
+  const auto provider = settings_.provider();
+  const auto model = settings_.model();
+  const auto effort = settings_.effort();
+  const auto access = settings_.access();
   const auto change_run = tokmon::make_id("desk-agent-run");
   chat_future_ = std::async(std::launch::async,
       [this, prompt, ray, provider, model, effort, access, change_run] {
@@ -1563,158 +1087,24 @@ void DeskController::render_conversation() {
   auto* conversation = document_.GetElementById("conversation");
   if (!conversation)
     return;
-  constexpr std::size_t kWindowTurns = 80;
-  constexpr std::size_t kOverscanTurns = 12;
-  constexpr std::size_t kEstimatedTurnHeight = 210;
   const float previous_scroll = conversation->GetScrollTop();
   const bool followed_tail = conversation->GetScrollHeight() <= 0.f ||
       previous_scroll + conversation->GetClientHeight() >=
           conversation->GetScrollHeight() - 36.f;
-  struct Turn {
-    std::string user;
-    std::string reasoning;
-    std::string assistant;
-    std::vector<std::pair<std::string, std::string>> workflow;
-    bool failed{false};
-  };
-  std::vector<Turn> turns;
-  for (const auto& photon : photons_) {
-    if (photon.kind == "user.input" || photon.kind == "user.message") {
-      turns.push_back({});
-      turns.back().user = payload_text(photon);
-      continue;
-    }
-    if (turns.empty())
-      turns.push_back({});
-    auto& turn = turns.back();
-    if (photon.kind == "model.reasoning-chunk")
-      turn.reasoning += payload_text(photon);
-    else if (photon.kind == "model.content-chunk")
-      turn.assistant += payload_text(photon);
-    else if (photon.kind == "assistant.message") {
-      const auto final_text = payload_text(photon);
-      if (!final_text.empty())
-        turn.assistant = final_text;
-    } else if (photon.kind == "act.failed" || photon.kind == "model.failed") {
-      turn.failed = true;
-      const auto* detail = tokmon::cbor::find(photon.payload, "detail");
-      if (!detail)
-        detail = tokmon::cbor::find(photon.payload, "error");
-      turn.workflow.emplace_back("执行失败",
-          detail ? std::string(detail->as_string()) : "请检查 Photon 轨迹");
-    } else if (photon.kind.starts_with("tool.") ||
-               photon.kind.starts_with("fs.") ||
-               photon.kind.starts_with("task.")) {
-      auto detail = payload_text(photon);
-      if (detail.empty())
-        detail = tokmon::cbor::diagnostic(photon.payload);
-      if (detail.size() > 400)
-        detail.resize(400);
-      turn.workflow.emplace_back(photon.kind, std::move(detail));
-    }
-  }
-  conversation_total_turns_ = turns.size();
-  const auto maximum_start = turns.size() > kWindowTurns
-      ? turns.size() - kWindowTurns : 0;
-  if (followed_tail)
-    conversation_window_start_ = maximum_start;
-  else
-    conversation_window_start_ = std::min(conversation_window_start_, maximum_start);
-  const auto first = conversation_window_start_ > kOverscanTurns
-      ? conversation_window_start_ - kOverscanTurns : 0;
-  const auto last = std::min(turns.size(),
-      conversation_window_start_ + kWindowTurns + kOverscanTurns);
-  std::ostringstream rml;
-  if (first > 0)
-    rml << "<div class='conversation-spacer' style='height: "
-        << static_cast<std::size_t>(first * kEstimatedTurnHeight)
-        << "px'></div>";
-  for (std::size_t index = first; index < last; ++index) {
-    const auto& turn = turns[index];
-    if (!turn.user.empty())
-      rml << "<div class='user-message-row'><article class='message user-message'>"
-          << markdown_to_safe_rml(markdown_.parse(turn.user))
-          << "</article></div>";
-    if (!turn.reasoning.empty())
-      rml << "<article class='thought-card'><div class='card-title'><span>●</span> 思考过程</div>"
-          << "<div class='thought-content'>"
-          << markdown_to_safe_rml(markdown_.parse(turn.reasoning))
-          << "</div></article>";
-    if (!turn.workflow.empty()) {
-      rml << "<article class='workflow-card'><div class='card-title'><span class='status-dot'></span> 工作流执行"
-          << "<span class='complete-pill'>" << turn.workflow.size()
-          << " 项</span></div><div class='workflow-content'>";
-      for (const auto& [kind, detail] : turn.workflow)
-        rml << "<div class='workflow-step" << (turn.failed ? " failed" : "")
-            << "'><span class='step-icon'>" << (turn.failed ? "!" : "✓")
-            << "</span><div><strong>" << escape(kind) << "</strong><small>"
-            << escape(detail) << "</small></div></div>";
-      rml << "</div></article>";
-    }
-    if (!turn.assistant.empty())
-      rml << "<article class='message assistant-message'>"
-          << markdown_to_safe_rml(markdown_.parse(turn.assistant))
-          << "</article>";
-  }
-  if (last < turns.size())
-    rml << "<div class='conversation-spacer' style='height: "
-        << static_cast<std::size_t>((turns.size() - last) * kEstimatedTurnHeight)
-        << "px'></div>";
-  conversation->SetInnerRML(rml.str());
-  const bool empty = turns.empty() ||
-      std::ranges::all_of(turns, [](const Turn& turn) {
-        return turn.user.empty() && turn.reasoning.empty() &&
-               turn.assistant.empty() && turn.workflow.empty();
-      });
-  conversation->SetClass("hidden", empty);
-  if (auto* initial = document_.GetElementById("initial-session"))
-    initial->SetClass("hidden", !empty);
-  if (!empty && followed_tail)
-    conversation->SetScrollTop(conversation->GetScrollHeight());
-  else if (!empty)
-    conversation->SetScrollTop(previous_scroll);
+  const auto requested_start = followed_tail
+      ? std::numeric_limits<std::size_t>::max()
+      : conversation_window_start_;
+  const auto result = renderer_.conversation(photons_, requested_start);
+  conversation_total_turns_ = result.total_turns;
+  const auto maximum_start = result.total_turns > 80
+      ? result.total_turns - 80 : 0;
+  conversation_window_start_ = followed_tail
+      ? maximum_start : std::min(conversation_window_start_, maximum_start);
   render_trajectory();
 }
 
 void DeskController::render_trajectory() {
-  auto* trajectory = document_.GetElementById("trajectory");
-  if (!trajectory)
-    return;
-  if (photons_.empty()) {
-    trajectory->SetInnerRML(
-        "<div class='trajectory-empty'><strong>尚无执行轨迹</strong>"
-        "<span>提交请求后，真实 Photon 事件会在这里按因果顺序显示</span></div>");
-    return;
-  }
-  std::ostringstream rml;
-  rml << "<div class='trajectory-summary'><div><strong>"
-      << photons_.size() << "</strong><span>Photon</span></div><div><strong>"
-      << escape(active_ray_.empty() ? "未绑定" : active_ray_)
-      << "</strong><span>当前 Ray</span></div><div><strong>"
-      << snow_cursor_ << "</strong><span>Snow Cursor</span></div>"
-      << "<button id='export-trajectory'><svg src='../../assets/figma/icon-42.svg'></svg>导出</button></div>"
-      << "<div class='trajectory-list'>";
-  constexpr std::size_t kMaximumRenderedPhotons = 200;
-  const auto first = photons_.size() > kMaximumRenderedPhotons
-      ? photons_.size() - kMaximumRenderedPhotons : 0;
-  if (first > 0)
-    rml << "<div class='trajectory-window-notice'>较早的 " << first
-        << " 个 Photon 已虚拟化；滚动会话或导出轨迹可查看完整历史</div>";
-  for (auto iterator = photons_.begin() + static_cast<std::ptrdiff_t>(first);
-       iterator != photons_.end(); ++iterator) {
-    const auto& photon = *iterator;
-    auto detail = tokmon::cbor::diagnostic(photon.payload);
-    if (detail.size() > 700)
-      detail.resize(700);
-    rml << "<article class='trajectory-row'><span class='trajectory-sequence'>#"
-        << photon.sequence << "</span><span class='trajectory-dot'></span><div>"
-        << "<strong>" << escape(photon.kind) << "</strong><small>"
-        << escape(photon.schema) << " · " << photon.committed_at_ms
-        << "</small><code>" << escape(detail) << "</code></div></article>";
-  }
-  rml << "</div>";
-  trajectory->SetInnerRML(rml.str());
-  listen("export-trajectory");
+  renderer_.trajectory(photons_, active_ray_, snow_cursor_);
 }
 
 void DeskController::export_trajectory() {
@@ -1780,63 +1170,16 @@ void DeskController::seed_acceptance_conversation(const std::size_t turns) {
 }
 
 void DeskController::render_navigation() {
-  auto* tree = document_.GetElementById("navigation-tree");
-  if (!tree)
-    return;
   const auto* query = control(document_, "navigation-search");
-  const auto visible = navigation_.visible(query ? query->GetValue() : "");
-  std::ostringstream rml;
-  for (const auto index : visible) {
-    const auto& item = navigation_.items()[index];
-    rml << "<button class='tree-row " << item.kind
-        << (item.selected ? " selected" : "")
-        << "' style='padding-left:" << (10 + item.indent * 18)
-        << "px' data-navigation-id='" << escape(item.id) << "'>"
-        << "<span class='chevron'>"
-        << (item.kind == "session" ? "" : item.expanded ? "⌄" : "›")
-        << "</span><svg src='../../assets/figma/"
-        << (item.kind == "group" ? "icon-06.svg"
-            : item.kind == "project" ? "icon-08.svg" : "icon-09.svg")
-        << "'></svg><span>" << escape(item.title)
-        << "</span></button>";
-  }
-  if (visible.empty())
-    rml << "<div class='navigation-empty'>没有匹配的会话、项目或分组</div>";
-  tree->SetInnerRML(rml.str());
-  Rml::ElementList rows;
-  tree->QuerySelectorAll(rows, "[data-navigation-id]");
-  for (auto* row : rows)
-    row->AddEventListener("click", this);
-
-  if (auto* projects = control(document_, "new-session-project")) {
-    std::ostringstream options;
-    const auto active_workspace = navigation_.selected_workspace();
-    for (const auto& item : navigation_.items())
-      if (item.kind == "project")
-        options << "<option value='" << escape(item.id) << "'>"
-                << escape(item.title) << "</option>";
-    projects->SetInnerRML(options.str());
-    for (const auto& item : navigation_.items())
-      if (item.kind == "project" &&
-          same_workspace(item.workspace.empty() ? active_workspace
-                                                : item.workspace,
-                         active_workspace)) {
-        projects->SetValue(item.id);
-        break;
-      }
-  }
+  renderer_.navigation(navigation_, query ? query->GetValue() : "",
+                       navigation_.selected_workspace());
 }
 
 void DeskController::apply_settings(const tokmon::cbor::Value& payload) {
   const auto* values = tokmon::cbor::find(payload, "values");
   if (!values || !values->as_map())
     return;
-  // Only shared agent/project settings are imported from the daemon. Desktop
-  // layout, navigation, appearance and terminal preferences remain local.
-  merge_cbor_map(settings_values_, select_cbor_keys(*values, {
-      "main_model", "reasoning", "access_mode", "file_access",
-      "command_approval", "network", "high_risk_confirmation"}));
-  normalize_legacy_settings(settings_values_);
+  settings_.apply_shared(payload);
   auto* selected = navigation_.selected();
   if (navigation_.items().empty() || !selected ||
       !same_workspace(navigation_.selected_workspace(), workspace_.root())) {
@@ -1848,21 +1191,11 @@ void DeskController::apply_settings(const tokmon::cbor::Value& payload) {
   active_ray_.clear();
   if (selected) {
     active_ray_ = selected->ray;
-    text(document_, "session-title", escape(selected->title));
+    view_model_.state().session_title = selected->title;
   }
-  selected_model_ = cbor_string(*values, "main_model", selected_model_);
-  selected_effort_ = cbor_string(*values, "reasoning", selected_effort_);
-  selected_access_ = cbor_string(*values, "access_mode", selected_access_);
-  text(document_, "active-model",
-       escape(selected_model_.empty() ? "选择模型⌄" : selected_model_ + "⌄"));
-  if (auto* button = document_.GetElementById("effort-button"))
-    button->SetInnerRML("<svg src='../../assets/figma/icon-40.svg'></svg>" +
-                        escape(selected_effort_) + "⌄");
-  if (auto* button = document_.GetElementById("access-button"))
-    button->SetInnerRML("<svg src='../../assets/figma/icon-28.svg'></svg>" +
-        std::string(selected_access_ == "full" ? "完全访问⌄" : "受限访问⌄"));
+  view_model_.dirty();
   render_navigation();
-  render_settings_page(settings_page_);
+  render_settings_page(settings_.page());
   enqueue_intent("model.providers", tokmon::cbor::object({}));
 }
 
@@ -1876,7 +1209,7 @@ void DeskController::save_navigation() {
 }
 
 void DeskController::handle_navigation(Rml::Element& element) {
-  const auto id = element.GetAttribute<Rml::String>("data-navigation-id", "");
+  const auto id = element.GetAttribute<Rml::String>("nav-id", "");
   if (id.empty() || !navigation_.select(id))
     return;
   const auto* selected = navigation_.selected();
@@ -1890,7 +1223,7 @@ void DeskController::handle_navigation(Rml::Element& element) {
   }
   if (selected && selected->kind == "session") {
     active_ray_ = selected->ray;
-    text(document_, "session-title", escape(selected->title));
+    view_model_.state().session_title = selected->title;
     photons_.clear();
     conversation_dirty_ = true;
     request_selected_surface();
@@ -1899,7 +1232,7 @@ void DeskController::handle_navigation(Rml::Element& element) {
     active_ray_.clear();
     photons_.clear();
     conversation_dirty_ = true;
-    text(document_, "session-title", escape(created.title));
+    view_model_.state().session_title = created.title;
   }
   render_navigation();
   save_navigation();
@@ -1996,8 +1329,7 @@ void DeskController::finish_workspace_switch() {
     text(document_, "daemon-status", escape("工作空间切换失败：" + error));
     return;
   }
-  set_cbor(settings_values_, "last_workspace",
-           workspace_.root().generic_string());
+  settings_.set("last_workspace", workspace_.root().generic_string());
   std::string settings_error;
   if (!save_local_settings(settings_error))
     text(document_, "daemon-status",
@@ -2021,21 +1353,17 @@ void DeskController::finish_workspace_switch() {
   snow_cursor_ = 0;
   startup_loaded_ = false;
   conversation_dirty_ = true;
-  for (auto& tab : terminal_tabs_)
-    tab->session->stop();
-  terminal_tabs_.clear();
-  active_terminal_index_ = 0;
-  create_terminal_tab();
+  terminal_.set_workspace(result.workspace);
   const auto name = workspace_.root().filename().string();
-  text(document_, "starter-workspace-name", escape(name));
-  text(document_, "composer-workspace-name", escape(name));
-  text(document_, "workspace-path", escape(workspace_.root().string()));
+  view_model_.state().workspace_name = name;
+  view_model_.state().workspace_path = workspace_.root().generic_string();
+  view_model_.state().settings.workspace_path = view_model_.state().workspace_path;
+  view_model_.state().branch = "正在读取 Git…";
+  view_model_.dirty();
   text(document_, "file-path", "选择文件以预览或编辑");
   if (auto* editor = dynamic_cast<ElementCodeSurface*>(
           document_.GetElementById("file-preview")))
     editor->set_document({}, {}, 0, false);
-  if (auto* branch = document_.QuerySelector(".workspace-context .branch"))
-    branch->SetInnerRML("正在读取 Git…");
   text(document_, "daemon-status",
        result.started ? "目标工作空间后台服务已启动" : "目标工作空间已连接");
   refresh_files();
@@ -2043,13 +1371,13 @@ void DeskController::finish_workspace_switch() {
   if (create_session_after_workspace_switch_) {
     create_session_after_workspace_switch_ = false;
     (void)navigation_.create_session("新会话");
-    text(document_, "session-title", "新会话");
+    view_model_.state().session_title = "新会话";
     render_navigation();
     save_navigation();
   } else if (const auto* selected = navigation_.selected();
              selected && selected->kind == "session") {
     active_ray_ = selected->ray;
-    text(document_, "session-title", escape(selected->title));
+    view_model_.state().session_title = selected->title;
     request_selected_surface();
   }
   backend_ready_.store(true, std::memory_order_release);
@@ -2073,7 +1401,7 @@ void DeskController::request_selected_surface() {
 }
 
 void DeskController::choose_starter(Rml::Element& card) {
-  const auto kind = card.GetAttribute<Rml::String>("data-starter", "");
+  const auto kind = card.GetAttribute<Rml::String>("starter-kind", "");
   auto* composer = control(document_, "composer");
   if (!composer)
     return;
@@ -2099,18 +1427,16 @@ void DeskController::update_composer_placeholder() {
 
 void DeskController::render_slash_commands() {
   auto* composer = control(document_, "composer");
-  auto* popover = document_.GetElementById("composer-popover");
-  if (!composer || !popover)
+  if (!composer)
     return;
   const std::string value = composer->GetValue();
-  if (value.empty() || value.front() != '/' || value.find_first_of(" \t\r\n") !=
-          std::string::npos) {
+  if (value.empty() || value.front() != '/' ||
+      value.find_first_of(" \\t\\r\\n") != std::string::npos) {
     slash_command_count_ = 0;
     slash_command_index_ = 0;
-    popover->SetClass("hidden", true);
+    renderer_.slash_commands({}, 0, false);
     return;
   }
-
   std::string query = value.substr(1);
   std::ranges::transform(query, query.begin(), [](const unsigned char character) {
     return static_cast<char>(std::tolower(character));
@@ -2126,199 +1452,23 @@ void DeskController::render_slash_commands() {
       matches.push_back(command);
   }
   slash_command_count_ = matches.size();
-  if (matches.empty()) {
-    slash_command_index_ = 0;
-    popover->SetInnerRML(
-        "<div class='popover-card choice-popover'><strong>命令面板</strong>"
-        "<span class='popover-empty'>没有匹配命令</span></div>");
-    popover->SetClass("hidden", false);
-    return;
-  }
-  slash_command_index_ = std::min(slash_command_index_, matches.size() - 1);
-  std::ostringstream markup;
-  markup << "<div class='popover-card choice-popover'><strong>命令面板</strong>";
-  for (std::size_t index = 0; index < matches.size(); ++index)
-    markup << "<button class='" << (index == slash_command_index_ ? "selected" : "")
-           << "' data-command='" << matches[index].first << "'>"
-           << matches[index].first << "<small>" << matches[index].second
-           << "</small></button>";
-  markup << "</div>";
-  popover->SetInnerRML(markup.str());
-  popover->SetClass("hidden", false);
-  Rml::ElementList commands;
-  popover->QuerySelectorAll(commands, "[data-command]");
-  for (auto* command : commands)
-    command->AddEventListener("click", this);
+  slash_command_index_ = matches.empty()
+      ? 0 : std::min(slash_command_index_, matches.size() - 1);
+  renderer_.slash_commands(matches, slash_command_index_, true);
 }
 
 void DeskController::select_slash_command(const std::size_t index) {
-  auto* popover = document_.GetElementById("composer-popover");
   auto* composer = control(document_, "composer");
-  if (!popover || !composer)
-    return;
-  Rml::ElementList commands;
-  popover->QuerySelectorAll(commands, "[data-command]");
-  if (commands.empty())
+  const auto& commands = view_model_.state().slash_commands;
+  if (!composer || commands.empty())
     return;
   const auto selected = std::min(index, commands.size() - 1);
-  const auto command = commands[selected]->GetAttribute<Rml::String>(
-      "data-command", "");
-  if (!command.empty()) {
-    composer->SetValue(command + " ");
-    update_composer_placeholder();
-    composer->Focus();
-  }
+  composer->SetValue(commands[selected].command + " ");
+  update_composer_placeholder();
+  composer->Focus();
   slash_command_count_ = 0;
   slash_command_index_ = 0;
-  popover->SetClass("hidden", true);
-}
-
-void DeskController::launch_browser() {
-  if (browser_future_.valid() || browser_takeover_)
-    return;
-  const auto candidates = browser_.discover();
-  auto* placeholder = document_.GetElementById("browser-status");
-  if (!placeholder) return;
-  if (candidates.empty()) {
-    placeholder->SetInnerRML("<strong>未找到 Chrome / Chromium</strong><span>可在设置中指定浏览器路径</span>");
-    return;
-  }
-  const auto executable = candidates.front().executable;
-  auto* url_input = control(document_, "browser-url");
-  const std::string url = url_input && !url_input->GetValue().empty()
-      ? url_input->GetValue() : Rml::String("about:blank");
-  placeholder->SetInnerRML("<strong>正在准备 Agent Browser…</strong><span>首次使用会安装并校验固定版本 Runtime</span>");
-  browser_future_ = std::async(std::launch::async,
-      [this, executable, url] {
-        std::string error;
-        if (!browser_.install_runtime(error)) {
-          BrowserSessionState state;
-          state.error = std::move(error);
-          return state;
-        }
-        return browser_.open(executable, browser_session_, url, true);
-      });
-}
-
-void DeskController::refresh_browser() {
-  if (browser_future_.valid())
-    return;
-  browser_future_ = std::async(std::launch::async,
-      [this] { return browser_.refresh(browser_session_); });
-}
-
-void DeskController::back_browser() {
-  if (browser_future_.valid() || browser_takeover_)
-    return;
-  browser_future_ = std::async(std::launch::async,
-      [this] { return browser_.back(browser_session_); });
-}
-
-void DeskController::forward_browser() {
-  if (browser_future_.valid() || browser_takeover_)
-    return;
-  browser_future_ = std::async(std::launch::async,
-      [this] { return browser_.forward(browser_session_); });
-}
-
-void DeskController::reload_browser() {
-  if (browser_future_.valid() || browser_takeover_)
-    return;
-  browser_future_ = std::async(std::launch::async,
-      [this] { return browser_.reload(browser_session_); });
-}
-
-void DeskController::toggle_browser_takeover() {
-  browser_takeover_ = !browser_takeover_;
-  if (auto* bar = document_.GetElementById("browser-permission")) {
-    bar->SetClass("takeover", browser_takeover_);
-    if (auto* message = bar->QuerySelector("span"))
-      message->SetInnerRML(browser_takeover_
-          ? "用户已接管外部浏览器 · Agent 网页操作已暂停"
-          : "独立 Tokmon Profile · 仅显式操作网页");
-  }
-  text(document_, "browser-takeover",
-       browser_takeover_ ? "恢复 Agent" : "用户接管");
-}
-
-void DeskController::stop_browser() {
-  if (browser_future_.valid())
-    return;
-  browser_future_ = std::async(std::launch::async, [this] {
-    BrowserSessionState state;
-    state.session = browser_session_;
-    std::string error;
-    if (!browser_.close(browser_session_, error)) state.error = std::move(error);
-    return state;
-  });
-}
-
-void DeskController::click_browser() {
-  if (browser_future_.valid() || browser_takeover_)
-    return;
-  auto* selector = control(document_, "browser-selector");
-  if (!selector || selector->GetValue().empty())
-    return;
-  const std::string value = selector->GetValue();
-  browser_future_ = std::async(std::launch::async, [this, value] {
-    BrowserSessionState state;
-    state.session = browser_session_;
-    std::string error;
-    if (!browser_.click(browser_session_, value, error)) {
-      state.error = std::move(error);
-      return state;
-    }
-    return browser_.refresh(browser_session_);
-  });
-}
-
-void DeskController::fill_browser() {
-  if (browser_future_.valid() || browser_takeover_)
-    return;
-  auto* selector = control(document_, "browser-selector");
-  auto* value = control(document_, "browser-value");
-  if (!selector || selector->GetValue().empty() || !value)
-    return;
-  const std::string selector_text = selector->GetValue();
-  const std::string fill_text = value->GetValue();
-  browser_future_ = std::async(std::launch::async,
-      [this, selector_text, fill_text] {
-        BrowserSessionState state;
-        state.session = browser_session_;
-        std::string error;
-        if (!browser_.fill(browser_session_, selector_text, fill_text, error)) {
-          state.error = std::move(error);
-          return state;
-        }
-        return browser_.refresh(browser_session_);
-      });
-}
-
-void DeskController::render_browser_state(const BrowserSessionState& state) {
-  auto* status = document_.GetElementById("browser-status");
-  if (!status)
-    return;
-  if (!state.error.empty()) {
-    status->SetClass("compact", false);
-    status->SetInnerRML("<strong>Agent Browser 操作失败</strong><span>" +
-                        escape(state.error) + "</span>");
-    return;
-  }
-  if (!state.running) {
-    status->SetClass("compact", false);
-    status->SetInnerRML("<strong>Agent Browser 已停止</strong><span>会话进程与私有 Profile 已安全关闭</span>");
-    return;
-  }
-  status->SetClass("compact", true);
-  status->SetInnerRML("<strong>" + escape(state.title) + "</strong><span>" +
-                      escape(state.url) + "</span>");
-  if (auto* input = control(document_, "browser-url"))
-    input->SetValue(state.url);
-  if (auto* image = document_.GetElementById("browser-preview")) {
-    image->SetAttribute("src", state.preview_image.generic_string());
-    image->SetClass("hidden", false);
-  }
-  text(document_, "browser-snapshot", escape(state.accessibility_snapshot));
+  renderer_.slash_commands({}, 0, false);
 }
 
 void DeskController::create_session() {
@@ -2348,7 +1498,7 @@ void DeskController::create_session() {
   active_ray_.clear();
   photons_.clear();
   conversation_dirty_ = true;
-  text(document_, "session-title", escape(created.title));
+  view_model_.state().session_title = created.title;
   render_navigation();
   save_navigation();
   if (auto* overlay = document_.GetElementById("new-session-overlay"))
@@ -2366,8 +1516,8 @@ void DeskController::preview_file(Rml::Element& row) {
   // the tree. Opening a file expands to the old editor-capable width.
   if (right_panel_width_ < 408) {
     right_panel_width_ = 620;
-    set_cbor(settings_values_, "right_panel_width",
-             static_cast<std::int64_t>(right_panel_width_));
+    settings_.set("right_panel_width",
+                  static_cast<std::int64_t>(right_panel_width_));
     apply_panel_layout();
     std::string ignored;
     (void)save_local_settings(ignored);
@@ -2713,19 +1863,19 @@ void DeskController::start_pending_document_recovery() {
 }
 
 void DeskController::preview_diff(Rml::Element& row) {
-  const auto path = row.GetAttribute<Rml::String>("data-diff-path", "");
+  const auto path = row.GetAttribute<Rml::String>("diff-path", "");
   if (path.empty()) return;
-  const bool staged = row.GetAttribute<Rml::String>("data-diff-staged", "0") == "1";
-  auto* view = document_.GetElementById("review-diff");
-  if (!view) return;
+  const bool staged = row.GetAttribute<Rml::String>("diff-staged", "0") == "1";
   if (review_future_.valid()) {
     show_toast("另一个 Git 操作仍在执行");
     return;
   }
   current_diff_path_ = path;
   current_diff_staged_ = staged;
-  view->SetInnerRML("<div class='diff-error'>正在工作线程生成 Diff…</div>");
-  view->SetClass("hidden", false);
+  view_model_.state().diff_visible = true;
+  view_model_.state().diff_error_visible = true;
+  view_model_.state().diff_error = "正在工作线程生成 Diff…";
+  view_model_.dirty();
   const auto root = workspace_.root();
   review_future_ = std::async(std::launch::async,
       [root, path = std::string(path), staged] {
@@ -2740,9 +1890,9 @@ void DeskController::preview_diff(Rml::Element& row) {
 }
 
 void DeskController::handle_git_action(Rml::Element& element) {
-  const auto action = element.GetAttribute<Rml::String>("data-git-action", "");
-  const auto path = element.GetAttribute<Rml::String>("data-git-path", "");
-  const auto hunk_text = element.GetAttribute<Rml::String>("data-git-hunk", "0");
+  const auto action = element.GetAttribute<Rml::String>("git-action", "");
+  const auto path = element.GetAttribute<Rml::String>("git-path", "");
+  const auto hunk_text = element.GetAttribute<Rml::String>("git-hunk", "0");
   const auto hunk = static_cast<std::size_t>(std::stoull(hunk_text));
   if (review_future_.valid()) {
     show_toast("另一个 Git 操作仍在执行");
@@ -2832,346 +1982,36 @@ void DeskController::commit_changes(bool push_after_commit) {
 }
 
 void DeskController::show_settings_page(Rml::Element& navigation) {
-  const auto page = navigation.GetAttribute<Rml::String>("data-page", "general");
   capture_settings_page();
-  Rml::ElementList items;
-  document_.QuerySelectorAll(items, "[data-page]");
-  for (auto* item : items)
-    item->SetClass("active", item == &navigation);
-  render_settings_page(page);
+  render_settings_page(navigation.GetAttribute<Rml::String>(
+      "setting-page", "general"));
 }
 
 void DeskController::render_settings_page(std::string page) {
-  auto* body = document_.GetElementById("settings-body");
-  if (!body)
-    return;
-  settings_page_ = std::move(page);
-  const auto input = [this](const char* id, const char* key,
-                            const std::string& fallback,
-                            const char* type = "text") {
-    return "<input id='" + std::string(id) + "' type='" + type +
-           "' value='" + escape(cbor_string(settings_values_, key, fallback)) +
-           "'/>";
-  };
-  const auto select = [this](const char* id, const char* key,
-                             const std::vector<std::string>& values,
-                             const std::string& fallback) {
-    const auto current = cbor_string(settings_values_, key, fallback);
-    std::string rml = "<select id='" + std::string(id) + "' class='setting-select'>";
-    for (const auto& value : values)
-      rml += "<option value='" + escape(value) + "'" +
-             (value == current ? " selected=''" : "") + ">" +
-             escape(value) + "</option>";
-    return rml + "</select>";
-  };
-  const auto boolean = [this](const char* id, const char* key,
-                              const bool fallback) {
-    const bool current = cbor_bool(settings_values_, key, fallback);
-    return "<select id='" + std::string(id) + "' class='setting-select bool-select'>"
-           "<option value='true'" + std::string(current ? " selected=''" : "") +
-           ">已启用</option><option value='false'" +
-           std::string(!current ? " selected=''" : "") +
-           ">已禁用</option></select>";
-  };
-  const auto card = [](std::string title, std::string description,
-                       std::string editor) {
-    return "<div class='setting-card'><div class='setting-copy'><strong>" + std::move(title) +
-           "</strong><p>" + std::move(description) + "</p></div>" +
-           std::move(editor) + "</div>";
-  };
-  const auto model_card = [](std::string title, std::string description,
-                             std::string editor) {
-    return "<div class='setting-card model-setting-card'><div class='setting-copy'><strong>" +
-           std::move(title) + "</strong><p>" + std::move(description) +
-           "</p></div><div class='model-control'>" + std::move(editor) +
-           "</div></div>";
-  };
-
-  if (settings_page_ == "general") {
-    text(document_, "settings-title", "通用");
-    text(document_, "settings-description", "管理语言、启动、自动保存和更新偏好");
-    body->SetInnerRML(
-        card("界面语言", "设置 tokmon-desk 使用的语言",
-             select("setting-language", "language", {"简体中文", "English"}, "简体中文")) +
-        card("启动页面", "启动后进入上次会话或首页",
-             select("setting-startup", "startup", {"首页", "上次打开的会话"}, "首页")) +
-        card("自动保存", "编辑器未保存缓冲的自动保存间隔",
-             select("setting-autosave", "autosave", {"关闭", "1 分钟", "5 分钟", "15 分钟"}, "5 分钟")) +
-        card("更新通道", "选择稳定版本或预览版本",
-             select("setting-channel", "update_channel", {"稳定版", "测试版"}, "稳定版")));
-  } else if (settings_page_ == "model") {
-    text(document_, "settings-title", "智能体与模型");
-    text(document_, "settings-description", "配置现有 tokmon-daemon 模型 Provider");
-    std::string providers = "<div class='provider-list model-provider-list'>";
-    const auto* encoded = tokmon::cbor::find(providers_payload_, "providers");
-    if (encoded && encoded->as_array()) {
-      for (const auto& provider : *encoded->as_array()) {
-        const auto name = cbor_string(provider, "name");
-        const auto model = cbor_string(provider, "model");
-        const auto source = cbor_string(provider, "credential_source", "missing");
-        providers += "<button class='provider-row" +
-            std::string(name == selected_provider_ ? " selected" : "") +
-            "' data-provider-use='" + escape(name) + "'><span><strong>" +
-            escape(name) + "</strong><small>" + escape(model) +
-            "</small></span><em>" + escape(source) + "</em></button>";
-      }
-    }
-    providers += "</div>";
-    body->SetInnerRML(
-        model_card("模型平台", "来自当前项目配置；凭据只进入系统安全存储", providers) +
-        model_card("主模型", "发送请求时使用的模型名称",
-                   input("setting-main-model", "main_model", selected_model_)) +
-        model_card("推理强度", "与旧版标准、高和最高选项一致",
-                   select("setting-reasoning", "reasoning", {"标准", "高", "最高"}, "高")) +
-        "<div class='provider-config-grid'><label>协议" +
-        select("provider-protocol", "provider_protocol",
-               {"openai-compatible", "anthropic", "gemini", "local"},
-               "openai-compatible") + "</label><label>Endpoint" +
-        input("provider-endpoint", "provider_endpoint", "") +
-        "</label><label>认证" +
-        select("provider-auth", "provider_auth", {"bearer", "x-api-key", "none"}, "bearer") +
-        "</label><label>Secret 环境变量" +
-        input("provider-secret-env", "provider_secret_env", "") +
-        "</label><label>API Key" +
-        input("provider-secret", "provider_secret", "", "password") +
-        "</label><div class='provider-actions'><button id='configure-provider' class='secondary-button'>保存 Provider</button><button id='test-provider' class='secondary-button'>测试连接</button><button id='store-provider-secret' class='primary-button'>安全保存 Key</button></div></div>");
-  } else if (settings_page_ == "access") {
-    text(document_, "settings-title", "权限与安全");
-    text(document_, "settings-description", "控制文件、命令、网络和高风险操作");
-    body->SetInnerRML(
-        card("文件访问", "限定 Agent 可访问的文件范围",
-             select("setting-file-access", "file_access", {"受信路径", "仅工作区", "全部"}, "受信路径")) +
-        card("命令审批", "设置执行本地命令前的确认策略",
-             select("setting-command-approval", "command_approval", {"自动执行", "按需确认", "禁止执行"}, "按需确认")) +
-        card("联网能力", "允许模型使用已配置的网络工具",
-             boolean("setting-network", "network", true)) +
-        card("高风险二次确认", "放弃修改、上传和敏感浏览器操作必须确认",
-             boolean("setting-high-risk", "high_risk_confirmation", true)));
-  } else if (settings_page_ == "workspace") {
-    text(document_, "settings-title", "工作区");
-    text(document_, "settings-description", "管理当前工作区和索引行为");
-    body->SetInnerRML(
-        card("当前路径", "项目文件的真实工作目录",
-             "<code class='path-value'>" + escape(workspace_.root().string()) + "</code>") +
-        card("索引模式", "控制文件搜索和语法索引范围",
-             select("setting-index-mode", "index_mode", {"标准", "智能索引", "深度索引"}, "标准")) +
-        card("自动同步", "监控文件系统变化并更新工作区视图",
-             boolean("setting-workspace-sync", "workspace_sync", true)) +
-        card("Git 集成", "显示审查、暂存、提交和推送操作",
-             boolean("setting-git", "git", true)));
-  } else if (settings_page_ == "notifications") {
-    text(document_, "settings-title", "通知");
-    text(document_, "settings-description", "配置任务完成和消息提醒");
-    body->SetInnerRML(
-        card("通知", "总通知开关", boolean("setting-notifications", "notifications", true)) +
-        card("桌面通知", "允许系统通知中心显示完成状态",
-             boolean("setting-desktop-notifications", "desktop_notifications", true)) +
-        card("消息提醒", "新回复到达时发出提醒",
-             boolean("setting-message-alerts", "message_alerts", true)) +
-        card("免打扰时段", "在指定时段静默通知",
-             select("setting-quiet-hours", "quiet_hours", {"关闭", "22:00 - 08:00", "23:00 - 07:00"}, "关闭")));
-  } else if (settings_page_ == "appearance") {
-    text(document_, "settings-title", "外观");
-    text(document_, "settings-description", "保留旧版主题、颜色、密度与缩放设计");
-    body->SetInnerRML(
-        card("主题与颜色", "技术重写不修改旧版 Tokmon 主题和配色",
-             "<span class='locked-value'>旧版浅色主题 · 已锁定</span>") +
-        card("界面密度", "调整内容间距，不改变组件风格",
-             select("setting-density", "density", {"紧凑", "舒适", "宽松"}, "舒适")) +
-        card("界面缩放", "70%–200%；自动跟随系统显示缩放",
-             "<input id='setting-ui-scale' type='number' min='70' max='200' step='5' value='" +
-             std::to_string(std::clamp<std::int64_t>(cbor_integer(settings_values_, "ui_scale", 125), 70, 200)) + "'/>") +
-        card("字体缩放", "保持内容字体可读性",
-             "<input id='setting-font-scale' type='number' min='70' max='200' step='5' value='" +
-             std::to_string(std::clamp<std::int64_t>(cbor_integer(settings_values_, "font_scale", 100), 70, 200)) + "'/>") );
-  } else if (settings_page_ == "shortcuts") {
-    text(document_, "settings-title", "快捷键");
-    text(document_, "settings-description", "与旧版一致的工作台快捷键");
-    body->SetInnerRML(
-        "<div class='shortcut-table'>"
-        "<div class='shortcut-row'><span>发送消息</span><kbd>Ctrl + Enter</kbd></div>"
-        "<div class='shortcut-row'><span>保存文件</span><kbd>Ctrl + S</kbd></div>"
-        "<div class='shortcut-row'><span>打开文件</span><kbd>Ctrl + P</kbd></div>"
-        "<div class='shortcut-row'><span>打开审查</span><kbd>Ctrl + Shift + G</kbd></div>"
-        "<div class='shortcut-row'><span>终端复制 / 粘贴</span><kbd>Ctrl + Shift + C / V</kbd></div>"
-        "<div class='shortcut-row'><span>释放编辑器或终端焦点</span><kbd>Esc</kbd></div>"
-        "</div>");
-  } else if (settings_page_ == "account") {
-    text(document_, "settings-title", "账户");
-    text(document_, "settings-description", "管理本机显示资料和云同步偏好");
-    body->SetInnerRML(
-        card("昵称", "在本机 UI 中显示的名称",
-             input("setting-nickname", "nickname", "")) +
-        card("邮箱", "可选账户联系邮箱",
-             input("setting-email", "email", "", "email")) +
-        card("云同步", "同步前仍以当前 Tokmon 配置能力为准",
-             boolean("setting-cloud-sync", "cloud_sync", false)));
-  } else if (settings_page_ == "terminal") {
-    text(document_, "settings-title", "终端");
-    text(document_, "settings-description", "配置 tokmon-desk 的跨平台本地终端");
-    std::string profile_select = "<select id='setting-terminal-profile' class='setting-select'>";
-    const auto selected_profile = cbor_string(settings_values_, "terminal_profile", "auto");
-    for (const auto& profile : discover_terminal_profiles()) {
-      if (!profile.available)
-        continue;
-      profile_select += "<option value='" + escape(profile.id) + "'" +
-          (profile.id == selected_profile ? " selected=''" : "") + ">" +
-          escape(profile.label) + "</option>";
-    }
-    profile_select += "<option value='custom'" +
-        std::string(selected_profile == "custom" ? " selected=''" : "") +
-        ">自定义可执行文件</option>";
-    profile_select += "</select>";
-    body->SetInnerRML(
-        card("默认 Shell", "Windows 支持 PowerShell/cmd/WSL；macOS 与 Linux 支持登录 Shell/POSIX PTY",
-             profile_select) +
-        card("自定义可执行文件", "仅在默认 Shell 选择“自定义可执行文件”时使用",
-             "<input id='setting-terminal-executable' type='text' value='" +
-             escape(cbor_string(settings_values_, "terminal_executable")) +
-             "' placeholder='C:\\\\Program Files\\\\PowerShell\\\\7\\\\pwsh.exe 或 /bin/zsh'/>") +
-        card("自定义参数", "支持空格、单引号、双引号和反斜杠转义",
-             "<input id='setting-terminal-arguments' type='text' value='" +
-             escape(cbor_string(settings_values_, "terminal_arguments")) +
-             "' placeholder='-NoLogo 或 -l'/>") +
-        card("终端字号", "新建终端标签时应用，并同步调整 PTY 行列网格",
-             "<input id='setting-terminal-font-size' type='number' min='9' max='24' value='" +
-             std::to_string(std::clamp<std::int64_t>(cbor_integer(
-                 settings_values_, "terminal_font_size", 13), 9, 24)) + "'/>") +
-        card("滚动缓冲", "libghostty-vt 保存的最大可回看行数",
-             "<input id='setting-terminal-scrollback' type='number' min='1000' max='100000' value='" +
-             std::to_string(cbor_integer(settings_values_, "terminal_scrollback", 10000)) + "'/>") +
-        card("数据边界", "终端进程、历史和设置仅属于 tokmon-desk",
-             "<span class='locked-value'>Desktop 本地</span>"));
-  } else if (settings_page_ == "browser") {
-    text(document_, "settings-title", "浏览器");
-    text(document_, "settings-description", "Agent Browser 与系统 Chrome/Chromium");
-    const auto candidates = browser_.discover();
-    body->SetInnerRML(
-        card("系统浏览器", "优先复用已安装的 Chrome/Chromium 可执行文件",
-             "<code class='path-value'>" + escape(candidates.empty() ? "未自动发现" : candidates.front().executable.string()) + "</code>") +
-        card("独立 Profile", "不会修改用户日常浏览器 Profile",
-             "<span class='locked-value'>强制隔离</span>") +
-        card("高风险操作", "上传、下载、权限、支付和密码操作进入用户确认",
-             boolean("setting-browser-confirm", "browser_high_risk_confirmation", true)));
-  } else {
-    settings_page_ = "about";
-    text(document_, "settings-title", "关于");
-    text(document_, "settings-description", "tokmon-desk 技术栈与开源许可");
-    body->SetInnerRML(
-        card("tokmon-desk", "SDL3 + RmlUi + Skia 原生桌面技术重写",
-             "<span class='locked-value'>开发版</span>") +
-        card("开源组件", "RmlUi · SDL3 · Skia · HarfBuzz · FreeType · MD4C · Zep · libgit2 · tree-sitter · libghostty-vt", "") +
-        card("Browser", "本轮状态：DEFERRED-BROWSER；基础安装包不包含浏览器运行时", "") +
-        card("许可声明", "完整版权与许可文本随发行包的 THIRD_PARTY_NOTICES.md 提供；HarfBuzz 无需在关于页单独弹出免责声明。", ""));
-  }
-
-  Rml::ElementList providers;
-  body->QuerySelectorAll(providers, "[data-provider-use]");
-  for (auto* provider : providers)
-    provider->AddEventListener("click", this);
-  for (const char* id : {"configure-provider", "test-provider", "store-provider-secret"})
-    listen(id);
+  settings_.show(std::move(page), workspace_.root());
 }
 
 void DeskController::capture_settings_page() {
-  const auto string_control = [this](const char* id, const char* key) {
-    if (auto* item = control(document_, id))
-      set_cbor(settings_values_, key, std::string(item->GetValue()));
-  };
-  const auto bool_control = [this](const char* id, const char* key) {
-    if (auto* item = control(document_, id))
-      set_cbor(settings_values_, key, item->GetValue() == "true");
-  };
-  const auto int_control = [this](const char* id, const char* key,
-                                  std::int64_t minimum, std::int64_t maximum) {
-    if (auto* item = control(document_, id)) {
-      try {
-        set_cbor(settings_values_, key, std::clamp<std::int64_t>(
-            std::stoll(item->GetValue()), minimum, maximum));
-      } catch (...) {}
-    }
-  };
-  string_control("setting-language", "language");
-  string_control("setting-startup", "startup");
-  string_control("setting-autosave", "autosave");
-  string_control("setting-channel", "update_channel");
-  string_control("setting-main-model", "main_model");
-  string_control("setting-reasoning", "reasoning");
-  string_control("setting-file-access", "file_access");
-  string_control("setting-command-approval", "command_approval");
-  string_control("setting-index-mode", "index_mode");
-  string_control("setting-quiet-hours", "quiet_hours");
-  string_control("setting-density", "density");
-  string_control("setting-nickname", "nickname");
-  string_control("setting-email", "email");
-  string_control("setting-terminal-profile", "terminal_profile");
-  string_control("setting-terminal-executable", "terminal_executable");
-  string_control("setting-terminal-arguments", "terminal_arguments");
-  bool_control("setting-network", "network");
-  bool_control("setting-high-risk", "high_risk_confirmation");
-  bool_control("setting-workspace-sync", "workspace_sync");
-  bool_control("setting-git", "git");
-  bool_control("setting-notifications", "notifications");
-  bool_control("setting-desktop-notifications", "desktop_notifications");
-  bool_control("setting-message-alerts", "message_alerts");
-  bool_control("setting-cloud-sync", "cloud_sync");
-  bool_control("setting-browser-confirm", "browser_high_risk_confirmation");
-  int_control("setting-ui-scale", "ui_scale", 70, 200);
-  int_control("setting-font-scale", "font_scale", 70, 200);
-  int_control("setting-terminal-scrollback", "terminal_scrollback", 1000, 100000);
-  int_control("setting-terminal-font-size", "terminal_font_size", 9, 24);
+  (void)settings_.shared_values();
 }
 
 void DeskController::save_settings() {
-  capture_settings_page();
-  selected_model_ = cbor_string(settings_values_, "main_model", selected_model_);
-  selected_effort_ = cbor_string(settings_values_, "reasoning", selected_effort_);
-  set_cbor(settings_values_, "access_mode", selected_access_);
+  const auto shared = settings_.shared_values();
   std::string error;
   if (!save_local_settings(error)) {
-    text(document_, "settings-status", escape("本地设置保存失败：" + error));
+    settings_.set_status("本地设置保存失败：" + error);
     return;
   }
-  const auto shared = select_cbor_keys(settings_values_, {
-      "main_model", "reasoning", "access_mode", "file_access",
-      "command_approval", "network", "high_risk_confirmation"});
   enqueue_intent("settings.save", tokmon::cbor::object({{"values", shared}}));
-  text(document_, "settings-status",
-       "Desktop 偏好已本地保存；正在保存共享 Agent 配置…");
+  settings_.set_status("Desktop 偏好已本地保存；正在保存共享 Agent 配置…");
 }
 
 void DeskController::reset_settings() {
-  const auto shared = select_cbor_keys(settings_values_, {
-      "main_model", "reasoning", "access_mode", "file_access",
-      "command_approval", "network", "high_risk_confirmation"});
-  settings_values_ = default_desktop_settings(
-      platform_.default_content_scale_percent());
-  merge_cbor_map(settings_values_, shared);
-  merge_cbor_map(settings_values_, tokmon::cbor::object({
-      {"main_model", selected_model_}, {"reasoning", "高"},
-      {"command_approval", "按需确认"}, {"network", true},
-      {"high_risk_confirmation", true}, {"workspace", workspace_.root().generic_string()},
-      {"file_access", "受信路径"}}));
-  render_settings_page(settings_page_);
-  text(document_, "settings-status", "已恢复默认值；点击“保存更改”后写入");
+  settings_.reset(workspace_.root());
 }
 
 void DeskController::apply_providers(const tokmon::cbor::Value& payload) {
-  providers_payload_ = payload;
-  selected_provider_ = cbor_string(payload, "default", selected_provider_);
-  if (const auto* providers = tokmon::cbor::find(payload, "providers");
-      providers && providers->as_array()) {
-    for (const auto& provider : *providers->as_array()) {
-      if (cbor_string(provider, "name") != selected_provider_)
-        continue;
-      selected_model_ = cbor_string(provider, "model", selected_model_);
-      break;
-    }
-  }
-  if (!selected_model_.empty())
-    text(document_, "active-model", escape(selected_model_) + "⌄");
-  if (settings_page_ == "model")
-    render_settings_page("model");
+  settings_.apply_providers(payload);
 }
 
 void DeskController::enqueue_intent(std::string action,
@@ -3201,23 +2041,23 @@ void DeskController::finish_intent() {
   auto result = intent_future_.get();
   snow_cursor_ = std::max(snow_cursor_, result.cursor);
   if (!result.success) {
-    text(document_, "settings-status", escape("操作失败：" + result.error));
+    settings_.set_status("操作失败：" + result.error);
   } else if (intent_action_ == "model.providers") {
     apply_providers(result.payload);
   } else if (intent_action_ == "settings.save") {
-    text(document_, "settings-status",
-         "Desktop 偏好已保存到本地；共享 Agent 配置已保存到当前项目");
+    settings_.set_status(
+        "Desktop 偏好已保存到本地；共享 Agent 配置已保存到当前项目");
   } else if (intent_action_ == "model.provider.use") {
-    text(document_, "settings-status", "默认模型平台已切换；后台校验中");
+    settings_.set_status("默认模型平台已切换；后台校验中");
     enqueue_intent("model.providers", tokmon::cbor::object({}));
   } else if (intent_action_ == "model.provider.configure") {
-    text(document_, "settings-status", "Provider 配置已原子保存；后台校验中");
+    settings_.set_status("Provider 配置已原子保存；后台校验中");
     enqueue_intent("model.providers", tokmon::cbor::object({}));
   } else if (intent_action_ == "model.provider.secret.set") {
-    text(document_, "settings-status", "API Key 已写入系统安全存储");
+    settings_.set_status("API Key 已写入系统安全存储");
     enqueue_intent("model.providers", tokmon::cbor::object({}));
   } else if (intent_action_ == "model.provider.test") {
-    text(document_, "settings-status", "Provider 测试已完成");
+    settings_.set_status("Provider 测试已完成");
   }
   intent_action_.clear();
   start_next_intent();
@@ -3318,7 +2158,7 @@ bool DeskController::handle_raw_event(const SDL_Event& event) {
       return true;
     }
     if (event.key.key == SDLK_COMMA && !shift) {
-      render_settings_page(settings_page_);
+      render_settings_page(settings_.page());
       if (auto* overlay = document_.GetElementById("settings-overlay"))
         overlay->SetClass("hidden", false);
       return true;
@@ -3353,26 +2193,7 @@ bool DeskController::handle_raw_event(const SDL_Event& event) {
       return true;
     }
     if (heavy_focus_ == HeavyFocus::terminal) {
-      auto& tab = active_terminal_tab();
-      if (tab.vt->mouse_tracking()) {
-        const auto button = event.wheel.y > 0
-            ? TerminalMouseButton::wheel_up
-            : TerminalMouseButton::wheel_down;
-        const auto bytes = tab.vt->encode_mouse(
-            TerminalMouseAction::press, button, event.wheel.mouse_x,
-            event.wheel.mouse_y, tab.columns * tab.cell_width,
-            tab.rows * tab.cell_height, tab.cell_width, tab.cell_height,
-            terminal_modifiers(SDL_GetModState()));
-        std::string error;
-        if (!bytes.empty() && !tab.session->write(bytes, error))
-          tab.vt->append("\r\n" + error + "\r\n");
-      } else {
-        tab.vt->scroll_viewport(event.wheel.y > 0 ? -3 : 3);
-        if (auto* surface = dynamic_cast<ElementTerminal*>(
-                document_.GetElementById("terminal-surface")))
-          surface->set_snapshot(tab.vt->render_snapshot());
-      }
-      return true;
+      return terminal_.handle_wheel(event);
     }
     return false;
   }
@@ -3386,17 +2207,7 @@ bool DeskController::handle_raw_event(const SDL_Event& event) {
           apply_code_edit(*edit);
       }
     } else if (heavy_focus_ == HeavyFocus::terminal) {
-      text(document_, "terminal-status", "正在运行 · 已接收输入");
-      const std::string incoming(event.text.text);
-      if (!pending_terminal_keydown_text_.empty() &&
-          pending_terminal_keydown_text_.starts_with(incoming))
-        pending_terminal_keydown_text_.erase(0, incoming.size());
-      const auto bytes = terminal_vt().encode_key(
-          TerminalKey::unidentified, incoming,
-          terminal_modifiers(SDL_GetModState()));
-      std::string error;
-      if (!bytes.empty() && !terminal_session().write(bytes, error))
-        terminal_vt().append("\r\n" + error + "\r\n");
+      return terminal_.handle_text(event);
     }
     return true;
   }
@@ -3424,41 +2235,12 @@ bool DeskController::handle_raw_event(const SDL_Event& event) {
               document_.GetElementById("file-preview")))
         editor->set_composition({}, 0, 0);
     heavy_focus_ = HeavyFocus::none;
-    pending_terminal_keydown_text_.clear();
-    platform_.DeactivateKeyboard();
-    text(document_, "terminal-hint",
-         "点击终端后直接输入 · Ctrl+Shift+C/V 复制/粘贴 · Ctrl+单击打开 OSC 8 链接 · Esc 释放焦点");
+    terminal_.release_focus();
     return true;
   }
 
   if (heavy_focus_ == HeavyFocus::terminal) {
-    if (control_key && shift_key && event.key.key == SDLK_C) {
-      if (auto* surface = dynamic_cast<ElementTerminal*>(
-              document_.GetElementById("terminal-surface"))) {
-        const auto selected = surface->selected_text();
-        if (!selected.empty())
-          platform_.SetClipboardText(selected);
-      }
-      return true;
-    }
-    if (control_key && shift_key && event.key.key == SDLK_V) {
-      paste_terminal(false);
-      return true;
-    }
-    const auto key = terminal_key(event.key.key);
-    const auto printable = printable_key_text(event.key.key, modifiers);
-    if (!printable.empty() && !control_key &&
-        !(modifiers & (SDL_KMOD_ALT | SDL_KMOD_GUI))) {
-      pending_terminal_keydown_text_ += printable;
-      return true;
-    }
-    const auto bytes = terminal_vt().encode_key(
-        key, key_text(event.key.key), terminal_modifiers(modifiers),
-        event.key.repeat);
-    std::string error;
-    if (!bytes.empty() && !terminal_session().write(bytes, error))
-      terminal_vt().append("\r\n" + error + "\r\n");
-    return true;
+    return terminal_.handle_key(event);
   }
 
   auto* editor = dynamic_cast<ElementCodeSurface*>(
@@ -3505,8 +2287,18 @@ bool DeskController::handle_raw_event(const SDL_Event& event) {
 }
 
 void DeskController::ProcessEvent(Rml::Event& event) {
-  auto* element = event.GetCurrentElement();
-  if (!element) return;
+  auto* listener = event.GetCurrentElement();
+  if (!listener) return;
+  auto* element = listener;
+  if (event.GetType() == "click") {
+    for (auto* candidate = event.GetTargetElement(); candidate &&
+         candidate != listener; candidate = candidate->GetParentNode()) {
+      if (candidate->GetTagName() == "button") {
+        element = candidate;
+        break;
+      }
+    }
+  }
   const auto& id = element->GetId();
   if (id == "conversation" && event.GetType() == "mousescroll") {
     constexpr float kEstimatedTurnHeight = 210.f;
@@ -3591,83 +2383,15 @@ void DeskController::ProcessEvent(Rml::Event& event) {
   }
   if (id == "terminal-surface" &&
       (event.GetType() == "mousedown" || event.GetType() == "mousemove" ||
-       event.GetType() == "mouseup")) {
-    auto* terminal_surface = dynamic_cast<ElementTerminal*>(element);
-    if (!terminal_surface)
-      return;
-    const auto absolute = element->GetAbsoluteOffset(Rml::BoxArea::Content);
-    if (event.GetType() == "mousedown") {
-      // Acquire the raw SDL keyboard route on pointer-down. Waiting for RmlUi's
-      // synthetic click is unreliable when the same element also owns drag
-      // selection and mouse-reporting handlers.
-      heavy_focus_ = HeavyFocus::terminal;
-      element->Focus();
-      start_terminal();
-      resize_terminal_to_surface();
-      platform_.ActivateKeyboard(absolute, 17.f);
-      if (active_terminal_tab().started) {
-        text(document_, "terminal-status", "正在运行 · 已聚焦");
-        text(document_, "terminal-hint",
-             "终端已聚焦 · 直接输入 · Ctrl+Shift+C/V 复制/粘贴 · Esc 释放焦点");
-      }
-    }
-    const float local_x = static_cast<float>(
-        event.GetParameter<int>("mouse_x", 0)) - absolute.x;
-    const float local_y = static_cast<float>(
-        event.GetParameter<int>("mouse_y", 0)) - absolute.y;
-    const bool force_selection = (SDL_GetModState() & SDL_KMOD_SHIFT) != 0;
-    if (terminal_vt().mouse_tracking() && !force_selection) {
-      TerminalMouseAction action = TerminalMouseAction::motion;
-      if (event.GetType() == "mousedown") {
-        action = TerminalMouseAction::press;
-        terminal_mouse_down_ = true;
-      } else if (event.GetType() == "mouseup") {
-        action = TerminalMouseAction::release;
-        terminal_mouse_down_ = false;
-      }
-      const auto bytes = terminal_vt().encode_mouse(
-          action, event.GetType() == "mousemove" ? TerminalMouseButton::none
-                                                   : TerminalMouseButton::left,
-          local_x, local_y, static_cast<int>(element->GetClientWidth()),
-          static_cast<int>(element->GetClientHeight()),
-          active_terminal_tab().cell_width, active_terminal_tab().cell_height,
-          terminal_modifiers(SDL_GetModState()), terminal_mouse_down_);
-      std::string error;
-      if (!bytes.empty() && !terminal_session().write(bytes, error))
-        terminal_vt().append("\r\n" + error + "\r\n");
-    } else if (event.GetType() == "mousedown") {
-      terminal_surface->begin_selection(local_x, local_y);
-    } else if (event.GetType() == "mousemove") {
-      terminal_surface->update_selection(local_x, local_y);
-    } else {
-      terminal_surface->end_selection();
-    }
-    return;
-  }
-  if (event.GetType() == "click" && id == "terminal-surface") {
+       event.GetType() == "mouseup" || event.GetType() == "click")) {
     heavy_focus_ = HeavyFocus::terminal;
-    element->Focus();
-    start_terminal();
-    resize_terminal_to_surface();
-    platform_.ActivateKeyboard(
-        element->GetAbsoluteOffset(Rml::BoxArea::Content), 17.f);
-    if ((SDL_GetModState() & SDL_KMOD_CTRL) != 0) {
-      const auto absolute = element->GetAbsoluteOffset(Rml::BoxArea::Content);
-      if (auto* terminal_surface = dynamic_cast<ElementTerminal*>(element)) {
-        const auto link = terminal_surface->hyperlink_at(
-            static_cast<float>(event.GetParameter<int>("mouse_x", 0)) - absolute.x,
-            static_cast<float>(event.GetParameter<int>("mouse_y", 0)) - absolute.y);
-        if (terminal_safe_hyperlink(link))
-          (void)SDL_OpenURL(link.c_str());
-      }
-    }
+    (void)terminal_.handle_pointer(event);
     return;
   }
   if (event.GetType() == "keydown") {
     const auto key = event.GetParameter<int>("key_identifier", 0);
     if (id == "composer") {
-      auto* popover = document_.GetElementById("composer-popover");
-      const bool slash_open = popover && !popover->IsClassSet("hidden") &&
+      const bool slash_open = view_model_.state().slash_visible &&
           slash_command_count_ > 0;
       if (slash_open && (key == Rml::Input::KI_UP ||
                          key == Rml::Input::KI_DOWN)) {
@@ -3681,11 +2405,11 @@ void DeskController::ProcessEvent(Rml::Event& event) {
         event.StopPropagation();
         return;
       }
-      if (key == Rml::Input::KI_ESCAPE && popover &&
-          !popover->IsClassSet("hidden")) {
+      if (key == Rml::Input::KI_ESCAPE &&
+          view_model_.state().composer_popover_visible) {
         slash_command_count_ = 0;
         slash_command_index_ = 0;
-        popover->SetClass("hidden", true);
+        renderer_.close_composer_popover();
         event.StopPropagation();
         return;
       }
@@ -3696,8 +2420,7 @@ void DeskController::ProcessEvent(Rml::Event& event) {
       }
     }
     if (key == Rml::Input::KI_RETURN) {
-      if (id == "terminal-input") send_terminal_input();
-      else if (id == "composer") send_message();
+      if (id == "composer") send_message();
       else if (id == "editor-find") find_editor(false);
       else if (id == "editor-replace") replace_editor_selection();
       else if (id == "editor-line") go_to_editor_line();
@@ -3749,13 +2472,12 @@ void DeskController::ProcessEvent(Rml::Event& event) {
     if (!query.empty()) {
       for (const auto& [page, keywords] : pages)
         if (keywords.find(query) != std::string_view::npos) {
-          settings_page_ = std::string(page);
-          render_settings_page(settings_page_);
+          render_settings_page(std::string(page));
           Rml::ElementList items;
-          document_.QuerySelectorAll(items, "[data-page]");
+          document_.QuerySelectorAll(items, "[setting-page]");
           for (auto* item : items)
             item->SetClass("active",
-                item->GetAttribute<Rml::String>("data-page", "") == page);
+                item->GetAttribute<Rml::String>("setting-page", "") == page);
           break;
         }
     }
@@ -3764,94 +2486,78 @@ void DeskController::ProcessEvent(Rml::Event& event) {
   if ((event.GetType() == "input" || event.GetType() == "change" ||
        event.GetType() == "keyup") &&
       id == "terminal-search") {
-    search_terminal();
+    terminal_.search();
     return;
   }
   if (event.GetType() == "click" && id == "terminal-search") {
     heavy_focus_ = HeavyFocus::none;
-    pending_terminal_keydown_text_.clear();
+    terminal_.release_focus();
     return;
   }
-  if (element->GetAttribute<Rml::String>("data-navigation-id", "").size()) {
+  if (element->GetAttribute<Rml::String>("nav-id", "").size()) {
     handle_navigation(*element);
     return;
   }
-  if (element->GetAttribute<Rml::String>("data-git-branch", "").size()) {
+  if (element->GetAttribute<Rml::String>("git-branch", "").size()) {
     switch_branch(*element);
     return;
   }
   if (const auto terminal_tab =
-          element->GetAttribute<Rml::String>("data-terminal-tab", "");
+          element->GetAttribute<Rml::String>("terminal-tab-id", "");
       !terminal_tab.empty()) {
-    select_terminal_tab(terminal_tab);
+    terminal_.select_tab(terminal_tab);
     return;
   }
-  if (const auto provider = element->GetAttribute<Rml::String>("data-provider-use", "");
+  if (const auto provider = element->GetAttribute<Rml::String>("provider-id", "");
       !provider.empty()) {
-    selected_provider_ = provider;
-    enqueue_intent("model.provider.use", tokmon::cbor::object({{"name", selected_provider_}}));
+    settings_.select_provider(provider);
+    enqueue_intent("model.provider.use",
+                   tokmon::cbor::object({{"name", settings_.provider()}}));
     render_settings_page("model");
     return;
   }
-  if (const auto kind = element->GetAttribute<Rml::String>("data-choice-kind", "");
+  if (const auto kind = element->GetAttribute<Rml::String>("choice-kind", "");
       !kind.empty()) {
-    const auto value = element->GetAttribute<Rml::String>("data-choice-value", "");
+    const auto value = element->GetAttribute<Rml::String>("choice-value", "");
     if (kind == "effort") {
-      selected_effort_ = value;
-      set_cbor(settings_values_, "reasoning", selected_effort_);
-      if (auto* button = document_.GetElementById("effort-button"))
-        button->SetInnerRML("<svg src='../../assets/figma/icon-40.svg'></svg>" +
-                            escape(selected_effort_) + "⌄");
+      settings_.select_effort(value);
     } else if (kind == "access") {
-      selected_access_ = value;
-      if (auto* button = document_.GetElementById("access-button"))
-        button->SetInnerRML("<svg src='../../assets/figma/icon-28.svg'></svg>" +
-            std::string(selected_access_ == "full" ? "完全访问⌄" : "受限访问⌄"));
+      settings_.select_access(value);
     } else if (kind == "provider") {
-      selected_provider_ = value;
-      if (const auto* providers = tokmon::cbor::find(providers_payload_, "providers");
-          providers && providers->as_array())
-        for (const auto& provider : *providers->as_array())
-          if (cbor_string(provider, "name") == selected_provider_) {
-            selected_model_ = cbor_string(provider, "model", selected_model_);
-            break;
-          }
-      text(document_, "active-model", escape(selected_model_) + "⌄");
+      settings_.select_provider(value);
       enqueue_intent("model.provider.use",
-                     tokmon::cbor::object({{"name", selected_provider_}}));
+                     tokmon::cbor::object({{"name", settings_.provider()}}));
     }
-    if (auto* popover = document_.GetElementById("composer-popover"))
-      popover->SetClass("hidden", true);
+    renderer_.close_composer_popover();
     return;
   }
-  if (const auto command = element->GetAttribute<Rml::String>("data-command", "");
+  if (const auto command = element->GetAttribute<Rml::String>("command-name", "");
       !command.empty()) {
     if (auto* composer = control(document_, "composer")) {
       composer->SetValue(command + " ");
       update_composer_placeholder();
       composer->Focus();
     }
-    if (auto* popover = document_.GetElementById("composer-popover"))
-      popover->SetClass("hidden", true);
+    renderer_.close_composer_popover();
     return;
   }
   if (element->GetAttribute<Rml::String>("data-path", "").size()) {
     preview_file(*element);
     return;
   }
-  if (element->GetAttribute<Rml::String>("data-git-action", "").size()) {
+  if (element->GetAttribute<Rml::String>("git-action", "").size()) {
     handle_git_action(*element);
     return;
   }
-  if (element->GetAttribute<Rml::String>("data-diff-path", "").size()) {
+  if (element->GetAttribute<Rml::String>("diff-path", "").size()) {
     preview_diff(*element);
     return;
   }
-  if (element->GetAttribute<Rml::String>("data-page", "").size()) {
+  if (element->GetAttribute<Rml::String>("setting-page", "").size()) {
     show_settings_page(*element);
     return;
   }
-  if (element->GetAttribute<Rml::String>("data-starter", "").size()) {
+  if (element->GetAttribute<Rml::String>("starter-kind", "").size()) {
     choose_starter(*element);
     return;
   }
@@ -3860,7 +2566,7 @@ void DeskController::ProcessEvent(Rml::Event& event) {
     toggle_hidden("new-session-overlay");
   }
   else if (id == "settings-button") {
-    render_settings_page(settings_page_);
+    render_settings_page(settings_.page());
     toggle_hidden("settings-overlay");
   }
   else if (id == "close-settings") toggle_hidden("settings-overlay");
@@ -3909,22 +2615,14 @@ void DeskController::ProcessEvent(Rml::Event& event) {
   }
   else if (id == "export-trajectory") export_trajectory();
   else if (id == "title-edit") {
-    auto* popover = document_.GetElementById("composer-popover");
-    if (popover) {
-      const auto* selected = navigation_.selected();
-      popover->SetInnerRML(
-          "<div class='popover-card title-popover'><strong>重命名会话</strong>"
-          "<input id='rename-title-input' type='text' value='" +
-          escape(selected ? selected->title : "新会话") +
-          "'/><button id='confirm-title-rename' class='primary-button'>保存</button></div>");
-      popover->SetClass("hidden", false);
-      listen("confirm-title-rename");
-    }
+    const auto* selected = navigation_.selected();
+    renderer_.rename_popover(selected ? selected->title : "新会话");
   }
   else if (id == "confirm-title-rename") {
     auto* title = control(document_, "rename-title-input");
     if (title && navigation_.rename_selected(title->GetValue(), true)) {
-      text(document_, "session-title", escape(title->GetValue()));
+      view_model_.state().session_title = title->GetValue();
+      view_model_.dirty();
       render_navigation();
       save_navigation();
       if (!active_ray_.empty())
@@ -3932,37 +2630,31 @@ void DeskController::ProcessEvent(Rml::Event& event) {
             {"text", "/rename " + std::string(title->GetValue())},
             {"ray", active_ray_}, {"surface", "desktop-ui"}}));
     }
-    document_.GetElementById("composer-popover")->SetClass("hidden", true);
+    renderer_.close_composer_popover();
   }
   else if (id == "attach-button") choose_attachment();
   else if (id == "access-button" || id == "active-model" || id == "effort-button") {
-    auto* popover = document_.GetElementById("composer-popover");
-    if (!popover) return;
-    std::ostringstream choices;
-    choices << "<div class='popover-card choice-popover'>";
+    std::string title;
+    std::vector<ComposerChoiceView> choices;
     if (id == "access-button") {
-      choices << "<strong>访问权限</strong><button data-choice-kind='access' data-choice-value='full'>完全访问</button>"
-                 "<button data-choice-kind='access' data-choice-value='restricted'>受限访问</button>";
+      title = "访问权限";
+      choices = {{"access", "full", "完全访问", {}},
+                 {"access", "restricted", "受限访问", {}}};
     } else if (id == "effort-button") {
-      choices << "<strong>推理强度</strong>";
+      title = "推理强度";
       for (const char* value : {"标准", "高", "最高"})
-        choices << "<button data-choice-kind='effort' data-choice-value='" << value << "'>" << value << "</button>";
+        choices.push_back({"effort", value, value, {}});
     } else {
-      choices << "<strong>模型平台</strong>";
-      if (const auto* providers = tokmon::cbor::find(providers_payload_, "providers");
+      title = "模型平台";
+      if (const auto* providers = tokmon::cbor::find(
+              settings_.providers_payload(), "providers");
           providers && providers->as_array())
         for (const auto& provider : *providers->as_array())
-          choices << "<button data-choice-kind='provider' data-choice-value='"
-                  << escape(cbor_string(provider, "name")) << "'><span>"
-                  << escape(cbor_string(provider, "name")) << "</span><small>"
-                  << escape(cbor_string(provider, "model")) << "</small></button>";
+          choices.push_back({"provider", cbor_string(provider, "name"),
+                             cbor_string(provider, "name"),
+                             cbor_string(provider, "model")});
     }
-    choices << "</div>";
-    popover->SetInnerRML(choices.str());
-    popover->SetClass("hidden", false);
-    Rml::ElementList choice_rows;
-    popover->QuerySelectorAll(choice_rows, "[data-choice-kind]");
-    for (auto* choice : choice_rows) choice->AddEventListener("click", this);
+    renderer_.choice_popover(std::move(title), std::move(choices));
   }
   else if (id == "thought-toggle") toggle_hidden("thought-content");
   else if (id == "workflow-toggle") toggle_hidden("workflow-content");
@@ -3994,14 +2686,14 @@ void DeskController::ProcessEvent(Rml::Event& event) {
   }
   else if (id == "terminal-tab") {
     show_right_view("terminal-view");
-    start_terminal();
+    terminal_.start();
     if (auto* surface = document_.GetElementById("terminal-surface")) {
       heavy_focus_ = HeavyFocus::terminal;
       surface->Focus();
-      resize_terminal_to_surface();
+      terminal_.resize();
       platform_.ActivateKeyboard(
           surface->GetAbsoluteOffset(Rml::BoxArea::Content), 17.f);
-      if (active_terminal_tab().started) {
+      if (terminal_.running()) {
         text(document_, "terminal-status", "正在运行 · 已聚焦");
         text(document_, "terminal-hint",
              "终端已聚焦 · 直接输入 · Ctrl+Shift+C/V 复制/粘贴 · Esc 释放焦点");
@@ -4009,10 +2701,10 @@ void DeskController::ProcessEvent(Rml::Event& event) {
     }
   }
   else if (id == "terminal-new-tab") {
-    create_terminal_tab();
-    start_terminal();
+    terminal_.create_tab();
+    terminal_.start();
   }
-  else if (id == "terminal-close-tab") close_terminal_tab();
+  else if (id == "terminal-close-tab") terminal_.close_tab();
   else if (id == "browser-tab") show_right_view("browser-view");
   else if (id == "diff-view-toggle") {
     diff_split_view_ = !diff_split_view_;
@@ -4027,10 +2719,7 @@ void DeskController::ProcessEvent(Rml::Event& event) {
   else if (id == "branch-button") toggle_branch_menu();
   else if (id == "close-diff") {
     current_diff_path_.clear();
-    if (auto* diff = document_.GetElementById("review-diff")) {
-      diff->SetInnerRML({});
-      diff->SetClass("hidden", true);
-    }
+    renderer_.close_diff();
     refresh_review();
   }
   else if (id == "refresh-review") refresh_review();
@@ -4064,46 +2753,31 @@ void DeskController::ProcessEvent(Rml::Event& event) {
     }
   }
   else if (id == "send-button") send_message();
-  else if (id == "browser-launch") launch_browser();
-  else if (id == "browser-go") launch_browser();
-  else if (id == "browser-refresh") refresh_browser();
-  else if (id == "browser-back") back_browser();
-  else if (id == "browser-forward") forward_browser();
-  else if (id == "browser-reload") reload_browser();
-  else if (id == "browser-takeover") toggle_browser_takeover();
-  else if (id == "browser-stop") stop_browser();
-  else if (id == "browser-click") click_browser();
-  else if (id == "browser-fill") fill_browser();
+  else if (id == "browser-launch" || id == "browser-go") browser_.launch();
+  else if (id == "browser-refresh") browser_.refresh();
+  else if (id == "browser-back") browser_.back();
+  else if (id == "browser-forward") browser_.forward();
+  else if (id == "browser-reload") browser_.reload();
+  else if (id == "browser-takeover") browser_.toggle_takeover();
+  else if (id == "browser-stop") browser_.stop();
+  else if (id == "browser-click") browser_.click();
+  else if (id == "browser-fill") browser_.fill();
   else if (id == "configure-provider") {
-    auto value = [](Rml::ElementFormControl* item) {
-      return item ? std::string(item->GetValue()) : std::string{};
-    };
-    enqueue_intent("model.provider.configure", tokmon::cbor::object({
-        {"name", selected_provider_}, {"protocol", value(control(document_, "provider-protocol"))},
-        {"endpoint", value(control(document_, "provider-endpoint"))},
-        {"model", value(control(document_, "setting-main-model"))},
-        {"auth", value(control(document_, "provider-auth"))},
-        {"secret_env", value(control(document_, "provider-secret-env"))},
-        {"thinking", true}, {"default", true}, {"reasoning_effort", "high"},
-        {"max_output_tokens", static_cast<std::int64_t>(4096)},
-        {"max_attempts", static_cast<std::int64_t>(6)},
-        {"retry_backoff_ms", static_cast<std::int64_t>(5000)}}));
-    text(document_, "settings-status", "正在保存 Provider 配置…");
+    enqueue_intent("model.provider.configure",
+                   settings_.provider_configuration());
+    settings_.set_status("正在保存 Provider 配置…");
   }
   else if (id == "store-provider-secret") {
-    auto* secret = control(document_, "provider-secret");
-    if (secret && !secret->GetValue().empty()) {
-      enqueue_intent("model.provider.secret.set", tokmon::cbor::object({
-          {"name", selected_provider_}, {"secret", std::string(secret->GetValue())}}));
-      secret->SetValue("");
-      text(document_, "settings-status", "正在写入系统安全存储…");
+    if (!view_model_.state().settings.provider_secret.empty()) {
+      enqueue_intent("model.provider.secret.set", settings_.provider_secret());
+      view_model_.state().settings.provider_secret.clear();
+      view_model_.dirty();
+      settings_.set_status("正在写入系统安全存储…");
     }
   }
   else if (id == "test-provider") {
-    enqueue_intent("model.provider.test", tokmon::cbor::object({
-        {"name", selected_provider_}, {"text", "Reply with TOKMON_PROVIDER_OK"},
-        {"surface", "desktop-ui"}}));
-    text(document_, "settings-status", "正在通过真实模型光路测试…");
+    enqueue_intent("model.provider.test", settings_.provider_test());
+    settings_.set_status("正在通过真实模型光路测试…");
   }
   else if (id == "save-file") save_file();
   else if (id == "undo-file") undo_file();
@@ -4131,14 +2805,14 @@ void DeskController::ProcessEvent(Rml::Event& event) {
   else if (id == "close-discard" || id == "cancel-discard") toggle_hidden("discard-overlay");
   else if (id == "confirm-discard") confirm_discard();
   else if (id == "cancel-terminal-paste") {
-    pending_terminal_paste_.clear();
+    terminal_.cancel_paste();
     toggle_hidden("terminal-paste-overlay");
   }
-  else if (id == "confirm-terminal-paste") paste_terminal(true);
+  else if (id == "confirm-terminal-paste") terminal_.paste(true);
   else if (id == "terminal-clear-search") {
     if (auto* search = control(document_, "terminal-search"))
       search->SetValue("");
-    search_terminal();
+    terminal_.search();
   }
   else if (id == "confirm-commit") commit_changes(false);
   else if (id == "confirm-push") commit_changes(true);
@@ -4415,60 +3089,19 @@ bool DeskController::update() {
           std::make_move_iterator(incoming.end()));
     }
   }
-  if (browser_future_.valid() &&
-      browser_future_.wait_for(std::chrono::seconds(0)) ==
-          std::future_status::ready) {
-    changed = true;
-    render_browser_state(browser_future_.get());
-  }
-  if (terminal_tabs_.empty())
-    return changed;
-  if (!pending_terminal_keydown_text_.empty() &&
-      heavy_focus_ == HeavyFocus::terminal) {
-    const auto pending = std::move(pending_terminal_keydown_text_);
-    pending_terminal_keydown_text_.clear();
-    const auto bytes = terminal_vt().encode_key(
-        TerminalKey::unidentified, pending, 0);
-    std::string error;
-    if (!bytes.empty() && !terminal_session().write(bytes, error))
-      terminal_vt().append("\r\n" + error + "\r\n");
-    changed = true;
-  }
-  std::size_t terminal_frame_budget = 256u * 1024u;
-  for (std::size_t index = 0;
-       index < terminal_tabs_.size() && terminal_frame_budget > 0; ++index) {
-    auto& tab = *terminal_tabs_[index];
-    if (!tab.started)
-      continue;
-    const auto output = tab.session->take_output(
-        std::min<std::size_t>(64u * 1024u, terminal_frame_budget));
-    if (output.empty())
-      continue;
-    changed = true;
-    terminal_frame_budget -= output.size();
-    if (index == active_terminal_index_)
-      text(document_, "terminal-status", "正在运行 · 已更新");
-    tab.vt->append(output);
-    if (index == active_terminal_index_)
-      if (auto* surface = dynamic_cast<ElementTerminal*>(
-              document_.GetElementById("terminal-surface"))) {
-        surface->set_snapshot(tab.vt->render_snapshot());
-        search_terminal();
-      }
-  }
+  changed = browser_.update() || changed;
+  changed = terminal_.update() || changed;
   return changed;
 }
 
 int DeskController::update_poll_interval_ms() const noexcept {
   if (chat_future_.valid() || startup_future_.valid() ||
-      browser_future_.valid() || intent_future_.valid() ||
+      browser_.busy() || intent_future_.valid() ||
       file_search_future_.valid() || file_tree_future_.valid() ||
       file_load_future_.valid() || workspace_switch_future_.valid() ||
       syntax_future_.valid() || change_set_future_.valid())
     return 16;
-  if (!terminal_tabs_.empty() &&
-      active_terminal_index_ < terminal_tabs_.size() &&
-      terminal_tabs_[active_terminal_index_]->started)
+  if (terminal_.running())
     return 50;
   return 250;
 }

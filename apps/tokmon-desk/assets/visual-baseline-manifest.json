@@ -4,7 +4,7 @@
   "policy": "Technical rewrite only. The legacy Slint desktop is the visual and interaction source of truth; the prototype is secondary. tokmon-desk never loads legacy source at runtime.",
   "priority": [
     "apps/tokmon-desktop runtime implementation",
-    "E:/cc/AI/tokmon/Tokmon UI prototype",
+    "Tokmon UI prototype (external reference)",
     "docs/DESKTOP-RMLUI-FINAL-ARCHITECTURE.md"
   ],
   "legacyDesktop": {
@@ -132,7 +132,7 @@
     "starter-review.svg": "96000c00d6a8ede2a5e54b1d88d70bd2093276123cecf557bdf3029a205afd20"
   },
   "prototype": {
-    "path": "E:/cc/AI/tokmon/Tokmon UI",
+    "externalReference": "Tokmon UI",
     "repositoryCommit": "bb9f7fe80217d20f651e5df7baa15ade8345dea2",
     "appTsxSha256": "f7a01982491c32bbb757e0a5bae75b4ea21e137bcea6d3304a410835e37b70ef",
     "interactionUrl": "http://localhost:8443/",

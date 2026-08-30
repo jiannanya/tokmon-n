@@ -225,6 +225,7 @@ tokmon_desk_install_fetched_license(md4c "${md4c_SOURCE_DIR}/LICENSE.md")
 set(TOKMON_DESK_CORE_SOURCES
   src/app/app_state.cpp
   src/platform/desk_app_paths.cpp
+  src/platform/desk_resource_paths.cpp
   src/state/desk_state_store.cpp
   src/state/document_recovery.cpp
   src/fonts/font_manager.cpp
@@ -297,6 +298,11 @@ add_executable(tokmon-desk WIN32
   src/ui/elements/element_diff_surface.cpp
   src/ui/elements/element_file_tree.cpp
   src/ui/elements/element_terminal.cpp
+  src/ui/desk_view_model.cpp
+  src/ui/modules/browser_controller.cpp
+  src/ui/modules/settings_controller.cpp
+  src/ui/modules/desk_renderer.cpp
+  src/ui/modules/terminal_controller.cpp
   src/ui/desk_controller.cpp)
 add_dependencies(tokmon-desk tokmon)
 if(WIN32)

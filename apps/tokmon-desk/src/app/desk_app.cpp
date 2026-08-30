@@ -3,11 +3,13 @@
 #include "integration/daemon_client.hpp"
 #include "fonts/font_manager.hpp"
 #include "platform/desk_app_paths.hpp"
+#include "platform/desk_resource_paths.hpp"
 #include "platform/sdl_platform.hpp"
 #include "render/rml_render_interface_skia.hpp"
 #include "render/skia_device.hpp"
 #include "state/desk_state_store.hpp"
 #include "ui/desk_controller.hpp"
+#include "ui/desk_view_model.hpp"
 #include "ui/elements/element_code_surface.hpp"
 #include "ui/elements/element_diff_surface.hpp"
 #include "ui/elements/element_file_tree.hpp"
@@ -45,6 +47,7 @@ namespace {
 
 struct Arguments {
   std::filesystem::path workspace;
+  std::filesystem::path app_data_root;
   bool smoke_test{false};
   bool software_renderer{false};
   int idle_test_ms{0};
@@ -92,6 +95,8 @@ Arguments parse_arguments(int argc, char** argv) {
     const std::string_view argument(argv[index]);
     if (argument == "--workspace" && index + 1 < argc)
       result.workspace = std::filesystem::absolute(argv[++index]);
+    else if (argument == "--app-data-root" && index + 1 < argc)
+      result.app_data_root = std::filesystem::absolute(argv[++index]);
     else if (argument == "--smoke-test")
       result.smoke_test = true;
     else if (argument == "--software-renderer")
@@ -121,20 +126,6 @@ Arguments parse_arguments(int argc, char** argv) {
       result.visual_state = argv[++index];
   }
   return result;
-}
-
-std::filesystem::path resource_root() {
-  if (const char* base = SDL_GetBasePath()) {
-    const std::filesystem::path candidate(base);
-    if (std::filesystem::exists(candidate / "rml" / "documents" / "main.rml"))
-      return candidate;
-  }
-#ifdef TOKMON_DESK_SOURCE_DIR
-  const std::filesystem::path source(TOKMON_DESK_SOURCE_DIR);
-  if (std::filesystem::exists(source / "rml" / "documents" / "main.rml"))
-    return source;
-#endif
-  return std::filesystem::current_path() / "apps" / "tokmon-desk";
 }
 
 int stored_content_scale_percent(const DeskAppPaths& paths,
@@ -278,6 +269,7 @@ bool click_element(Rml::Context& context, Rml::Element* element,
 
 bool prepare_visual_state(Rml::Context& context,
                           Rml::ElementDocument& document,
+                          DeskViewModel& view_model,
                           const std::string_view state,
                           std::string& error) {
   context.Update();
@@ -325,12 +317,13 @@ bool prepare_visual_state(Rml::Context& context,
   } else if (state == "loading") {
     if (!open_right() || !click("launcher-review"))
       return false;
-    if (auto* empty = document.GetElementById("review-empty")) {
-      empty->SetClass("hidden", false);
-      empty->SetInnerRML(
-          "<strong>正在载入工作区更改…</strong><span>Git 状态与差异在后台计算，界面保持可交互</span>");
-      return true;
-    }
+    auto& view = view_model.state();
+    view.review_has_files = false;
+    view.review_title = "正在载入工作区更改…";
+    view.review_detail = "Git 状态与差异在后台计算，界面保持可交互";
+    view_model.dirty();
+    context.Update();
+    return true;
   } else if (state == "success" || state == "warning" || state == "error") {
     if (!open_right())
       return false;
@@ -363,9 +356,9 @@ bool prepare_visual_state(Rml::Context& context,
       return false;
     const auto page = state.substr(std::string_view("settings-").size());
     Rml::ElementList pages;
-    document.QuerySelectorAll(pages, "[data-page]");
+    document.QuerySelectorAll(pages, "[setting-page]");
     for (auto* item : pages)
-      if (item->GetAttribute<Rml::String>("data-page", "") == page)
+      if (item->GetAttribute<Rml::String>("setting-page", "") == page)
         return click_element(context, item, detail);
   }
   error = "unknown or unavailable visual state: " + std::string(state) +
@@ -414,7 +407,7 @@ bool write_interaction_report(SdlPlatform& platform,
          clicked && active("chat-mode") && hidden("trajectory"), detail);
 
   Rml::ElementList starter_cards;
-  document.QuerySelectorAll(starter_cards, "[data-starter]");
+  document.QuerySelectorAll(starter_cards, "[starter-kind]");
   const auto* initial_send = document.GetElementById("send-button");
   const bool initial_empty_send_disabled =
       initial_send && initial_send->IsClassSet("disabled");
@@ -440,7 +433,7 @@ bool write_interaction_report(SdlPlatform& platform,
   context.Update();
   Rml::ElementList slash_rows;
   if (composer_popover)
-    composer_popover->QuerySelectorAll(slash_rows, "[data-command]");
+    composer_popover->QuerySelectorAll(slash_rows, "[command-name]");
   const bool slash_second_selected = slash_rows.size() > 1 &&
       slash_rows[1]->IsClassSet("selected");
   const bool slash_enter = context.ProcessKeyDown(Rml::Input::KI_RETURN, 0);
@@ -601,7 +594,7 @@ bool write_interaction_report(SdlPlatform& platform,
   record("UI-007/031", "设置壳通过真实点击打开",
          settings_open, detail);
   Rml::ElementList settings_pages;
-  document.QuerySelectorAll(settings_pages, "[data-page]");
+  document.QuerySelectorAll(settings_pages, "[setting-page]");
   const std::vector<std::tuple<std::string_view, std::string_view,
                                std::string_view>> settings_contracts{
       {"general", "UI-032", "通用"},
@@ -619,7 +612,7 @@ bool write_interaction_report(SdlPlatform& platform,
   for (const auto& [page, id, expected_title] : settings_contracts) {
     Rml::Element* navigation = nullptr;
     for (auto* page_item : settings_pages) {
-      if (page_item->GetAttribute<Rml::String>("data-page", "") == page) {
+      if (page_item->GetAttribute<Rml::String>("setting-page", "") == page) {
         navigation = page_item;
         break;
       }
@@ -645,7 +638,7 @@ bool write_interaction_report(SdlPlatform& platform,
   context.Update();
   bool terminal_navigation_active = false;
   for (auto* page_item : settings_pages) {
-    const auto page = page_item->GetAttribute<Rml::String>("data-page", "");
+    const auto page = page_item->GetAttribute<Rml::String>("setting-page", "");
     if (page == "terminal")
       terminal_navigation_active = page_item->IsClassSet("active");
   }
@@ -952,7 +945,7 @@ SDL_HitTestResult hit_test(SDL_Window* window, const SDL_Point* point, void*) {
 int run_desk(int argc, char** argv) {
   try {
     auto arguments = parse_arguments(argc, argv);
-    const auto paths = DeskAppPaths::resolve();
+    const auto paths = DeskAppPaths::resolve(arguments.app_data_root);
     std::string error;
     if (!paths.ensure(error)) {
       std::cerr << "tokmon-desk: " << error << '\n';
@@ -1019,8 +1012,11 @@ int run_desk(int argc, char** argv) {
     register_diff_surface_element();
     register_file_tree_element();
 
-    const auto resources = resource_root();
-    const auto font = resources / "assets" / "fonts" / "MiSansVF.ttf";
+    const char* base_path = SDL_GetBasePath();
+    const auto executable_directory = base_path
+        ? std::filesystem::path(base_path) : std::filesystem::path{};
+    const auto resources = DeskResourcePaths::resolve(executable_directory);
+    const auto& font = resources.ui_font;
     FontManager font_manager;
     if (!font_manager.load_ui_font(font, error) ||
         font_manager.shape_utf8("Tokmon 中文 Aa 123", 13.f).empty()) {
@@ -1034,27 +1030,10 @@ int run_desk(int argc, char** argv) {
       Rml::Shutdown();
       return 6;
     }
-#if defined(_WIN32)
-    const std::filesystem::path terminal_font = "C:/Windows/Fonts/consola.ttf";
-    for (const auto& fallback : {std::filesystem::path("C:/Windows/Fonts/seguisym.ttf"),
-                                 std::filesystem::path("C:/Windows/Fonts/seguiemj.ttf")})
-      if (std::filesystem::exists(fallback))
-        (void)Rml::LoadFontFace(fallback.generic_string(), true);
-#elif defined(__APPLE__)
-    const std::filesystem::path terminal_font = "/System/Library/Fonts/Menlo.ttc";
-    for (const auto& fallback : {std::filesystem::path("/System/Library/Fonts/Apple Symbols.ttf"),
-                                 std::filesystem::path("/System/Library/Fonts/Apple Color Emoji.ttc")})
-      if (std::filesystem::exists(fallback))
-        (void)Rml::LoadFontFace(fallback.generic_string(), true);
-#else
-    const std::filesystem::path terminal_font = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf";
-    for (const auto& fallback : {std::filesystem::path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
-                                 std::filesystem::path("/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf")})
-      if (std::filesystem::exists(fallback))
-        (void)Rml::LoadFontFace(fallback.generic_string(), true);
-#endif
-    if (std::filesystem::exists(terminal_font))
-      (void)Rml::LoadFontFace(terminal_font.generic_string(), false);
+    const auto platform_fonts = DeskResourcePaths::platform_font_candidates();
+    for (std::size_t index = 0; index < platform_fonts.size(); ++index)
+      if (std::filesystem::exists(platform_fonts[index]))
+        (void)Rml::LoadFontFace(platform_fonts[index].generic_string(), index != 0);
     auto* context = Rml::CreateContext("tokmon-desk",
         {device->logical_width(), device->logical_height()}, nullptr);
     if (!context) {
@@ -1063,8 +1042,13 @@ int run_desk(int argc, char** argv) {
       return 7;
     }
     context->SetDensityIndependentPixelRatio(platform.display_scale());
-    auto* document = context->LoadDocument(
-        (resources / "rml" / "documents" / "main.rml").generic_string());
+    DeskViewModel view_model;
+    if (!view_model.bind(*context, resources.assets.generic_string())) {
+      std::cerr << "tokmon-desk: could not bind the desk view model\n";
+      Rml::Shutdown();
+      return 8;
+    }
+    auto* document = context->LoadDocument(resources.main_document.generic_string());
     if (!document) {
       std::cerr << "tokmon-desk: could not load main.rml\n";
       Rml::Shutdown();
@@ -1075,13 +1059,15 @@ int run_desk(int argc, char** argv) {
     if (auto resolved = tokmon::resolve_paths(arguments.workspace); resolved)
       daemon_endpoint = tokmon::workspace_snow_endpoint(
           resolved->run, resolved->project.parent_path());
-    DeskController controller(*document, platform, arguments.workspace, paths,
+    DeskController controller(*document, platform, view_model,
+                              arguments.workspace, paths,
                               daemon_endpoint);
     controller.bind(!arguments.smoke_test &&
                     arguments.ui_contract_report.empty());
 
     if (!arguments.visual_state.empty() &&
-        !prepare_visual_state(*context, *document, arguments.visual_state,
+        !prepare_visual_state(*context, *document, view_model,
+                              arguments.visual_state,
                               error)) {
       std::cerr << "tokmon-desk: " << error << '\n';
       Rml::RemoveContext("tokmon-desk");
@@ -1183,11 +1169,8 @@ int run_desk(int argc, char** argv) {
       const auto editor_rendered = editor->rendered_line_count();
       const auto editor_dom_children = editor->GetNumChildren();
 
-      review_diff->SetInnerRML(
-          "<tokmon-diff-surface id='acceptance-diff' class='diff-surface'>"
-          "</tokmon-diff-surface>");
       auto* diff = dynamic_cast<ElementDiffSurface*>(
-          document->GetElementById("acceptance-diff"));
+          document->GetElementById("diff-surface"));
       if (!diff) {
         std::cerr << "tokmon-desk: acceptance diff element is missing\n";
         Rml::RemoveContext("tokmon-desk");
@@ -1406,9 +1389,9 @@ int run_desk(int argc, char** argv) {
         arguments.idle_test_ms == 0) {
       const auto daemon_executable =
 #if defined(_WIN32)
-          std::filesystem::path(SDL_GetBasePath()) / "tokmon.exe";
+          executable_directory / "tokmon.exe";
 #else
-          std::filesystem::path(SDL_GetBasePath()) / "tokmon";
+          executable_directory / "tokmon";
 #endif
       daemon_probe = std::async(std::launch::async,
           [daemon_endpoint, daemon_executable,

@@ -626,12 +626,12 @@ int main(int argc, char** argv) {
         "desktop data roots are isolated from workspace and .tokmon");
 
   const auto desk_root = std::filesystem::path(root.string() + "-desk-profile");
-  DeskAppPaths isolated_paths{
-      .config = desk_root / "config", .data = desk_root / "data",
-      .state = desk_root / "state", .cache = desk_root / "cache",
-      .logs = desk_root / "logs", .runtime = desk_root / "runtime",
-      .recovery = desk_root / "state" / "recovery",
-      .change_snapshots = desk_root / "data" / "change-snapshots"};
+  const auto isolated_paths = DeskAppPaths::resolve(desk_root);
+  check(isolated_paths.config == desk_root / "config" &&
+            isolated_paths.runtime == desk_root / "state" / "runtime" &&
+            isolated_paths.change_snapshots ==
+                desk_root / "data" / "change-snapshots",
+        "Desktop accepts an explicit isolated app-data root");
   check(isolated_paths.ensure(error), "Desktop creates all isolated state roots");
   write_file(root / ".tokmon" / "config.yaml", "model: fixture\n");
   const auto daemon_config_hash =
