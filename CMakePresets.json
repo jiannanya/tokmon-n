@@ -62,6 +62,27 @@
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
     },
     {
+      "name": "windows-msvc-release-desk",
+      "inherits": "windows-vcpkg",
+      "displayName": "Windows MSVC Release - Desk",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build/windows-msvc-release-desk",
+      "cacheVariables": {
+        "CMAKE_CONFIGURATION_TYPES": "Release",
+        "BUILD_TESTING": "OFF",
+        "TOKMON_BUILD_DESKTOP": "OFF",
+        "TOKMON_BUILD_DESK": "ON",
+        "TOKMON_BUILD_EXTERNAL_LENSES": "OFF",
+        "TOKMON_BUILD_TESTS": "OFF",
+        "TOKMON_BUILD_SCRIPT_SDK_TESTS": "OFF",
+        "TOKMON_DESK_BOOTSTRAP_ZIG": "ON",
+        "TOKMON_OPTIMIZE_RELEASE_SIZE": "ON",
+        "VCPKG_MANIFEST_FEATURES": "desk"
+      },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
       "name": "windows-msvc-release-external-lenses",
       "inherits": "windows-vcpkg",
       "displayName": "Windows MSVC Release - External Lens Plugins",
@@ -122,6 +143,12 @@
       "name": "windows-msvc-release-desktop",
       "configurePreset": "windows-msvc-release-desktop",
       "configuration": "Release"
+    },
+    {
+      "name": "windows-msvc-release-desk",
+      "configurePreset": "windows-msvc-release-desk",
+      "configuration": "Release",
+      "targets": ["tokmon-desk"]
     },
     {
       "name": "windows-msvc-release-external-lenses",

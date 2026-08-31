@@ -4,10 +4,11 @@ option(TOKMON_OPTIMIZE_RELEASE_SIZE
   "Remove unused/duplicate code from Release binaries without size-first optimization" ON)
 
 option(TOKMON_RELEASE_REMOVE_UNUSED_RTTI
-  "Remove RTTI metadata from non-test Release targets that do not use it" ON)
+  "Remove RTTI metadata from non-test Release targets that do not require it" ON)
 if(BUILD_TESTING AND TOKMON_BUILD_TESTS)
   # Contract tests deliberately use dynamic_cast to distinguish native Lens
-  # implementations. Production targets have no dynamic_cast/typeid sites.
+  # implementations. Production targets that use dynamic_cast/typeid must set
+  # their TOKMON_REQUIRES_RTTI target property.
   set(TOKMON_RELEASE_REMOVE_UNUSED_RTTI FALSE)
 endif()
 
@@ -29,6 +30,13 @@ function(tokmon_optimize_release_target target)
     return()
   endif()
 
+  get_target_property(target_requires_rtti "${target}" TOKMON_REQUIRES_RTTI)
+  if(TOKMON_RELEASE_REMOVE_UNUSED_RTTI AND NOT target_requires_rtti)
+    set(remove_unused_rtti TRUE)
+  else()
+    set(remove_unused_rtti FALSE)
+  endif()
+
   if(TOKMON_RELEASE_IPO_SUPPORTED)
     set_property(TARGET "${target}" PROPERTY
       INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
@@ -44,7 +52,7 @@ function(tokmon_optimize_release_target target)
       "$<$<CONFIG:Release>:/GF>"
       "$<$<CONFIG:Release>:/Zc:inline>"
       "$<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:CXX>>:/Zc:throwingNew>"
-      "$<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:CXX>,$<BOOL:${TOKMON_RELEASE_REMOVE_UNUSED_RTTI}>>:/GR->")
+      "$<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:CXX>,$<BOOL:${remove_unused_rtti}>>:/GR->")
     get_target_property(target_type "${target}" TYPE)
     if(NOT target_type STREQUAL "STATIC_LIBRARY")
       target_link_options("${target}" PRIVATE
@@ -55,7 +63,7 @@ function(tokmon_optimize_release_target target)
     target_compile_options("${target}" PRIVATE
       "$<$<CONFIG:Release>:-ffunction-sections>"
       "$<$<CONFIG:Release>:-fdata-sections>"
-      "$<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:CXX>,$<BOOL:${TOKMON_RELEASE_REMOVE_UNUSED_RTTI}>>:-fno-rtti>")
+      "$<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:CXX>,$<BOOL:${remove_unused_rtti}>>:-fno-rtti>")
     get_target_property(target_type "${target}" TYPE)
     if(NOT target_type STREQUAL "STATIC_LIBRARY")
       if(WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")

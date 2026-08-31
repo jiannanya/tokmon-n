@@ -115,6 +115,8 @@ tokmon_desk_add_tree_sitter_grammar(tokmon_tree_sitter_cmake tokmon_ts_cmake
 # Windows, macOS, or Linux.
 set(TOKMON_DESK_ZIG_VERSION "0.16.0" CACHE STRING
   "Pinned Zig toolchain version used to build libghostty-vt")
+option(TOKMON_DESK_BOOTSTRAP_ZIG
+  "Download the pinned Zig toolchain when it is not installed" OFF)
 
 # Ghostty's CMake adapter invokes Zig at build time. Prefer an explicitly
 # supplied ZIG_EXECUTABLE, then PATH, and finally the repository-local tool
@@ -126,6 +128,42 @@ endif()
 if(NOT ZIG_EXECUTABLE AND WIN32)
   set(_tokmon_zig_candidate
     "${CMAKE_SOURCE_DIR}/build/tools/zig-x86_64-windows-${TOKMON_DESK_ZIG_VERSION}/zig.exe")
+  if(NOT EXISTS "${_tokmon_zig_candidate}" AND TOKMON_DESK_BOOTSTRAP_ZIG)
+    if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+      message(FATAL_ERROR
+        "Automatic Zig bootstrap currently supports only 64-bit Windows")
+    endif()
+    set(_tokmon_zig_tools_dir "${CMAKE_SOURCE_DIR}/build/tools")
+    set(_tokmon_zig_archive
+      "${_tokmon_zig_tools_dir}/zig-x86_64-windows-${TOKMON_DESK_ZIG_VERSION}.zip")
+    set(_tokmon_zig_url
+      "https://ziglang.org/download/${TOKMON_DESK_ZIG_VERSION}/zig-x86_64-windows-${TOKMON_DESK_ZIG_VERSION}.zip")
+    file(MAKE_DIRECTORY "${_tokmon_zig_tools_dir}")
+    message(STATUS
+      "tokmon-desk: downloading pinned Zig ${TOKMON_DESK_ZIG_VERSION}")
+    file(DOWNLOAD "${_tokmon_zig_url}" "${_tokmon_zig_archive}"
+      EXPECTED_HASH
+        SHA256=68659eb5f1e4eb1437a722f1dd889c5a322c9954607f5edcf337bc3684a75a7e
+      STATUS _tokmon_zig_download_status
+      TLS_VERIFY ON
+      SHOW_PROGRESS)
+    list(GET _tokmon_zig_download_status 0 _tokmon_zig_download_code)
+    list(GET _tokmon_zig_download_status 1 _tokmon_zig_download_message)
+    if(NOT _tokmon_zig_download_code EQUAL 0)
+      message(FATAL_ERROR
+        "Unable to download Zig ${TOKMON_DESK_ZIG_VERSION}: "
+        "${_tokmon_zig_download_message}")
+    endif()
+    file(ARCHIVE_EXTRACT
+      INPUT "${_tokmon_zig_archive}"
+      DESTINATION "${_tokmon_zig_tools_dir}")
+    unset(_tokmon_zig_archive)
+    unset(_tokmon_zig_download_code)
+    unset(_tokmon_zig_download_message)
+    unset(_tokmon_zig_download_status)
+    unset(_tokmon_zig_tools_dir)
+    unset(_tokmon_zig_url)
+  endif()
   if(EXISTS "${_tokmon_zig_candidate}")
     set(ZIG_EXECUTABLE "${_tokmon_zig_candidate}" CACHE FILEPATH
       "Pinned Zig executable used to build libghostty-vt" FORCE)
@@ -341,7 +379,8 @@ if(WIN32)
 endif()
 
 set_target_properties(tokmon-desk PROPERTIES
-  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+  TOKMON_REQUIRES_RTTI TRUE)
 
 # Resource changes must reach an incremental build even when no C++ object is
 # relinked. A tracked stamp keeps no-op builds cheap while CONFIGURE_DEPENDS
