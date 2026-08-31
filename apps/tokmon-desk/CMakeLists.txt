@@ -220,7 +220,7 @@ tokmon_desk_install_fetched_license(tree-sitter-tsx
   "${tokmon_ts_typescript_SOURCE_DIR}/LICENSE")
 tokmon_desk_install_fetched_license(ghostty
   "${tokmon_ghostty_vt_SOURCE_DIR}/LICENSE")
-tokmon_desk_install_fetched_license(md4c "${md4c_SOURCE_DIR}/LICENSE.md")
+tokmon_desk_install_fetched_license(chmd "${chmd_SOURCE_DIR}/LICENSE")
 
 set(TOKMON_DESK_CORE_SOURCES
   src/app/app_state.cpp
@@ -248,7 +248,7 @@ target_include_directories(tokmon_desk_core PUBLIC
 target_link_libraries(tokmon_desk_core
   PUBLIC
     tokmon_core
-    tokmon_md4c
+    chmd::chmd
     Freetype::Freetype
     harfbuzz::harfbuzz
     unofficial::tree-sitter::tree-sitter

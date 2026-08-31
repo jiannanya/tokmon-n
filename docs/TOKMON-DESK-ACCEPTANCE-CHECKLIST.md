@@ -192,7 +192,7 @@
 
 | ID | 级别 | 验收项 | 通过标准 | 状态 |
 |---|---|---|---|---|
-| MD-001 | P0 | MD4C 只作为 tokenizer/parser 基础，输出自有 AST | UI 不直接消费 MD4C callback/HTML | [x] |
+| MD-001 | P0 | chmd 只作为 CommonMark/GFM parser 基础，输出自有 AST | UI 不直接消费 chmd AST/HTML | [x] |
 | MD-002 | P0 | 每个 AST 节点包含稳定 NodeId、类型、源码 byte range、父子关系和属性 | 单元测试覆盖 | [x] |
 | MD-003 | P0 | 支持标题、段落、引用、列表、任务列表、代码块、表格、分隔线、链接、图片、强调、删除线、行内代码 | fixture 全通过 | [x] |
 | MD-004 | P0 | 支持 Tokmon 扩展：文件引用、diff、callout、tool call/result | AST 和安全 renderer 测试 | [x] |
@@ -297,7 +297,7 @@
 | PKG-004 | P0 | 安装包不包含 Debug CRT、完整 Ghostty、Ghostty 开发头或无关 Browser runtime | 文件与依赖审计 | [x] |
 | PKG-005 | P0 | `dependency-manifest.json` 记录直接/传递依赖版本、source/revision、许可证 | schema 和文件校验 | [x] |
 | PKG-006 | P0 | 同时提供 `THIRD_PARTY_NOTICES.txt` 与 `licenses/` | 安装态检查 | [x] |
-| PKG-007 | P0 | HarfBuzz、FreeType、RmlUi、SDL3、Skia、MD4C、Zep、tree-sitter、libgit2、libghostty-vt 等许可完整 | 清单逐项核对 | [x] |
+| PKG-007 | P0 | HarfBuzz、FreeType、RmlUi、SDL3、Skia、chmd、Zep、tree-sitter、libgit2、libghostty-vt 等许可完整 | 清单逐项核对 | [x] |
 | PKG-008 | P0 | macOS Metal 和 Linux Vulkan 平台分支无 Windows-only API 泄漏 | 当前主机静态/CMake 审计；真实构建标 `BLOCKED-PLATFORM` | 静态 [x]；真实构建 `BLOCKED-PLATFORM` |
 | PKG-009 | P0 | macOS arm64/x64、Windows x64、Linux x64/Wayland/X11 真实构建运行 | 当前 Windows 仅 Windows 可勾选，其他为 `BLOCKED-PLATFORM` | Windows x64 [x]；macOS/Linux `BLOCKED-PLATFORM` |
 

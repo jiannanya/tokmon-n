@@ -143,7 +143,7 @@
 
             <div class="settings-page" data-if="view.settings.page == 'about'">
               <div class="about-brand"><span>T</span><div><strong>tokmon-desk</strong><p>原生桌面智能工作台 · Forest Sage UI</p></div><em>开发版</em></div>
-              <div class="setting-card"><div class="setting-copy"><strong>开源组件</strong><p>RmlUi · SDL3 · Skia · HarfBuzz · FreeType · MD4C · Zep · libgit2 · tree-sitter · libghostty-vt</p></div></div>
+              <div class="setting-card"><div class="setting-copy"><strong>开源组件</strong><p>RmlUi · SDL3 · Skia · HarfBuzz · FreeType · chmd · Zep · libgit2 · tree-sitter · libghostty-vt</p></div></div>
               <div class="setting-card"><div class="setting-copy"><strong>许可声明</strong><p>完整版权与许可文本随发行包提供</p></div><button id="open-notices" class="secondary-button setting-action">打开许可声明</button></div>
             </div>
             <div id="settings-dialog-extension"></div>

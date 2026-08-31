@@ -51,7 +51,7 @@ Desktop 同时承担以下仅属于桌面产品的能力：
 | 字体塑形 | CJK、ligature、combining、bidi run | HarfBuzz | `src/fonts` | 成熟、跨平台、塑形一致 | 关于页通常无需单独弹窗声明，但发行包保留许可文本 |
 | 字形栅格化 | glyph outline/raster | FreeType | `src/fonts` | 与 HarfBuzz、Skia atlas 组合成熟 | 许可证按选定授权路径收录 |
 | 字形缓存 | glyph atlas、run cache、DPI 分桶 | Tokmon 自研缓存 + Skia | `src/fonts` | 控制内存、DPI 和失效策略 | 不缓存无限制文本布局结果 |
-| Markdown 解析 | CommonMark/GFM 风格 block/span 事件 | MD4C | `src/markdown` | 小型、成熟、增量接入成本低 | 不直接把 parser callback 暴露给 UI |
+| Markdown 解析 | CommonMark/GFM 风格紧凑索引 AST | chmd | `src/markdown` | C++20、UTF-8-first、零运行时依赖 | 不直接把 parser AST 暴露给 UI |
 | Markdown 模型 | 稳定节点、source range、增量替换 | Tokmon Markdown AST | `src/markdown` | 解耦解析器、渲染器和流式消息 | 不以 RmlUi DOM 作为业务 AST |
 | Markdown 显示 | 普通节点 RML，重内容自定义绘制 | RmlUi + Skia custom elements | `src/markdown`、`src/ui/elements` | 兼顾样式开发与大内容性能 | 大代码块不逐行永久创建 DOM |
 | 文件树 | 枚举、过滤、懒加载、虚拟列表 | Desktop `WorkspaceService` + `FileTreeModel` | `src/workspace` | 本地能力无需扩张 Daemon | 不把整棵目录树放入长期 DOM |
@@ -270,7 +270,7 @@ Terminal、可编辑 CodeSurface 和 Agent Browser 是旧版未完整覆盖的�
 | `RenderInterface_Skia` | 新版 Desktop UI 线程 | 将 RmlUi geometry、texture、clip 和 transform 转换为 Skia 命令 | RmlUi render calls | SkCanvas draw calls | 不包含业务组件逻辑，不直接管理 OS window |
 | `SkiaDevice` | UI 线程及平台 GPU 上下文 | GPU device、surface、resize、frame begin/end、present、设备丢失恢复 | 原生窗口句柄、尺寸、dirty frame | SkSurface/SkCanvas 和 present 结果 | 不关心 RmlUi DOM、Markdown 或 Terminal 语义 |
 | `FontManager` | UI 线程 + 可控缓存任务 | 字体发现、fallback、HarfBuzz shaping、FreeType face、glyph atlas/cache | UTF-8、字体样式、locale、DPI | positioned glyph runs、glyph resources | 不决定编辑器行布局或 Terminal cell 语义 |
-| `MarkdownService` | Worker 解析，UI 投影 | MD4C callback、Tokmon AST、source range、流式增量和安全链接模型 | 消息 Markdown、stream delta | versioned AST/snapshot | 不把 RmlUi DOM 当作源数据，不执行链接 |
+| `MarkdownService` | Worker 解析，UI 投影 | chmd AST、Tokmon AST、source range、流式增量和安全链接模型 | 消息 Markdown、stream delta | versioned AST/snapshot | 不把 RmlUi DOM 当作源数据，不执行链接 |
 | `MarkdownView` | 新版 Desktop UI 线程 | AST 到 RML/自定义 Element 的可视投影、选择和复制 | Markdown AST、theme、viewport | DOM patch、Skia draw data、UI actions | 不解析原始 Markdown，不访问磁盘 |
 | `WorkspaceService` | Desktop worker | 根目录约束、目录枚举、文件元数据、忽略规则、搜索协调 | workspace root、用户文件命令 | versioned workspace snapshot | 不越过 workspace containment，不充当 Daemon 文件服务 |
 | `FileWatcher` | Desktop 平台 worker | 监听文件创建、修改、重命名和删除，合并突发事件 | OS watcher event | 去抖后的 path change batch | 不直接修改 Document 或 UI |
@@ -343,7 +343,7 @@ apps/tokmon-desk/
 │  │  └─ glyph_cache.*
 │  ├─ markdown/
 │  │  ├─ markdown_ast.*
-│  │  ├─ md4c_parser.*
+│  │  ├─ chmd_adapter.*
 │  │  ├─ markdown_stream.*
 │  │  └─ markdown_rml_renderer.*
 │  ├─ workspace/
@@ -518,14 +518,14 @@ UTF-8
 ```text
 Markdown UTF-8
     ↓
-MD4C callbacks
+chmd indexed AST
     ↓
 Tokmon Markdown AST
     ↓
 RmlUi DOM + CodeSurface/Diff custom elements
 ```
 
-MD4C 不直接产生 AST，因此 Desktop 通过 enter/leave block、span 和 text callback 构建自有 arena AST。
+chmd 产生紧凑索引 AST，Desktop 将其映射为带稳定 ID、source range 和安全链接语义的自有 arena AST。
 
 核心节点至少包括：
 
@@ -1098,7 +1098,7 @@ dependency-manifest.json
 | Skia | BSD-style，连同第三方 notices |
 | HarfBuzz | Old MIT，保留版权和免责声明 |
 | FreeType | FTL/GPL 双许可，发行时选择并保留对应文本 |
-| MD4C | MIT |
+| chmd | MIT |
 | Zep | MIT |
 | Tree-sitter | 核心 MIT；每个 grammar 单独审计 |
 | libgit2 | GPLv2 + Linking Exception；修改 libgit2 时遵守其条款 |
@@ -1122,7 +1122,7 @@ SDL3
 RmlUi
 Skia
 HarfBuzz / FreeType
-MD4C
+chmd
 Zep
 Tree-sitter core + selected grammars
 libgit2
@@ -1213,7 +1213,7 @@ Phase 0A 只读取旧版目录，产物全部写入新版目录。没有冻结�
 ### Phase 2：Chat 与 Markdown
 
 - 消息虚拟列表；
-- MD4C AST；
+- chmd AST 适配；
 - 流式增量；
 - code block 和文件引用；
 - 复制和选择；
@@ -1446,7 +1446,7 @@ Golden Screenshot 场景至少覆盖：
 3. 用 SDL3、RmlUi、Skia 重写新版 Desktop UI，不使用框架默认样式替代旧版设计；
 4. 使用 D3D12、Metal、Vulkan，不使用 OpenGL；
 5. 使用 HarfBuzz + FreeType 复现旧版文字度量和显示，现有 UI 继续使用 MiSans VF；
-6. 使用 MD4C + Tokmon AST 渲染 Markdown；
+6. 使用 chmd + Tokmon AST 渲染 Markdown；
 7. 使用 Zep Core + Tree-sitter + Skia 构建基础代码编辑器；
 8. 文件浏览、Git 审查和 Desktop 修改基线全部属于新版 Desktop；
 9. 跨平台 Terminal 使用 `libghostty-vt + ConPTY/POSIX PTY`，不集成完整 Ghostty；

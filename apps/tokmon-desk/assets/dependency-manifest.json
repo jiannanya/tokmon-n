@@ -19,7 +19,7 @@
     {"name":"Skia","version":"148","source":"vcpkg","license":"BSD-3-Clause plus bundled notices","redistributed":true},
     {"name":"FreeType","version":"2.14.3","source":"vcpkg","license":"FTL or GPL-2.0-or-later","redistributed":true},
     {"name":"HarfBuzz","version":"14.2.1#1","source":"vcpkg","license":"Old MIT","redistributed":true},
-    {"name":"MD4C","version":"0.5.2","revision":"release-0.5.2","source":"https://github.com/mity/md4c","license":"MIT","redistributed":true},
+    {"name":"chmd","version":"1.1.0","revision":"332c0257409263254cbd06b5b60edf844edaf516","source":"https://github.com/jiannanya/chmd","license":"MIT","redistributed":true},
     {"name":"libgit2","version":"1.9.4#1","source":"vcpkg","license":"GPL-2.0-only with linking exception","redistributed":true},
     {"name":"tree-sitter","version":"0.26.9","source":"vcpkg","license":"MIT","redistributed":true},
     {"name":"Zep","revision":"7aa7ed940d5c889dc6b27a2529a740c0bb2ad6af","source":"https://github.com/Rezonality/zep","license":"MIT","redistributed":true,"linkage":"header-only editor buffer adapter"},

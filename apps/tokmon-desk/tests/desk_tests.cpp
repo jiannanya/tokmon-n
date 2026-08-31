@@ -685,6 +685,7 @@ int main(int argc, char** argv) {
   const auto rich_markdown = parser.parse(
       "# Heading\n\n- [x] done\n\n> [!NOTE] safe\n\n"
       "[file](tokmon-file:src/sample.cpp) ![remote](https://example.com/x.png)\n\n"
+      "| key | value |\n| --- | --- |\n| state | ~~old~~ new |\n\n"
       "```diff\n-old\n+new\n```\n\n```tool-call\n{\"name\":\"test\"}\n```\n");
   check(std::ranges::all_of(rich_markdown.nodes, [&](const auto& node) {
           return node.id != 0 && node.source.byte_start <= node.source.byte_end &&
@@ -700,8 +701,12 @@ int main(int argc, char** argv) {
           return node.kind == MarkdownNodeKind::diff_block;
         }) && std::ranges::any_of(rich_markdown.nodes, [](const auto& node) {
           return node.kind == MarkdownNodeKind::tool_call;
+        }) && std::ranges::any_of(rich_markdown.nodes, [](const auto& node) {
+          return node.kind == MarkdownNodeKind::table;
+        }) && std::ranges::any_of(rich_markdown.nodes, [](const auto& node) {
+          return node.kind == MarkdownNodeKind::strike;
         }),
-        "markdown AST classifies task, callout, diff, and tool blocks");
+        "chmd adapter classifies task, callout, table, strike, diff, and tool nodes");
   const auto rich_rml = markdown_to_safe_rml(rich_markdown);
   check(rich_rml.find("<img") == std::string::npos &&
             rich_rml.find("markdown-image-placeholder") != std::string::npos &&

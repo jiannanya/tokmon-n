@@ -10,7 +10,7 @@ must copy this file together with the complete license texts installed by vcpkg.
 | Skia | BSD-3-Clause and bundled third-party notices | https://skia.org/ |
 | FreeType | FTL or GPL-2.0-or-later | https://freetype.org/ |
 | HarfBuzz | Old MIT | https://github.com/harfbuzz/harfbuzz |
-| MD4C | MIT | https://github.com/mity/md4c |
+| chmd | MIT | https://github.com/jiannanya/chmd |
 | libgit2 | GPL-2.0-only with linking exception | https://github.com/libgit2/libgit2 |
 | tree-sitter | MIT | https://github.com/tree-sitter/tree-sitter |
 | tree-sitter generated grammars (C++, Rust, JavaScript, TypeScript/TSX, Python, JSON, YAML, TOML, Markdown, Bash, CMake) | MIT | See exact repositories and revisions in `assets/dependency-manifest.json` |

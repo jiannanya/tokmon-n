@@ -1,6 +1,6 @@
 #include "markdown/markdown_ast.hpp"
 
-#include <md4c.h>
+#include <chmd/chmd.hpp>
 
 #include <algorithm>
 #include <cctype>
@@ -31,184 +31,149 @@ MarkdownNodeId stable_id(const MarkdownNode& node,
   return hash == 0 ? 1 : hash;
 }
 
-std::string attribute(const MD_ATTRIBUTE& value) {
-  return std::string(value.text ? value.text : "", value.size);
+MarkdownSourceRange source_range(const chmd::Node& node,
+                                 const std::size_t source_offset) {
+  return {source_offset + node.source.begin, source_offset + node.source.end};
 }
 
-struct Builder {
-  explicit Builder(const std::string_view input, const std::size_t offset)
-      : begin(input.data()), end(input.data() + input.size()), base(offset),
-        stack{0} {
-    document.nodes.push_back({.kind = MarkdownNodeKind::document,
-                              .source = {offset, offset + input.size()}});
-    document.root = 0;
-    document.source_bytes = offset + input.size();
-  }
-
-  const char* begin;
-  const char* end;
-  std::size_t base{0};
-  std::size_t cursor{0};
-  MarkdownDocument document;
-  std::vector<std::size_t> stack;
-
-  std::size_t absolute_cursor() const { return base + cursor; }
-
-  std::size_t source_position(const char* pointer, const std::size_t size) {
-    if (pointer >= begin && pointer <= end &&
-        static_cast<std::size_t>(end - pointer) >= size) {
-      cursor = static_cast<std::size_t>(pointer - begin);
-      return base + cursor;
-    }
-    return absolute_cursor();
-  }
-
-  std::size_t push(MarkdownNode node) {
-    node.parent = stack.back();
-    node.source.byte_start = absolute_cursor();
-    node.source.byte_end = node.source.byte_start;
-    const auto index = document.nodes.size();
-    document.nodes.push_back(std::move(node));
-    document.nodes[stack.back()].children.push_back(index);
-    stack.push_back(index);
-    return index;
-  }
-
-  void pop() {
-    if (stack.size() <= 1)
-      return;
-    document.nodes[stack.back()].source.byte_end = absolute_cursor();
-    stack.pop_back();
-  }
-
-  void leaf(MarkdownNode node) {
-    node.parent = stack.back();
-    if (node.source.byte_end < node.source.byte_start)
-      node.source.byte_end = node.source.byte_start;
-    const auto index = document.nodes.size();
-    document.nodes.push_back(std::move(node));
-    document.nodes[stack.back()].children.push_back(index);
-  }
-};
-
-int enter_block(const MD_BLOCKTYPE type, void* detail, void* userdata) {
-  auto& builder = *static_cast<Builder*>(userdata);
-  MarkdownNode node;
-  switch (type) {
-    case MD_BLOCK_DOC: return 0;
-    case MD_BLOCK_QUOTE: node.kind = MarkdownNodeKind::block_quote; break;
-    case MD_BLOCK_UL:
-    case MD_BLOCK_OL:
-      node.kind = MarkdownNodeKind::list;
-      node.metadata = type == MD_BLOCK_OL ? "ordered" : "unordered";
-      break;
-    case MD_BLOCK_LI: {
-      node.kind = MarkdownNodeKind::list_item;
-      if (detail) {
-        const auto* item = static_cast<MD_BLOCK_LI_DETAIL*>(detail);
-        if (item->is_task) {
-          node.kind = MarkdownNodeKind::task_item;
-          node.checked = item->task_mark == 'x' || item->task_mark == 'X';
-        }
-      }
-      break;
-    }
-    case MD_BLOCK_HR:
-      node.kind = MarkdownNodeKind::rule;
-      node.source = {builder.absolute_cursor(), builder.absolute_cursor()};
-      builder.leaf(std::move(node));
-      return 0;
-    case MD_BLOCK_H:
-      node.kind = MarkdownNodeKind::heading;
-      node.level = static_cast<MD_BLOCK_H_DETAIL*>(detail)->level;
-      break;
-    case MD_BLOCK_CODE:
-      node.kind = MarkdownNodeKind::code_block;
-      if (detail)
-        node.metadata = attribute(static_cast<MD_BLOCK_CODE_DETAIL*>(detail)->info);
-      if (node.metadata == "diff" || node.metadata == "patch")
-        node.kind = MarkdownNodeKind::diff_block;
-      else if (node.metadata == "tool-call" || node.metadata == "tool_call")
-        node.kind = MarkdownNodeKind::tool_call;
-      else if (node.metadata == "tool-result" || node.metadata == "tool_result")
-        node.kind = MarkdownNodeKind::tool_result;
-      break;
-    case MD_BLOCK_TABLE: node.kind = MarkdownNodeKind::table; break;
-    case MD_BLOCK_THEAD: node.kind = MarkdownNodeKind::table_head; break;
-    case MD_BLOCK_TBODY: node.kind = MarkdownNodeKind::table_body; break;
-    case MD_BLOCK_TR: node.kind = MarkdownNodeKind::table_row; break;
-    case MD_BLOCK_TH:
-    case MD_BLOCK_TD: node.kind = MarkdownNodeKind::table_cell; break;
-    default: node.kind = MarkdownNodeKind::paragraph; break;
-  }
-  builder.push(std::move(node));
-  return 0;
+MarkdownNodeKind code_block_kind(const std::string_view info) {
+  if (info == "diff" || info == "patch")
+    return MarkdownNodeKind::diff_block;
+  if (info == "tool-call" || info == "tool_call")
+    return MarkdownNodeKind::tool_call;
+  if (info == "tool-result" || info == "tool_result")
+    return MarkdownNodeKind::tool_result;
+  return MarkdownNodeKind::code_block;
 }
 
-int leave_block(const MD_BLOCKTYPE type, void*, void* userdata) {
-  if (type != MD_BLOCK_DOC && type != MD_BLOCK_HR)
-    static_cast<Builder*>(userdata)->pop();
-  return 0;
-}
+std::size_t append_chmd_node(const chmd::Document& source,
+                             const chmd::NodeId source_id,
+                             MarkdownDocument& destination,
+                             const std::size_t parent,
+                             const std::size_t source_offset) {
+  const auto& input = source.node(source_id);
+  MarkdownNode output;
+  output.parent = parent;
+  output.source = source_range(input, source_offset);
 
-int enter_span(const MD_SPANTYPE type, void* detail, void* userdata) {
-  auto& builder = *static_cast<Builder*>(userdata);
-  MarkdownNode node;
-  switch (type) {
-    case MD_SPAN_EM: node.kind = MarkdownNodeKind::emphasis; break;
-    case MD_SPAN_STRONG: node.kind = MarkdownNodeKind::strong; break;
-    case MD_SPAN_DEL: node.kind = MarkdownNodeKind::strike; break;
-    case MD_SPAN_CODE: node.kind = MarkdownNodeKind::code; break;
-    case MD_SPAN_A:
-      node.kind = MarkdownNodeKind::link;
-      if (detail) {
-        const auto* link = static_cast<MD_SPAN_A_DETAIL*>(detail);
-        node.metadata = attribute(link->href);
-        node.title = attribute(link->title);
-      }
-      if (node.metadata.starts_with("file://") ||
-          node.metadata.starts_with("tokmon-file:"))
-        node.kind = MarkdownNodeKind::file_reference;
+  switch (input.type) {
+    case chmd::NodeType::document:
+      output.kind = MarkdownNodeKind::document;
+      output.parent = no_markdown_parent;
       break;
-    case MD_SPAN_IMG:
-      node.kind = MarkdownNodeKind::image;
-      if (detail) {
-        const auto* image = static_cast<MD_SPAN_IMG_DETAIL*>(detail);
-        node.metadata = attribute(image->src);
-        node.title = attribute(image->title);
-      }
+    case chmd::NodeType::block_quote:
+      output.kind = MarkdownNodeKind::block_quote;
       break;
-    default: node.kind = MarkdownNodeKind::text; break;
+    case chmd::NodeType::list:
+      output.kind = MarkdownNodeKind::list;
+      output.metadata = input.list_kind == chmd::ListKind::ordered
+                            ? "ordered"
+                            : "unordered";
+      break;
+    case chmd::NodeType::item:
+      output.kind = input.task ? MarkdownNodeKind::task_item
+                               : MarkdownNodeKind::list_item;
+      output.checked = input.checked;
+      break;
+    case chmd::NodeType::thematic_break:
+      output.kind = MarkdownNodeKind::rule;
+      break;
+    case chmd::NodeType::heading:
+      output.kind = MarkdownNodeKind::heading;
+      output.level = input.number;
+      break;
+    case chmd::NodeType::code_block:
+      output.metadata = input.title;
+      output.kind = code_block_kind(output.metadata);
+      break;
+    case chmd::NodeType::html_block:
+      // Keep the prior Tokmon AST contract: block HTML is represented as a
+      // paragraph containing escaped raw HTML rather than executable markup.
+      output.kind = MarkdownNodeKind::paragraph;
+      break;
+    case chmd::NodeType::paragraph:
+      output.kind = MarkdownNodeKind::paragraph;
+      break;
+    case chmd::NodeType::table:
+      output.kind = MarkdownNodeKind::table;
+      break;
+    case chmd::NodeType::table_head:
+      output.kind = MarkdownNodeKind::table_head;
+      break;
+    case chmd::NodeType::table_body:
+      output.kind = MarkdownNodeKind::table_body;
+      break;
+    case chmd::NodeType::table_row:
+      output.kind = MarkdownNodeKind::table_row;
+      break;
+    case chmd::NodeType::table_cell:
+      output.kind = MarkdownNodeKind::table_cell;
+      break;
+    case chmd::NodeType::text:
+      output.kind = MarkdownNodeKind::text;
+      output.text = input.literal;
+      break;
+    case chmd::NodeType::soft_break:
+      output.kind = MarkdownNodeKind::soft_break;
+      break;
+    case chmd::NodeType::line_break:
+      output.kind = MarkdownNodeKind::hard_break;
+      break;
+    case chmd::NodeType::code:
+      output.kind = MarkdownNodeKind::code;
+      break;
+    case chmd::NodeType::html_inline:
+      output.kind = MarkdownNodeKind::raw_html;
+      output.text = input.literal;
+      break;
+    case chmd::NodeType::emphasis:
+      output.kind = MarkdownNodeKind::emphasis;
+      break;
+    case chmd::NodeType::strong:
+      output.kind = MarkdownNodeKind::strong;
+      break;
+    case chmd::NodeType::strikethrough:
+      output.kind = MarkdownNodeKind::strike;
+      break;
+    case chmd::NodeType::link:
+      output.kind = MarkdownNodeKind::link;
+      output.metadata = input.literal;
+      output.title = input.title;
+      if (output.metadata.starts_with("file://") ||
+          output.metadata.starts_with("tokmon-file:"))
+        output.kind = MarkdownNodeKind::file_reference;
+      break;
+    case chmd::NodeType::image:
+      output.kind = MarkdownNodeKind::image;
+      output.metadata = input.literal;
+      output.title = input.title;
+      break;
   }
-  builder.push(std::move(node));
-  return 0;
-}
 
-int leave_span(MD_SPANTYPE, void*, void* userdata) {
-  static_cast<Builder*>(userdata)->pop();
-  return 0;
-}
+  const auto index = destination.nodes.size();
+  destination.nodes.push_back(std::move(output));
+  if (parent != no_markdown_parent)
+    destination.nodes[parent].children.push_back(index);
 
-int text_callback(const MD_TEXTTYPE type, const MD_CHAR* value,
-                  const MD_SIZE size, void* userdata) {
-  auto& builder = *static_cast<Builder*>(userdata);
-  const auto start = builder.source_position(value, size);
-  const auto finish = start + size;
-  builder.cursor = std::max(builder.cursor,
-      start >= builder.base ? finish - builder.base : builder.cursor);
-  if (type == MD_TEXT_SOFTBR) {
-    builder.leaf({.kind = MarkdownNodeKind::soft_break,
-                  .source = {start, finish}});
-  } else if (type == MD_TEXT_BR) {
-    builder.leaf({.kind = MarkdownNodeKind::hard_break,
-                  .source = {start, finish}});
-  } else if (type != MD_TEXT_NULLCHAR) {
-    builder.leaf({.kind = type == MD_TEXT_HTML ? MarkdownNodeKind::raw_html
-                                               : MarkdownNodeKind::text,
-                  .source = {start, finish},
-                  .text = std::string(value, size)});
+  if (input.type == chmd::NodeType::code_block ||
+      input.type == chmd::NodeType::code ||
+      input.type == chmd::NodeType::html_block) {
+    MarkdownNode text;
+    text.kind = input.type == chmd::NodeType::html_block
+                    ? MarkdownNodeKind::raw_html
+                    : MarkdownNodeKind::text;
+    text.source = source_range(input, source_offset);
+    text.parent = index;
+    text.text = input.literal;
+    const auto child = destination.nodes.size();
+    destination.nodes.push_back(std::move(text));
+    destination.nodes[index].children.push_back(child);
+  } else {
+    for (auto child = input.first_child; child != chmd::npos;
+         child = source.node(child).next)
+      (void)append_chmd_node(source, child, destination, index, source_offset);
   }
-  return 0;
+  return index;
 }
 
 std::string collect_text(const MarkdownDocument& document,
@@ -491,21 +456,26 @@ std::size_t copy_subtree(const MarkdownDocument& source,
 
 MarkdownDocument MarkdownParser::parse(const std::string_view markdown,
                                        const std::size_t source_offset) const {
-  Builder builder(markdown, source_offset);
-  MD_PARSER parser{};
-  parser.abi_version = 0;
-  parser.flags = MD_FLAG_TABLES | MD_FLAG_STRIKETHROUGH | MD_FLAG_TASKLISTS |
-                 MD_FLAG_PERMISSIVEAUTOLINKS;
-  parser.enter_block = enter_block;
-  parser.leave_block = leave_block;
-  parser.enter_span = enter_span;
-  parser.leave_span = leave_span;
-  parser.text = text_callback;
-  (void)md_parse(markdown.data(), static_cast<MD_SIZE>(markdown.size()),
-                 &parser, &builder);
-  normalize_top_level_ranges(builder.document, source_offset + markdown.size());
-  finalize_node(builder.document, builder.document.root, 0);
-  return std::move(builder.document);
+  MarkdownDocument document;
+  document.source_bytes = source_offset + markdown.size();
+  auto parsed = chmd::Parser().parse(markdown);
+  if (parsed) {
+    document.nodes.reserve(parsed.document.size());
+    document.root = append_chmd_node(parsed.document, parsed.document.root(),
+                                     document, no_markdown_parent,
+                                     source_offset);
+  } else {
+    document.nodes.push_back({.kind = MarkdownNodeKind::document,
+                              .source = {source_offset,
+                                         source_offset + markdown.size()},
+                              .parent = no_markdown_parent});
+    document.root = 0;
+  }
+  document.nodes[document.root].source = {
+      source_offset, source_offset + markdown.size()};
+  normalize_top_level_ranges(document, source_offset + markdown.size());
+  finalize_node(document, document.root, 0);
+  return document;
 }
 
 MarkdownStream::MarkdownStream(MarkdownParser parser)
